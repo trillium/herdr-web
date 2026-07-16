@@ -2080,6 +2080,40 @@ button {
   transform: translateX(-1.5px);
 }
 
+.space-filter-pills {
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.space-filter-pill {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 1px 5px;
+  height: 18px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  color: var(--overlay1);
+  background: transparent;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+}
+
+.space-filter-pill:hover {
+  border-color: var(--surface1);
+  color: var(--text);
+  background: var(--surface0);
+}
+
+.space-filter-pill[data-on="true"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .tab-head {
   display: inline-flex;
   align-items: center;

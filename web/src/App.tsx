@@ -59,7 +59,7 @@ import type { AgentPinsListResponse } from "./agentPins";
 import { applyActivityMessage, parseActivityEventData, replayActivityMessages } from "./activity";
 import type { ActivityLogEntry } from "./activity";
 import { BackendSettingsDialog } from "./BackendSettingsDialog";
-import { useBridge } from "./bridge";
+import { SAME_ORIGIN_BRIDGE_ID, useBridge } from "./bridge";
 import type { BridgeId, BridgeRuntime } from "./bridge";
 import { createCommands, createdPaneId } from "./commands";
 import type { LaunchSpec, PaneFocusDirection, SplitDirection } from "./commands";
@@ -172,6 +172,7 @@ type HostScope = "selected" | "all";
 type SidebarView = "agents" | "tabs" | "notes";
 type AgentSort = "attention" | "status" | "workspace" | "lastStatusChange";
 type AgentGroup = "none" | "host" | "workspace" | "hostWorkspace";
+type SpaceFilter = "all" | "local" | "external";
 type MenuKind = "space" | "tab" | "pane";
 type ScopedPaneRef = {
   bridgeId: BridgeId;
@@ -318,6 +319,7 @@ type DisplayPrefs = {
   agentGroup: AgentGroup;
   agentPinnedOnly: boolean;
   agentActiveOnly: boolean;
+  spaceFilter: SpaceFilter;
   sidebarWidth: number;
   notesPanelWidth: number;
   notesListPaneWidth: number;
@@ -373,6 +375,7 @@ function readDisplayPrefs(): DisplayPrefs {
     agentGroup: "none",
     agentPinnedOnly: false,
     agentActiveOnly: false,
+    spaceFilter: "all" as SpaceFilter,
     sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
     notesPanelWidth: DEFAULT_NOTES_PANEL_WIDTH,
     notesListPaneWidth: DEFAULT_NOTES_LIST_PANE_WIDTH,
@@ -469,6 +472,12 @@ function parseDisplayPrefsValue(
       parsed.agentGroup === "hostWorkspace"
         ? parsed.agentGroup
         : fallback.agentGroup,
+    spaceFilter:
+      parsed.spaceFilter === "all" ||
+      parsed.spaceFilter === "local" ||
+      parsed.spaceFilter === "external"
+        ? parsed.spaceFilter
+        : fallback.spaceFilter,
     agentPinnedOnly:
       typeof parsed.agentPinnedOnly === "boolean"
         ? parsed.agentPinnedOnly
@@ -769,6 +778,7 @@ export function App() {
   const [agentGroup, setAgentGroup] = useState<AgentGroup>(initialPrefs.agentGroup);
   const [agentPinnedOnly, setAgentPinnedOnly] = useState(initialPrefs.agentPinnedOnly);
   const [agentActiveOnly, setAgentActiveOnly] = useState(initialPrefs.agentActiveOnly);
+  const [spaceFilter, setSpaceFilter] = useState<SpaceFilter>(initialPrefs.spaceFilter);
   const [sidebarWidth, setSidebarWidth] = useState(initialPrefs.sidebarWidth);
   const [notesPanelWidth, setNotesPanelWidth] = useState(initialPrefs.notesPanelWidth);
   const [notesListPaneWidth, setNotesListPaneWidth] = useState(initialPrefs.notesListPaneWidth);
@@ -871,6 +881,7 @@ export function App() {
       setAgentGroup(prefs.agentGroup);
       setAgentPinnedOnly(prefs.agentPinnedOnly);
       setAgentActiveOnly(prefs.agentActiveOnly);
+      setSpaceFilter(prefs.spaceFilter);
       setSidebarWidth(prefs.sidebarWidth);
       setNotesPanelWidth(prefs.notesPanelWidth);
       setNotesListPaneWidth(prefs.notesListPaneWidth);
@@ -1328,6 +1339,7 @@ export function App() {
       agentGroup,
       agentPinnedOnly,
       agentActiveOnly,
+      spaceFilter,
       sidebarWidth,
       notesPanelWidth,
       notesListPaneWidth,
@@ -1363,6 +1375,7 @@ export function App() {
     agentGroup,
     agentPinnedOnly,
     agentActiveOnly,
+    spaceFilter,
     sidebarWidth,
     notesPanelWidth,
     notesListPaneWidth,
@@ -3183,6 +3196,7 @@ export function App() {
           agentActiveOnly={agentActiveOnly}
           agentSort={agentSort}
           agentGroup={agentGroup}
+          spaceFilter={spaceFilter}
           activeSpace={activeSpace}
           activeWorkspacesByBridgeId={activeWorkspacesByBridgeId}
           selectedPane={selectedPane}
@@ -3195,6 +3209,7 @@ export function App() {
           onAgentActiveOnly={setAgentActiveOnly}
           onAgentSort={setAgentSort}
           onAgentGroup={setAgentGroup}
+          onSpaceFilter={setSpaceFilter}
           onSelectBridge={setSelectedBridgeId}
           onSelectSpace={selectSpace}
           onSelectTab={selectTab}
@@ -4944,6 +4959,7 @@ function Switcher({
   agentActiveOnly,
   agentSort,
   agentGroup,
+  spaceFilter,
   activeSpace,
   activeWorkspacesByBridgeId,
   selectedPane,
@@ -4956,6 +4972,7 @@ function Switcher({
   onAgentActiveOnly,
   onAgentSort,
   onAgentGroup,
+  onSpaceFilter,
   onSelectBridge,
   onSelectSpace,
   onSelectTab,
@@ -4990,6 +5007,7 @@ function Switcher({
   agentActiveOnly: boolean;
   agentSort: AgentSort;
   agentGroup: AgentGroup;
+  spaceFilter: SpaceFilter;
   activeSpace: WorkspaceInfo | null;
   activeWorkspacesByBridgeId: Record<string, string>;
   selectedPane: PaneInfo | null;
@@ -5002,6 +5020,7 @@ function Switcher({
   onAgentActiveOnly: (activeOnly: boolean) => void;
   onAgentSort: (sort: AgentSort) => void;
   onAgentGroup: (group: AgentGroup) => void;
+  onSpaceFilter: (filter: SpaceFilter) => void;
   onSelectBridge: (bridgeId: BridgeId) => void;
   onSelectSpace: (bridgeId: BridgeId, workspaceId: string) => void;
   onSelectTab: (bridgeId: BridgeId, tabId: string) => void;
@@ -5134,7 +5153,15 @@ function Switcher({
       ),
     [effectiveAgentPinnedOnly, pinnedAgentKeys, scopedWorkspaces, sidebarView],
   );
-  const spaceCount = hostBridgeViews.reduce(
+  const filteredSpaceBridgeViews =
+    hostScope === "all" && spaceFilter !== "all"
+      ? hostBridgeViews.filter((view) =>
+          spaceFilter === "local"
+            ? view.runtime.id === SAME_ORIGIN_BRIDGE_ID
+            : view.runtime.id !== SAME_ORIGIN_BRIDGE_ID,
+        )
+      : hostBridgeViews;
+  const spaceCount = filteredSpaceBridgeViews.reduce(
     (count, view) => count + (view.snapshot?.workspaces.length ?? 0),
     0,
   );
@@ -5521,7 +5548,22 @@ function Switcher({
                 <span className="sec-label">spaces</span>
                 <span className="sec-rule" />
                 <span className="sec-count mono">{spaceCount}</span>
-                {hostScope === "selected" ? (
+                {hostScope === "all" ? (
+                  <div className="space-filter-pills">
+                    {(["all", "local", "external"] as SpaceFilter[]).map((f) => (
+                      <button
+                        key={f}
+                        type="button"
+                        className="space-filter-pill"
+                        data-on={spaceFilter === f}
+                        onClick={() => onSpaceFilter(f)}
+                        title={f === "all" ? "All hosts" : f === "local" ? "This machine only" : "Remote hosts only"}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
                   <button
                     className="sec-add"
                     type="button"
@@ -5531,7 +5573,7 @@ function Switcher({
                   >
                     <Plus size={14} />
                   </button>
-                ) : null}
+                )}
               </div>
               {spaceCount === 0 ? (
                 <div className="empty">
@@ -5539,7 +5581,7 @@ function Switcher({
                   <span>{hostScope === "selected" ? "Tap + to create one." : "No enabled host has spaces."}</span>
                 </div>
               ) : hostScope === "all" ? (
-                hostBridgeViews.map((view) => {
+                filteredSpaceBridgeViews.map((view) => {
                   const viewSnapshot = view.snapshot;
                   if (!viewSnapshot) {
                     return null;
