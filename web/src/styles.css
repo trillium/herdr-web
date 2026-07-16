@@ -326,8 +326,8 @@ button {
 }
 
 .sidebar-mode button[data-on="true"] {
-  color: var(--text);
-  background: var(--surface0);
+  color: var(--crust);
+  background: var(--accent);
 }
 
 .sidebar-scope {

@@ -1,6 +1,7 @@
 import type { FitAddon, Terminal } from "ghostty-web";
 import {
   findFirstUrlInSelection,
+  openableHttpUrl,
   terminalSelectionRange,
   terminalUrlTapTarget,
   trimUrlPunctuation,
@@ -1018,7 +1019,15 @@ export class GhosttyRenderer implements TerminalRenderer {
       if (moved) {
         return;
       }
-      const linkText = mouseLinkText(event);
+      // Cmd+click (metaKey) bypasses mouse-tracking so links always open in the
+      // default browser even when a CLI app has mouse tracking enabled.
+      let linkText: string | null;
+      if (event.metaKey) {
+        const position = touchCellPosition(terminal, event.clientX, event.clientY);
+        linkText = openableHttpUrl(terminalLinkAt(terminal, position) ?? "");
+      } else {
+        linkText = mouseLinkText(event);
+      }
       if (!linkText?.trim()) {
         return;
       }
@@ -1068,6 +1077,28 @@ export class GhosttyRenderer implements TerminalRenderer {
     let lastKeydown: { data: string; time: number } | null = null;
     let processedTextareaValue = "";
     const onKeydown = (event: KeyboardEvent) => {
+      // PageUp/PageDown scroll the scrollback buffer at the same rate as
+      // 2-finger trackpad, bypassing the terminal when mouse tracking is off.
+      if (
+        (event.key === "PageUp" || event.key === "PageDown") &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        !this.#hasMouseTracking(terminal)
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === "function") {
+          event.stopImmediatePropagation();
+        }
+        const lines = event.key === "PageUp" ? -terminal.rows : terminal.rows;
+        if (this.#scrollCallback) {
+          this.#scrollCallback(lines);
+        } else {
+          terminal.scrollLines(lines);
+        }
+        return;
+      }
       const customOutput = textareaKeyboardEventOutput(event);
       if (customOutput) {
         event.preventDefault();
