@@ -30,6 +30,12 @@ Files: cli/herdr-channel.ts
   next pinned pane.
 - Added a collapse toggle to the sidebar's spaces list, so it can be minimized to make room for
   the agents/tabs/notes list below it on small screens.
+- Added a `--remote-bridge <url>` bridge CLI flag (repeatable) to register other herdr-web bridge
+  instances (e.g. reached over Tailscale) as remote bridges. `/api/snapshot` now includes a
+  `bridges` array describing each configured remote bridge (id, label, url), and a standalone
+  `GET /api/bridges` endpoint returning the same list (`id`, `url`) without the session-snapshot
+  round trip. The bridge proxies REST reads (`/api/remote/{bridge_id}/...`) and terminal WebSocket
+  connections (`/ws/remote/{bridge_id}/terminal`) to the corresponding remote bridge.
 
 ### Changed
 

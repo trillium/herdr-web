@@ -284,6 +284,23 @@ HOST=0.0.0.0 scripts/run-bridge.sh --allow-host host-a --allow-connect-origin ht
 HOST=0.0.0.0 scripts/run-bridge.sh --allow-host host-b --allow-origin http://host-a:8787
 ```
 
+As an alternative to that browser-side CORS setup, a bridge can proxy another herdr-web bridge
+server-side with a repeatable `--remote-bridge URL` flag (for example, reaching other machines over
+Tailscale):
+
+```bash
+scripts/run-bridge.sh --remote-bridge http://mini2:8787 --remote-bridge http://mini3:8787
+```
+
+Each `--remote-bridge` URL must use `http://` (Tailscale traffic is plain HTTP; the bridge's outbound
+client has no TLS backend). The bridge derives a stable id from each URL's hostname, disambiguating
+collisions and dropping exact duplicates, and lists the configured remote bridges (id, label, url) in
+`/api/snapshot`'s `bridges` array, and standalone at `GET /api/bridges` (a lighter-weight read-only
+mirror of the same `--remote-bridge` config, without the session-snapshot round trip). `/api/remote/
+{bridge_id}/...` and `/ws/remote/{bridge_id}/terminal` then proxy REST reads and terminal WebSocket
+sessions through to that remote bridge. Only bridges the process was actually started with are
+reachable this way; the web app does not yet have UI to add or manage remote bridges.
+
 ## Keyboard Shortcuts
 
 These app shortcuts are ignored while dialogs, menus, and normal text inputs are active. They still
@@ -314,6 +331,9 @@ The bridge exposes:
 - `GET /api/agent-activity`: bridge-tracked agent status transition activity
 - `GET /api/agent-pins` and `POST /api/agent-pins/{pane_id}/pin|unpin`: bridge-owned agent pins
 - `POST /api/uploads`: save uploaded files into the configured upload directory
+- `GET /api/bridges`: read-only list of `--remote-bridge`-configured remote bridges (`id`, `url`)
+- `GET|POST /api/remote/{bridge_id}/{*rest}`: proxies REST reads to a `--remote-bridge`-configured
+  remote bridge's `/api/{rest}`
 - `GET /ws/activity`: bridge-owned pane activity deltas
 - `GET /ws/events`: Herdr structural events
 - `GET /ws/ui-events`: bridge-local UI events such as selection changes
