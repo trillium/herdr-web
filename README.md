@@ -120,6 +120,9 @@ npm install
 npm install --prefix web
 ```
 
+`npm install --prefix web` resolves `@parlay/client` from a local `web/local-deps/parlay-client`
+symlink; see [web/README.md](web/README.md) for the one-time setup this requires.
+
 ## Development Build And Test
 
 ```bash

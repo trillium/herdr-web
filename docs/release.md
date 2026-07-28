@@ -11,6 +11,8 @@ They do not publish npm packages, and the package versions are not release versi
 - JDK 21 and Android SDK when validating the Android shell.
 - GitHub CLI authenticated as a user that can create releases.
 - A local Herdr session for browser smoke testing.
+- The local `web/local-deps/parlay-client` symlink from [web/README.md](../web/README.md), needed
+  before any `npm ci --prefix web` below can resolve `@parlay/client`.
 
 ## Prepare
 
