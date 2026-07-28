@@ -6,9 +6,6 @@
 
 ### Added
 
-- Added trailing voice-submit phrase detection (`bravely`, `gravely`, `briefly`, `lap`) to the
-  mobile command input, so a spoken magic word sends the buffered dictation after a 1s
-  confirmation delay. [PR #39](https://github.com/kcosr/herdr-web/pull/39)
 - Added a mobile single-pane mode for split-pane tabs: touch devices now show only the selected
   pane by default, with a toggle to see the full split grid.
   [PR #39](https://github.com/kcosr/herdr-web/pull/39)
@@ -19,6 +16,8 @@
   (`~/.local/share/herdr-web/mobile-mode` by default). herdr-web has no knowledge of what, if
   anything, reads the flag; a companion statusline script can check it directly to blank its
   output and save vertical space on mobile. [PR #39](https://github.com/kcosr/herdr-web/pull/39)
+- The mobile command input's voice submit is now backed by a locally running parlay server,
+  replacing the previous built-in standalone phrase-detection implementation.
 
 ### Changed
 

@@ -10,10 +10,18 @@ import {
   TextCursorInput,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { ChangeEvent, ClipboardEvent, DragEvent, KeyboardEvent, RefObject } from "react";
 import { autosizeMobileCommandTextarea } from "./mobileCommandTextarea";
-import { ParlayMobileInput } from "./ParlayMobileInput";
 import { ConfirmDialog } from "./overlays";
 import { addNativeResumeHandler } from "./native";
 import { shellQuote } from "./shell";
@@ -55,6 +63,13 @@ import type {
   MobileTouchSelectionEndpointTimeoutMs,
 } from "./mobileTerminalPrefs";
 import type { PaneInfo } from "./types";
+
+// Lazily loaded so @parlay/client's bundled module (which runs browser-API
+// side effects at import time) is only ever evaluated when a caller actually
+// enables the parlay-backed mobile input, not on every TerminalView render.
+const ParlayMobileInput = lazy(() =>
+  import("./ParlayMobileInput").then((mod) => ({ default: mod.ParlayMobileInput })),
+);
 
 type Props = {
   pane: PaneInfo | null;
@@ -1704,20 +1719,22 @@ function MobileTerminalControls({
         >
           <Smartphone size={15} />
         </button>
-        <ParlayMobileInput
-          value={value}
-          onValueChange={setValue}
-          onVoiceSubmit={(text) => {
-            onSubmitCommand(text);
-            setValue("");
-          }}
-          disabled={disabled}
-          expandingInput={expandingInput}
-          enterNewline={enterNewline}
-          controlsScalePercent={controlsScalePercent}
-          onKeyDown={onCommandTextareaKeyDown}
-          inputRef={setCommandInputNode}
-        />
+        <Suspense fallback={null}>
+          <ParlayMobileInput
+            value={value}
+            onValueChange={setValue}
+            onVoiceSubmit={(text) => {
+              onSubmitCommand(text);
+              setValue("");
+            }}
+            disabled={disabled}
+            expandingInput={expandingInput}
+            enterNewline={enterNewline}
+            controlsScalePercent={controlsScalePercent}
+            onKeyDown={onCommandTextareaKeyDown}
+            inputRef={setCommandInputNode}
+          />
+        </Suspense>
         <button
           className="term-send term-stage-command"
           type="button"

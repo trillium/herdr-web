@@ -34,6 +34,9 @@ import { autosizeMobileCommandTextarea } from "./mobileCommandTextarea";
 //   cd ~/code/parlay/packages/server && bun run start               # :4242 (PARLAY_PORT)
 // Voice-submit phrases are whatever's configured for parlay (defaults:
 // "bravely" / "gravely" / "briefly" / "lap" trailing the buffer).
+// @parlay/client itself is a local, unpublished sibling package — see
+// web/README.md for the one-time `local-deps/parlay-client` symlink setup
+// required before `npm install`.
 
 const PARLAY_SERVER_URL = "http://localhost:4242";
 const PARLAY_DEVICE_ID = "herdr-web-mobile";
@@ -153,6 +156,10 @@ export function ParlayMobileInput({
       } catch {
         return;
       }
+      // Only act on envelopes addressed to this component's own stream — the
+      // server's SSE broadcast is otherwise unauthenticated, and applyEnvelope
+      // can drive a submit straight into the terminal pty.
+      if (env.streamId !== PARLAY_STREAM_ID) return;
       try {
         applyEnvelope(env, resync);
       } catch {
