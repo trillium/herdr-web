@@ -324,7 +324,8 @@ work when the terminal's hidden keyboard input has focus. OS-reserved shortcuts 
 The bridge exposes:
 
 - `GET /api/capabilities`: bridge feature flags and allow-listed browser commands
-- `GET /api/snapshot`: workspaces, tabs, panes, layouts, and shared web selection
+- `GET /api/snapshot`: workspaces, tabs, panes, layouts, shared web selection, and configured
+  remote bridges
 - `POST /api/command`: allow-listed workspace/tab/pane commands
 - `POST /api/selection`: bridge-owned selected pane for syncing browser clients
 - `GET /api/notes` and `POST /api/notes...`: bridge-owned pane notes
@@ -338,6 +339,8 @@ The bridge exposes:
 - `GET /ws/events`: Herdr structural events
 - `GET /ws/ui-events`: bridge-local UI events such as selection changes
 - `GET /ws/terminal`: terminal attach stream
+- `GET /ws/remote/{bridge_id}/terminal`: proxies a terminal attach stream to a `--remote-bridge`-
+  configured remote bridge
 
 Herdr core currently allows only one terminal attach owner per terminal. The bridge works around
 that by opening one Herdr terminal attach per `terminal_id` and broadcasting output to all browser
