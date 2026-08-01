@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Link2,
   Menu,
+  Moon,
   MoreVertical,
   PanelLeft,
   Pin,
@@ -18,6 +19,7 @@ import {
   SplitSquareVertical,
   SquareTerminal,
   StickyNote,
+  Sun,
   Trash2,
   Unlink,
   X,
@@ -142,6 +144,8 @@ import {
   DEFAULT_TERMINAL_FONT_SIZE_PX,
   parseTerminalFontSizePx,
 } from "./terminalPrefs";
+import { DEFAULT_THEME, nextTheme, parseTheme } from "./theme";
+import type { Theme } from "./theme";
 import {
   aggregateStatus,
   basename,
@@ -352,6 +356,7 @@ type DisplayPrefs = {
   mobileCommandExpandingInput: boolean;
   mobileCommandEnterNewline: boolean;
   mobileCompactControls: boolean;
+  theme: Theme;
 };
 type LegacyDisplaySelectionPrefs = {
   activeSpaceId: string | null;
@@ -410,6 +415,7 @@ function readDisplayPrefs(): DisplayPrefs {
     mobileCommandExpandingInput: DEFAULT_MOBILE_COMMAND_EXPANDING_INPUT,
     mobileCommandEnterNewline: DEFAULT_MOBILE_COMMAND_ENTER_NEWLINE,
     mobileCompactControls: DEFAULT_MOBILE_COMPACT_CONTROLS,
+    theme: DEFAULT_THEME,
   };
   try {
     const raw = window.localStorage.getItem(DISPLAY_PREFS_KEY);
@@ -540,6 +546,7 @@ function parseDisplayPrefsValue(
       parsed.mobileCommandEnterNewline,
     ),
     mobileCompactControls: parseMobileCompactControls(parsed.mobileCompactControls),
+    theme: parseTheme(parsed.theme),
   };
 }
 
@@ -854,6 +861,7 @@ export function App() {
   const [mobileCompactControls, setMobileCompactControls] = useState(
     initialPrefs.mobileCompactControls,
   );
+  const [theme, setTheme] = useState(initialPrefs.theme);
   const [launchTarget, setLaunchTarget] = useState<ScopedLaunchTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -922,6 +930,7 @@ export function App() {
       setMobileCommandExpandingInput(prefs.mobileCommandExpandingInput);
       setMobileCommandEnterNewline(prefs.mobileCommandEnterNewline);
       setMobileCompactControls(prefs.mobileCompactControls);
+      setTheme(prefs.theme);
       setDisplayPrefsLoaded(true);
     });
     return () => {
@@ -1405,6 +1414,7 @@ export function App() {
       mobileCommandExpandingInput,
       mobileCommandEnterNewline,
       mobileCompactControls,
+      theme,
     });
   }, [
     displayPrefsLoaded,
@@ -1442,7 +1452,12 @@ export function App() {
     mobileCommandExpandingInput,
     mobileCommandEnterNewline,
     mobileCompactControls,
+    theme,
   ]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
 
   useEffect(() => {
     if (!mobileKeyboardHideRefit || !showMobileKeyboardHideRefit) {
@@ -3301,6 +3316,8 @@ export function App() {
             }
           }}
           onBackendSettings={() => setBackendSettingsOpen(true)}
+          theme={theme}
+          onToggleTheme={() => setTheme((current) => nextTheme(current))}
           onCreateSpace={() =>
             selectedRuntime && selectedCommands
               ? void exec(selectedRuntime, () => selectedCommands.createWorkspace(), true)
@@ -5163,6 +5180,8 @@ function Switcher({
   onRefresh,
   onRefreshBridge,
   onBackendSettings,
+  theme,
+  onToggleTheme,
   onCreateSpace,
   onCreateTab,
   onMenu,
@@ -5211,6 +5230,8 @@ function Switcher({
   onRefresh: () => void;
   onRefreshBridge: (bridgeId: BridgeId) => void;
   onBackendSettings: () => void;
+  theme: Theme;
+  onToggleTheme: () => void;
   onCreateSpace: () => void;
   onCreateTab: (bridgeId: BridgeId, workspaceId: string) => void;
   onMenu: (
@@ -5596,6 +5617,15 @@ function Switcher({
             <span className="brand-sub">{bridgeLabel}</span>
           ) : null}
         </div>
+        <button
+          className="icon-btn"
+          type="button"
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          onClick={onToggleTheme}
+        >
+          {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+        </button>
         <button
           className="icon-btn"
           type="button"

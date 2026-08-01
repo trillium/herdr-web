@@ -38,14 +38,22 @@ describe("matchTrailingVoicePinPhrase", () => {
     expect(matchTrailingVoicePinPhrase("okay one")).toEqual({ direction: "next", tail: "one" });
     expect(matchTrailingVoicePinPhrase("pan next")).toEqual({ direction: "next", tail: "pan next" });
     expect(matchTrailingVoicePinPhrase("pam next")).toEqual({ direction: "next", tail: "pam next" });
+    expect(matchTrailingVoicePinPhrase("in next")).toEqual({ direction: "next", tail: "in next" });
   });
 
-  it("matches 'pin previous'/'pin prev'", () => {
+  it("matches 'pin previous'/'pin prev' and its aliases", () => {
     expect(matchTrailingVoicePinPhrase("pin previous")).toEqual({
       direction: "prev",
       tail: "pin previous",
     });
     expect(matchTrailingVoicePinPhrase("pin prev")).toEqual({ direction: "prev", tail: "pin prev" });
+    expect(matchTrailingVoicePinPhrase("pan previous")).toEqual({
+      direction: "prev",
+      tail: "pan previous",
+    });
+    expect(matchTrailingVoicePinPhrase("pan prev")).toEqual({ direction: "prev", tail: "pan prev" });
+    expect(matchTrailingVoicePinPhrase("pin past")).toEqual({ direction: "prev", tail: "pin past" });
+    expect(matchTrailingVoicePinPhrase("pan past")).toEqual({ direction: "prev", tail: "pan past" });
   });
 
   it("does not match 'one' embedded in a larger word or not trailing", () => {

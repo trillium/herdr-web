@@ -26,8 +26,11 @@ Files: cli/herdr-channel.ts
   buffered dictation instead of sending it.
 - Added trailing voice-pin-cycle phrases (`pin next`, `pin previous`/`pin prev`) to the mobile
   command input that cycle terminal focus across pinned panes without touching the buffered text.
-  `pan next`, `pam next`, and `one` are also accepted as aliases for `pin next` to tolerate
-  dictation mis-hearings.
+  `pan next`, `pam next`, `in next`, and `one` are also accepted as aliases for `pin next`, and
+  `pan previous`, `pan prev`, `pin past`, and `pan past` are accepted as aliases for `pin previous`,
+  to tolerate dictation mis-hearings.
+- Added a light/dark theme toggle to the sidebar header, reachable with a single tap next to the
+  Settings/Refresh icons. The choice persists across sessions.
 - Added a "Next pinned pane" toolbar button next to the pin toggle for manually cycling to the
   next pinned pane.
 - Added a "Next pinned agent" button to the mobile command row (next to the keyboard/statusline

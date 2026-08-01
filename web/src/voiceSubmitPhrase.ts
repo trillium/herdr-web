@@ -10,9 +10,18 @@ export const VOICE_CLEAR_PHRASES = ["change"];
 // "pin next"/"pin previous" cycle focus across pinned panes instead of
 // touching the buffered text at all — the buffer is left as-is on fire.
 // "one" is a short, more reliably-transcribed alias for "pin next"; "pan
-// next"/"pam next" cover dictation mishearing "pin" as "pan"/"pam".
-export const VOICE_PIN_NEXT_PHRASES = ["pin next", "pan next", "pam next", "one"];
-export const VOICE_PIN_PREV_PHRASES = ["pin previous", "pin prev"];
+// next"/"pam next"/"in next" cover dictation mishearing "pin" as
+// "pan"/"pam"/"in". "pan previous"/"pan prev"/"pin past"/"pan past" cover the
+// same "pin"->"pan" mishearing plus "prev"->"past" for the previous phrase.
+export const VOICE_PIN_NEXT_PHRASES = ["pin next", "pan next", "pam next", "in next", "one"];
+export const VOICE_PIN_PREV_PHRASES = [
+  "pin previous",
+  "pin prev",
+  "pan previous",
+  "pan prev",
+  "pin past",
+  "pan past",
+];
 export const VOICE_SUBMIT_TIMER_MS = 1000;
 
 const VOICE_SUBMIT_PHRASE_SEP = "[\\s,.!?;:]+";
