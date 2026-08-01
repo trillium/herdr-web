@@ -47,8 +47,15 @@ Files: cli/herdr-channel.ts
   instances (e.g. reached over Tailscale) as remote bridges. `/api/snapshot` now includes a
   `bridges` array describing each configured remote bridge (id, label, url), and a standalone
   `GET /api/bridges` endpoint returning the same list (`id`, `url`) without the session-snapshot
-  round trip. The bridge proxies REST reads (`/api/remote/{bridge_id}/...`) and terminal WebSocket
-  connections (`/ws/remote/{bridge_id}/terminal`) to the corresponding remote bridge.
+  round trip. The bridge proxies REST reads (`/api/remote/{bridge_id}/...`) and terminal, events,
+  activity, and UI-events WebSocket connections (`/ws/remote/{bridge_id}/terminal|events|activity|ui-events`)
+  to the corresponding remote bridge.
+- Remote bridges configured via `--remote-bridge` are now automatically discovered and connected
+  by the web app with no settings required: on load (and on native app resume), it fetches
+  `GET /api/bridges` and adds a runtime for each one, proxied through the local bridge. These
+  show up in the sidebar bridge switcher alongside same-origin/configured bridges automatically —
+  there is no manual add/enable step, so voice-only and other hands-free users don't need to touch
+  Settings to see other machines' sessions.
 - Added a "Jump to present" floating button over the terminal pane that appears once the user has
   scrolled away from the live tail (tracked from the net scroll lines already sent to the bridge)
   and disappears once back at the bottom, whether by clicking it or scrolling back down manually.

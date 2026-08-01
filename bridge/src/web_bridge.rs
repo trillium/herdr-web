@@ -1204,6 +1204,18 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
             "/ws/remote/{bridge_id}/terminal",
             get(remote_terminal_ws_handler),
         )
+        .route(
+            "/ws/remote/{bridge_id}/events",
+            get(remote_events_ws_handler),
+        )
+        .route(
+            "/ws/remote/{bridge_id}/activity",
+            get(remote_activity_ws_handler),
+        )
+        .route(
+            "/ws/remote/{bridge_id}/ui-events",
+            get(remote_ui_events_ws_handler),
+        )
         .fallback_service(
             ServiceBuilder::new()
                 .layer(CompressionLayer::new())
@@ -3204,17 +3216,63 @@ async fn remote_terminal_ws_handler(
     RawQuery(query): RawQuery,
     headers: HeaderMap,
 ) -> Response {
+    remote_ws_proxy_handler(ws, state, bridge_id, query, headers, "/ws/terminal").await
+}
+
+async fn remote_events_ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<BridgeState>,
+    AxumPath(bridge_id): AxumPath<String>,
+    RawQuery(query): RawQuery,
+    headers: HeaderMap,
+) -> Response {
+    remote_ws_proxy_handler(ws, state, bridge_id, query, headers, "/ws/events").await
+}
+
+async fn remote_activity_ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<BridgeState>,
+    AxumPath(bridge_id): AxumPath<String>,
+    RawQuery(query): RawQuery,
+    headers: HeaderMap,
+) -> Response {
+    remote_ws_proxy_handler(ws, state, bridge_id, query, headers, "/ws/activity").await
+}
+
+async fn remote_ui_events_ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<BridgeState>,
+    AxumPath(bridge_id): AxumPath<String>,
+    RawQuery(query): RawQuery,
+    headers: HeaderMap,
+) -> Response {
+    remote_ws_proxy_handler(ws, state, bridge_id, query, headers, "/ws/ui-events").await
+}
+
+async fn remote_ws_proxy_handler(
+    ws: WebSocketUpgrade,
+    state: BridgeState,
+    bridge_id: String,
+    query: Option<String>,
+    headers: HeaderMap,
+    upstream_path: &'static str,
+) -> Response {
     if let Err(err) = ensure_allowed_request(&headers, &state.request_policy) {
         return err.into_response();
     }
     let Some(remote) = find_remote_bridge(&state.remote_bridges, &bridge_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    ws.on_upgrade(move |socket| proxy_terminal_socket(socket, remote, query))
+    ws.on_upgrade(move |socket| proxy_remote_socket(socket, remote, query, upstream_path))
         .into_response()
 }
 
-async fn proxy_terminal_socket(local: WebSocket, remote: RemoteBridge, query: Option<String>) {
+async fn proxy_remote_socket(
+    local: WebSocket,
+    remote: RemoteBridge,
+    query: Option<String>,
+    upstream_path: &'static str,
+) {
     let scheme = if remote.base_url.starts_with("https://") {
         "wss"
     } else {
@@ -3225,12 +3283,12 @@ async fn proxy_terminal_socket(local: WebSocket, remote: RemoteBridge, query: Op
         .filter(|value| !value.is_empty())
         .map(|value| format!("?{value}"))
         .unwrap_or_default();
-    let target = format!("{scheme}://{authority}/ws/terminal{suffix}");
+    let target = format!("{scheme}://{authority}{upstream_path}{suffix}");
 
     let remote_socket = match tokio_tungstenite::connect_async(&target).await {
         Ok((socket, _response)) => socket,
         Err(err) => {
-            warn!(error = %err, target = %target, "failed to connect to remote bridge terminal websocket");
+            warn!(error = %err, target = %target, "failed to connect to remote bridge websocket");
             return;
         }
     };

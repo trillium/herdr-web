@@ -5205,7 +5205,7 @@ function Switcher({
   bridgeCanConnect: boolean;
   bridgeError: string | null;
   bridgeLabel: string;
-  bridgeMode: "same-origin" | "configured" | "disconnected";
+  bridgeMode: "same-origin" | "configured" | "remote-proxy" | "disconnected";
   capabilityState: "idle" | "probing" | "ready" | "error";
   scope: Scope;
   sidebarView: SidebarView;
@@ -5623,7 +5623,7 @@ function Switcher({
             <span className="brand-sub">
               <b>{headerSummary}</b>
             </span>
-          ) : bridgeMode === "configured" ? (
+          ) : bridgeMode === "configured" || bridgeMode === "remote-proxy" ? (
             <span className="brand-sub">{bridgeLabel}</span>
           ) : null}
         </div>

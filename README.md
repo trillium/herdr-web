@@ -297,9 +297,11 @@ client has no TLS backend). The bridge derives a stable id from each URL's hostn
 collisions and dropping exact duplicates, and lists the configured remote bridges (id, label, url) in
 `/api/snapshot`'s `bridges` array, and standalone at `GET /api/bridges` (a lighter-weight read-only
 mirror of the same `--remote-bridge` config, without the session-snapshot round trip). `/api/remote/
-{bridge_id}/...` and `/ws/remote/{bridge_id}/terminal` then proxy REST reads and terminal WebSocket
-sessions through to that remote bridge. Only bridges the process was actually started with are
-reachable this way; the web app does not yet have UI to add or manage remote bridges.
+{bridge_id}/...` and `/ws/remote/{bridge_id}/terminal|events|activity|ui-events` then proxy REST reads
+and WebSocket sessions through to that remote bridge. Only bridges the process was actually started
+with are reachable this way. The web app itself needs no configuration to use them: on load it fetches
+`GET /api/bridges` and automatically adds each one to the sidebar bridge switcher, proxied through the
+local bridge — there is no settings screen for remote bridges, and none is needed.
 
 ## Keyboard Shortcuts
 
