@@ -37,6 +37,7 @@ describe("matchTrailingVoicePinPhrase", () => {
     expect(matchTrailingVoicePinPhrase("pin next")).toEqual({ direction: "next", tail: "pin next" });
     expect(matchTrailingVoicePinPhrase("okay one")).toEqual({ direction: "next", tail: "one" });
     expect(matchTrailingVoicePinPhrase("pan next")).toEqual({ direction: "next", tail: "pan next" });
+    expect(matchTrailingVoicePinPhrase("pam next")).toEqual({ direction: "next", tail: "pam next" });
   });
 
   it("matches 'pin previous'/'pin prev'", () => {
