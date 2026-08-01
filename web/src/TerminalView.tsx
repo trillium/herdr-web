@@ -1,4 +1,5 @@
 import {
+  ChevronsDown,
   Copy,
   ExternalLink,
   Keyboard,
@@ -53,6 +54,11 @@ import type {
   MobileTerminalTapTarget,
   MobileTouchSelectionEndpointTimeoutMs,
 } from "./mobileTerminalPrefs";
+import {
+  advanceTerminalScrollOffset,
+  isTerminalScrolledAwayFromPresent,
+  MAX_TERMINAL_SCROLL_JUMP_LINES,
+} from "./terminalScrollPresence";
 import type { PaneInfo } from "./types";
 import {
   matchTrailingVoiceClearPhrase,
@@ -194,6 +200,7 @@ export function TerminalView({
   const terminalIdRef = useRef(pane?.terminal_id ?? null);
   const overlayTerminalIdRef = useRef(pane?.terminal_id ?? null);
   const delayConnectingOverlayRef = useRef(false);
+  const terminalScrollOffsetRef = useRef(0);
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>("idle");
   const [closeReason, setCloseReason] = useState<string | null>(null);
   const [rendererReady, setRendererReady] = useState<TerminalRendererReady | null>(null);
@@ -205,6 +212,7 @@ export function TerminalView({
   const [mobileSelectionAction, setMobileSelectionAction] =
     useState<MobileSelectionAction | null>(null);
   const [mobileModeActive, setMobileModeActive] = useState(false);
+  const [scrolledAwayFromPresent, setScrolledAwayFromPresent] = useState(false);
   // Read at attach time without re-running the effect (which would re-attach the socket).
   const autoFocusRef = useRef(autoFocus);
   autoFocusRef.current = autoFocus;
@@ -448,6 +456,23 @@ export function TerminalView({
     [flushBatchedTerminalInput, scheduleBatchedTerminalInputFlush, sendTerminalInputFrame],
   );
 
+  const jumpToTerminalPresent = useCallback(() => {
+    const offsetLines = terminalScrollOffsetRef.current;
+    terminalScrollOffsetRef.current = 0;
+    setScrolledAwayFromPresent(false);
+    const socket = socketRef.current;
+    if (offsetLines <= 0 || socket?.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    socket.send(
+      JSON.stringify({
+        type: "scroll",
+        direction: "down",
+        lines: Math.min(offsetLines, MAX_TERMINAL_SCROLL_JUMP_LINES),
+      }),
+    );
+  }, []);
+
   useEffect(() => {
     if (terminalInputBatchDelayMs <= 0) {
       flushBatchedTerminalInput();
@@ -489,6 +514,8 @@ export function TerminalView({
     setShowConnectionOverlay(false);
     setCloseReason(null);
     terminalInputBlockedRef.current = false;
+    terminalScrollOffsetRef.current = 0;
+    setScrolledAwayFromPresent(false);
     if (!host || !terminalId) {
       setConnectionState("idle");
       host?.replaceChildren();
@@ -559,6 +586,17 @@ export function TerminalView({
               lines: Math.min(Math.abs(lines), 200),
             }),
           );
+          const wasScrolledAway = isTerminalScrolledAwayFromPresent(
+            terminalScrollOffsetRef.current,
+          );
+          terminalScrollOffsetRef.current = advanceTerminalScrollOffset(
+            terminalScrollOffsetRef.current,
+            lines,
+          );
+          const isScrolledAway = isTerminalScrolledAwayFromPresent(terminalScrollOffsetRef.current);
+          if (isScrolledAway !== wasScrolledAway) {
+            setScrolledAwayFromPresent(isScrolledAway);
+          }
         });
 
         resizeObserver = new ResizeObserver(() => {
@@ -1343,6 +1381,16 @@ export function TerminalView({
         <div className="terminal-overlay">
           {terminalConnectionCopy(connectionState, closeReason, hasAttachedForTerminal)}
         </div>
+      ) : null}
+      {scrolledAwayFromPresent ? (
+        <button
+          className="terminal-jump-to-present"
+          type="button"
+          onClick={jumpToTerminalPresent}
+        >
+          <ChevronsDown size={14} />
+          Jump to present
+        </button>
       ) : null}
       {uploadStatus ? (
         <div className="terminal-upload-status" role="status" aria-live="polite">

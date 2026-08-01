@@ -26,8 +26,8 @@ Files: cli/herdr-channel.ts
   buffered dictation instead of sending it.
 - Added trailing voice-pin-cycle phrases (`pin next`, `pin previous`/`pin prev`) to the mobile
   command input that cycle terminal focus across pinned panes without touching the buffered text.
-  `pan next` and `one` are also accepted as aliases for `pin next` to tolerate dictation
-  mis-hearings.
+  `pan next`, `pam next`, and `one` are also accepted as aliases for `pin next` to tolerate
+  dictation mis-hearings.
 - Added a "Next pinned pane" toolbar button next to the pin toggle for manually cycling to the
   next pinned pane.
 - Added a collapse toggle to the sidebar's spaces list, so it can be minimized to make room for
@@ -38,6 +38,10 @@ Files: cli/herdr-channel.ts
   `GET /api/bridges` endpoint returning the same list (`id`, `url`) without the session-snapshot
   round trip. The bridge proxies REST reads (`/api/remote/{bridge_id}/...`) and terminal WebSocket
   connections (`/ws/remote/{bridge_id}/terminal`) to the corresponding remote bridge.
+- Added a "Jump to present" floating button over the terminal pane that appears once the user has
+  scrolled away from the live tail (tracked from the net scroll lines already sent to the bridge)
+  and disappears once back at the bottom, whether by clicking it or scrolling back down manually.
+  Tracked per pane, so each split-grid pane shows its own button independently.
 
 ### Changed
 
