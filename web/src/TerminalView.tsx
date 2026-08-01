@@ -57,9 +57,7 @@ import type {
 } from "./mobileTerminalPrefs";
 import {
   advanceTerminalScrollOffset,
-  countTerminalOutputNewlines,
   isTerminalScrolledAwayFromPresent,
-  MAX_TERMINAL_SCROLL_JUMP_LINES,
 } from "./terminalScrollPresence";
 import type { PaneInfo } from "./types";
 import {
@@ -468,20 +466,12 @@ export function TerminalView({
   );
 
   const jumpToTerminalPresent = useCallback(() => {
-    const offsetLines = terminalScrollOffsetRef.current;
+    // All output is written to the local terminal buffer regardless of scroll position
+    // (see writeTerminalData), so returning to present is a local viewport reset — no
+    // server round trip needed, and nothing to undershoot if output kept streaming in.
     terminalScrollOffsetRef.current = 0;
     setScrolledAwayFromPresent(false);
-    const socket = socketRef.current;
-    if (offsetLines <= 0 || socket?.readyState !== WebSocket.OPEN) {
-      return;
-    }
-    socket.send(
-      JSON.stringify({
-        type: "scroll",
-        direction: "down",
-        lines: Math.min(offsetLines, MAX_TERMINAL_SCROLL_JUMP_LINES),
-      }),
-    );
+    rendererRef.current?.scrollToBottom();
   }, []);
 
   useEffect(() => {
@@ -753,12 +743,6 @@ export function TerminalView({
         rendererReadyRef.current?.generation !== ready.generation
       ) {
         return;
-      }
-      if (terminalScrollOffsetRef.current > 0) {
-        const newLines = countTerminalOutputNewlines(data);
-        if (newLines > 0) {
-          terminalScrollOffsetRef.current += newLines;
-        }
       }
       ready.renderer.write(data);
     };

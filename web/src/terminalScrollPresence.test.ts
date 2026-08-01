@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   advanceTerminalScrollOffset,
-  countTerminalOutputNewlines,
   isTerminalScrolledAwayFromPresent,
 } from "./terminalScrollPresence";
 
@@ -28,12 +27,5 @@ describe("terminal scroll presence", () => {
   it("reports scrolled-away only when the offset is above zero", () => {
     expect(isTerminalScrolledAwayFromPresent(0)).toBe(false);
     expect(isTerminalScrolledAwayFromPresent(1)).toBe(true);
-  });
-
-  it("counts newline bytes in a terminal output chunk", () => {
-    const encoder = new TextEncoder();
-    expect(countTerminalOutputNewlines(encoder.encode("no newlines here"))).toBe(0);
-    expect(countTerminalOutputNewlines(encoder.encode("line one\nline two\nline three\n"))).toBe(3);
-    expect(countTerminalOutputNewlines(encoder.encode("\r\n\r\n"))).toBe(2);
   });
 });

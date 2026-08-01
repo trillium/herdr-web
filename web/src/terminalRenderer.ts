@@ -111,6 +111,7 @@ export type TerminalRenderer = {
   write(data: string | Uint8Array): void;
   onInput(callback: (data: string) => void): () => void;
   onScroll(callback: (lines: number) => void): () => void;
+  scrollToBottom(): void;
   setTapFocusHandler(callback: (() => TerminalTapFocusResult) | null): void;
   setMobileTouchSelection(
     behavior: MobileLongPressBehavior,
@@ -228,6 +229,10 @@ export class GhosttyRenderer implements TerminalRenderer {
         this.#scrollCallback = null;
       }
     };
+  }
+
+  scrollToBottom() {
+    this.#terminal?.scrollToBottom();
   }
 
   setTapFocusHandler(callback: (() => TerminalTapFocusResult) | null) {

@@ -61,10 +61,10 @@ Files: cli/herdr-channel.ts
 - Uploaded files now get a unique hash suffix appended to their stored name, so repeat uploads
   that share a client-side name (e.g. a screenshot tool that always calls it `image.png`) no
   longer collide or prompt an overwrite confirmation.
-- Fixed "Jump to present" undershooting when output kept streaming in while scrolled away: the
-  tracked scroll distance only grew from the user's own scroll gestures, so newly arrived output
-  pushed the true bottom further down without the jump distance accounting for it. The tracked
-  offset now grows with incoming output while scrolled away, so the jump lands at the true bottom.
+- Fixed "Jump to present" undershooting or doing nothing: it previously asked the bridge to
+  scroll down by a client-tracked line count, which fell out of sync whenever output streamed in
+  while scrolled away. All output is already written to the local terminal buffer regardless of
+  scroll position, so jumping to present is now a local viewport reset with no server round trip.
 
 ### Removed
 

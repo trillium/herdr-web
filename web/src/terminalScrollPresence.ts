@@ -1,9 +1,10 @@
 // Every terminal scroll delta (wheel, touch drag, PageUp/PageDown) is forwarded to the
-// bridge as a request to move the remote session's view, since the live pty/session
-// scrollback is server-owned rather than mirrored locally. There is no server signal for
-// "at the bottom" today, so presence is inferred purely from the net lines requested.
-export const MAX_TERMINAL_SCROLL_JUMP_LINES = 65535;
-
+// bridge as a request to move the remote session's view, since scrolling up past what's
+// locally buffered requires the server-owned scrollback. Presence (are we away from the
+// live tail right now) is inferred purely from the net lines requested, since there is no
+// server signal for "at the bottom" today. Returning to present is a separate, local-only
+// operation (see TerminalRenderer.scrollToBottom) because everything already written to the
+// local buffer is available without a server round trip.
 export function advanceTerminalScrollOffset(offsetLines: number, deltaLines: number): number {
   if (!Number.isFinite(deltaLines) || deltaLines === 0) {
     return offsetLines;
@@ -13,18 +14,4 @@ export function advanceTerminalScrollOffset(offsetLines: number, deltaLines: num
 
 export function isTerminalScrolledAwayFromPresent(offsetLines: number): boolean {
   return offsetLines > 0;
-}
-
-const NEWLINE_BYTE = 0x0a;
-
-// Output that streams in while scrolled away pushes the true bottom further down without
-// the user scrolling, so the tracked offset must grow too or "jump to present" undershoots.
-export function countTerminalOutputNewlines(data: Uint8Array): number {
-  let count = 0;
-  for (let i = 0; i < data.length; i += 1) {
-    if (data[i] === NEWLINE_BYTE) {
-      count += 1;
-    }
-  }
-  return count;
 }
