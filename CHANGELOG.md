@@ -46,6 +46,7 @@ Files: cli/herdr-channel.ts
   Tracked per pane, so each split-grid pane shows its own button independently.
 - The mobile keyboard/command-row area now tints muted green when the active pane is pinned, as a
   hands-free visual cue of pin state.
+- The mobile command input now shows the active pane's name as its placeholder when empty.
 
 ### Changed
 

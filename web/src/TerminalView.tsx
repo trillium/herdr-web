@@ -60,6 +60,7 @@ import {
   isTerminalScrolledAwayFromPresent,
   MAX_TERMINAL_SCROLL_JUMP_LINES,
 } from "./terminalScrollPresence";
+import { paneTitle } from "./state";
 import type { PaneInfo } from "./types";
 import {
   matchTrailingVoiceClearPhrase,
@@ -1433,6 +1434,7 @@ export function TerminalView({
           onSubmitCommand={(command) => enqueueTerminalInput([command, "\r"])}
           onPinCycle={onVoicePinCycle}
           pinned={pinned}
+          placeholder={pane ? paneTitle(pane) : ""}
         />
       ) : null}
       {mobileSelectionAction ? (
@@ -1530,6 +1532,7 @@ function MobileTerminalControls({
   onSubmitCommand,
   onPinCycle,
   pinned,
+  placeholder,
 }: {
   commandInputRef: RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
   disabled: boolean;
@@ -1549,6 +1552,7 @@ function MobileTerminalControls({
   onSubmitCommand: (command: string) => void;
   onPinCycle: (direction: "next" | "prev") => void;
   pinned: boolean;
+  placeholder: string;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [value, setValue] = useState("");
@@ -1830,6 +1834,7 @@ function MobileTerminalControls({
             enterKeyHint={enterNewline ? "enter" : "send"}
             disabled={disabled}
             value={value}
+            placeholder={placeholder}
             onChange={(event) => setValue(event.target.value)}
             onKeyDown={onCommandTextareaKeyDown}
           />
@@ -1845,6 +1850,7 @@ function MobileTerminalControls({
             enterKeyHint="send"
             disabled={disabled}
             value={value}
+            placeholder={placeholder}
             onChange={(event) => setValue(event.target.value)}
           />
         )}
