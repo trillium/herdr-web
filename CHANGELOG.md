@@ -31,11 +31,12 @@ Files: cli/herdr-channel.ts
   to tolerate dictation mis-hearings. A bare `next` also cycles to the next pinned pane, but only
   when it's the entire buffer — unlike the other aliases it isn't trailing-matched, since "next" is
   too common a word to end ordinary commands with safely.
-- Added a light/dark theme toggle to the sidebar header (next to Settings/Refresh) and, for easier
-  reach on mobile, to the terminal command row's icon strip next to the pin-cycle button. Also
-  reachable by voice: trailing phrases `light mode`/`toggle light mode`/`light mode toggle` and
+- Added a light/dark theme toggle to the sidebar header (next to Settings/Refresh), reachable on
+  mobile via the hamburger menu. Also reachable by voice: trailing phrases
+  `light mode`/`toggle light mode`/`light mode toggle` and
   `dark mode`/`toggle dark mode`/`dark mode toggle` switch the theme without touching the buffered
-  dictation. The choice persists across sessions.
+  dictation. The choice persists across sessions. The terminal content area (ghostty-web) now
+  follows the theme too, instead of staying fixed to the dark Catppuccin Mocha palette.
 - Added a "Next pinned pane" toolbar button next to the pin toggle for manually cycling to the
   next pinned pane.
 - Added a "Next pinned agent" button to the mobile command row (next to the keyboard/statusline

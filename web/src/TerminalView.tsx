@@ -4,13 +4,11 @@ import {
   ExternalLink,
   Keyboard,
   Link,
-  Moon,
   Paperclip,
   Send,
   SkipForward,
   Smartphone,
   SquareTerminal,
-  Sun,
   TextCursorInput,
   X,
 } from "lucide-react";
@@ -62,7 +60,6 @@ import {
   isTerminalScrolledAwayFromPresent,
 } from "./terminalScrollPresence";
 import { readTerminalUsage, terminalUsageLevel } from "./terminalUsage";
-import { nextTheme } from "./theme";
 import type { Theme } from "./theme";
 import type { PaneInfo } from "./types";
 import {
@@ -244,6 +241,8 @@ export function TerminalView({
   mobileControlsRef.current = mobileControls;
   const terminalFontSizePxRef = useRef(terminalFontSizePx);
   terminalFontSizePxRef.current = terminalFontSizePx;
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   const mobileTapTargetRef = useRef(mobileTapTarget);
   mobileTapTargetRef.current = mobileTapTarget;
   const mobileLongPressBehaviorRef = useRef(mobileLongPressBehavior);
@@ -557,7 +556,10 @@ export function TerminalView({
     let resizeObserver: ResizeObserver | null = null;
     const generation = rendererGenerationRef.current + 1;
     rendererGenerationRef.current = generation;
-    const renderer: TerminalRenderer = new GhosttyRenderer(terminalFontSizePxRef.current);
+    const renderer: TerminalRenderer = new GhosttyRenderer(
+      terminalFontSizePxRef.current,
+      themeRef.current,
+    );
     rendererRef.current = renderer;
     setConnectionState("connecting");
 
@@ -1159,6 +1161,10 @@ export function TerminalView({
   }, [terminalFontSizePx]);
 
   useEffect(() => {
+    rendererRef.current?.setTheme(theme);
+  }, [theme]);
+
+  useEffect(() => {
     setMobileSelectionAction(null);
     rendererRef.current?.clearSelection();
   }, [connectionKey, pane?.terminal_id]);
@@ -1458,7 +1464,6 @@ export function TerminalView({
           onPinCycle={onVoicePinCycle}
           onPinToggle={onPinToggle}
           pinned={pinned}
-          theme={theme}
           onThemeChange={onThemeChange}
           placeholder={placeholder}
           usageHourlyPct={terminalUsage.hourlyPct}
@@ -1561,7 +1566,6 @@ function MobileTerminalControls({
   onPinCycle,
   onPinToggle,
   pinned,
-  theme,
   onThemeChange,
   placeholder,
   usageHourlyPct,
@@ -1586,7 +1590,6 @@ function MobileTerminalControls({
   onPinCycle: (direction: "next" | "prev") => void;
   onPinToggle: () => void;
   pinned: boolean;
-  theme: Theme;
   onThemeChange: (theme: Theme) => void;
   placeholder: string;
   /** Percent (0-100) of the account's rolling hourly usage window consumed, if reported. */
@@ -1889,15 +1892,6 @@ function MobileTerminalControls({
           {...pinCyclePress}
         >
           <SkipForward size={15} />
-        </button>
-        <button
-          className="term-key term-key-icon term-theme-toggle"
-          type="button"
-          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          onClick={() => onThemeChange(nextTheme(theme))}
-        >
-          {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
         </button>
         {expandingInput ? (
           <textarea
