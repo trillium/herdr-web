@@ -48,6 +48,9 @@ Files: cli/herdr-channel.ts
   when the active pane is pinned, as a hands-free visual cue of pin state.
 - The mobile command input now shows the active pane's workspace/tab (e.g. `herdr-web/1`) as its
   placeholder when empty.
+- Holding down the "Next pinned agent" button in the mobile command row now toggles pin state for
+  the active pane, instead of requiring the separate header pin button; a plain tap still cycles
+  to the next pinned pane.
 
 ### Changed
 

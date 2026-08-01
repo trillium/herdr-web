@@ -15,7 +15,7 @@ import {
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, DragEvent, KeyboardEvent, RefObject } from "react";
 import { autosizeMobileCommandTextarea } from "./mobileCommandTextarea";
-import { ConfirmDialog } from "./overlays";
+import { ConfirmDialog, useLongPress } from "./overlays";
 import { addNativeResumeHandler } from "./native";
 import { shellQuote } from "./shell";
 import {
@@ -112,6 +112,8 @@ type Props = {
   focusToken?: number;
   /** Called when the captain dictates "pin next"/"pin previous" into the mobile command input. */
   onVoicePinCycle?: (direction: "next" | "prev") => void;
+  /** Called when the pane-cycle button is held down; toggles pin state for this pane. */
+  onPinToggle?: () => void;
   /** Whether this pane is currently pinned; tints the mobile keyboard area as a hands-free cue. */
   pinned?: boolean;
   /** Placeholder shown in the empty mobile command input, e.g. "workspace/tab". */
@@ -180,6 +182,7 @@ export function TerminalView({
   refitToken = 0,
   focusToken = 0,
   onVoicePinCycle = () => {},
+  onPinToggle = () => {},
   pinned = false,
   placeholder = "",
 }: Props) {
@@ -1435,6 +1438,7 @@ export function TerminalView({
           onStageCommand={(command) => enqueueTerminalInput([command])}
           onSubmitCommand={(command) => enqueueTerminalInput([command, "\r"])}
           onPinCycle={onVoicePinCycle}
+          onPinToggle={onPinToggle}
           pinned={pinned}
           placeholder={placeholder}
         />
@@ -1533,6 +1537,7 @@ function MobileTerminalControls({
   onStageCommand,
   onSubmitCommand,
   onPinCycle,
+  onPinToggle,
   pinned,
   placeholder,
 }: {
@@ -1553,6 +1558,7 @@ function MobileTerminalControls({
   onStageCommand: (command: string) => void;
   onSubmitCommand: (command: string) => void;
   onPinCycle: (direction: "next" | "prev") => void;
+  onPinToggle: () => void;
   pinned: boolean;
   placeholder: string;
 }) {
@@ -1561,6 +1567,7 @@ function MobileTerminalControls({
   const [expanded, setExpanded] = useState(false);
   const [ctrlLatch, setCtrlLatch] = useState(false);
   const voiceSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pinCyclePress = useLongPress(onPinToggle, () => onPinCycle("next"));
   const setCommandInputNode = (node: HTMLInputElement | HTMLTextAreaElement | null) => {
     commandInputRef.current = node;
   };
@@ -1817,9 +1824,9 @@ function MobileTerminalControls({
         <button
           className="term-key term-key-icon term-pin-cycle"
           type="button"
-          aria-label="Next pinned agent"
-          title="Next pinned agent"
-          onClick={() => onPinCycle("next")}
+          aria-label="Next pinned agent (hold to pin/unpin)"
+          title="Next pinned agent (hold to pin/unpin)"
+          {...pinCyclePress}
         >
           <SkipForward size={15} />
         </button>

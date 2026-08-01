@@ -3569,6 +3569,11 @@ export function App() {
             httpUrl={selectedHttpUrl}
             wsUrl={selectedWsUrl}
             onVoicePinCycle={cyclePinnedPane}
+            onPinToggle={() => {
+              if (selectedRuntime && selectedPane) {
+                void toggleAgentPin(selectedRuntime.id, selectedPane.pane_id, selectedPanePinned);
+              }
+            }}
             selectedPanePinned={selectedPanePinned}
             selectedPaneWorkspaceTabPath={selectedPaneWorkspaceTabPath}
           />
@@ -3597,6 +3602,11 @@ export function App() {
             refitToken={refitToken}
             focusToken={terminalFocusToken}
             onVoicePinCycle={cyclePinnedPane}
+            onPinToggle={() => {
+              if (selectedRuntime && selectedPane) {
+                void toggleAgentPin(selectedRuntime.id, selectedPane.pane_id, selectedPanePinned);
+              }
+            }}
             pinned={selectedPanePinned}
             placeholder={selectedPaneWorkspaceTabPath}
           />
@@ -4939,6 +4949,7 @@ function SplitGrid({
   httpUrl,
   wsUrl,
   onVoicePinCycle,
+  onPinToggle,
   selectedPanePinned,
   selectedPaneWorkspaceTabPath,
 }: {
@@ -4965,6 +4976,7 @@ function SplitGrid({
   httpUrl: (path: string, query?: URLSearchParams) => string;
   wsUrl: (path: string, query?: URLSearchParams) => string;
   onVoicePinCycle: (direction: "next" | "prev") => void;
+  onPinToggle: () => void;
   selectedPanePinned: boolean;
   selectedPaneWorkspaceTabPath: string;
 }) {
@@ -5025,6 +5037,7 @@ function SplitGrid({
               refitToken={selected ? refitToken : 0}
               focusToken={selected ? focusToken : 0}
               onVoicePinCycle={onVoicePinCycle}
+              onPinToggle={onPinToggle}
               pinned={selected && selectedPanePinned}
               placeholder={selectedPaneWorkspaceTabPath}
             />
