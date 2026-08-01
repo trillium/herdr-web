@@ -1841,6 +1841,7 @@ button {
   --mobile-input-row-height: calc(34px * var(--mobile-controls-scale));
   --mobile-input-padding-x: calc(10px * var(--mobile-controls-scale));
   --mobile-send-width: calc(38px * var(--mobile-controls-scale));
+  position: relative;
   display: none;
   flex: 0 0 auto;
   gap: var(--mobile-control-gap);
@@ -1853,6 +1854,36 @@ button {
 .terminal-mobile-controls[data-pinned="true"] {
   border-top-color: color-mix(in srgb, var(--green) 55%, var(--line));
   background: color-mix(in srgb, var(--green) 10%, color-mix(in srgb, var(--mantle) 94%, black));
+}
+
+.terminal-usage-bars {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  pointer-events: none;
+}
+
+.terminal-usage-bar {
+  height: 2px;
+  background: color-mix(in srgb, var(--line) 50%, transparent);
+  overflow: hidden;
+}
+
+.terminal-usage-bar-fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.terminal-usage-bar[data-level="warn"] .terminal-usage-bar-fill {
+  background: var(--yellow);
+}
+
+.terminal-usage-bar[data-level="critical"] .terminal-usage-bar-fill {
+  background: var(--red);
 }
 
 .term-key-strip,

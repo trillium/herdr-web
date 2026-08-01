@@ -51,6 +51,11 @@ Files: cli/herdr-channel.ts
 - Holding down the "Next pinned agent" button in the mobile command row now toggles pin state for
   the active pane, instead of requiring the separate header pin button; a plain tap still cycles
   to the next pinned pane.
+- Added hourly/weekly usage progress bars, absolutely positioned along the top edge of the mobile
+  command row. There is no bridge or protocol support for usage yet: an agent process reports it by
+  calling `pane.report_metadata` with `state_labels` keys `usage_hourly_pct`/`usage_weekly_pct` set
+  to a `"0"`-`"100"` string; bars are omitted entirely until a pane reports them, and turn
+  yellow/red past 70%/90%.
 
 ### Changed
 

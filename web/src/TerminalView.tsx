@@ -59,6 +59,7 @@ import {
   advanceTerminalScrollOffset,
   isTerminalScrolledAwayFromPresent,
 } from "./terminalScrollPresence";
+import { readTerminalUsage, terminalUsageLevel } from "./terminalUsage";
 import type { PaneInfo } from "./types";
 import {
   matchTrailingVoiceClearPhrase,
@@ -185,6 +186,7 @@ export function TerminalView({
   pinned = false,
   placeholder = "",
 }: Props) {
+  const terminalUsage = readTerminalUsage(pane?.state_labels);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1432,6 +1434,8 @@ export function TerminalView({
           onPinToggle={onPinToggle}
           pinned={pinned}
           placeholder={placeholder}
+          usageHourlyPct={terminalUsage.hourlyPct}
+          usageWeeklyPct={terminalUsage.weeklyPct}
         />
       ) : null}
       {mobileSelectionAction ? (
@@ -1531,6 +1535,8 @@ function MobileTerminalControls({
   onPinToggle,
   pinned,
   placeholder,
+  usageHourlyPct,
+  usageWeeklyPct,
 }: {
   commandInputRef: RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
   disabled: boolean;
@@ -1552,6 +1558,10 @@ function MobileTerminalControls({
   onPinToggle: () => void;
   pinned: boolean;
   placeholder: string;
+  /** Percent (0-100) of the account's rolling hourly usage window consumed, if reported. */
+  usageHourlyPct?: number;
+  /** Percent (0-100) of the account's rolling weekly usage window consumed, if reported. */
+  usageWeeklyPct?: number;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [value, setValue] = useState("");
@@ -1680,6 +1690,30 @@ function MobileTerminalControls({
       data-expanded={expanded ? "true" : "false"}
       data-pinned={pinned ? "true" : "false"}
     >
+      {usageHourlyPct !== undefined || usageWeeklyPct !== undefined ? (
+        <div className="terminal-usage-bars" aria-hidden="true">
+          {usageHourlyPct !== undefined ? (
+            <div
+              className="terminal-usage-bar"
+              data-kind="hourly"
+              data-level={terminalUsageLevel(usageHourlyPct)}
+              title={`Hourly usage: ${Math.round(usageHourlyPct)}%`}
+            >
+              <div className="terminal-usage-bar-fill" style={{ width: `${usageHourlyPct}%` }} />
+            </div>
+          ) : null}
+          {usageWeeklyPct !== undefined ? (
+            <div
+              className="terminal-usage-bar"
+              data-kind="weekly"
+              data-level={terminalUsageLevel(usageWeeklyPct)}
+              title={`Weekly usage: ${Math.round(usageWeeklyPct)}%`}
+            >
+              <div className="terminal-usage-bar-fill" style={{ width: `${usageWeeklyPct}%` }} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {!compactControls ? (
         <>
           <div className="term-key-strip" aria-label="Common terminal keys">
