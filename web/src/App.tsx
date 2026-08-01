@@ -3592,6 +3592,8 @@ export function App() {
               }
             }}
             selectedPanePinned={selectedPanePinned}
+            theme={theme}
+            onThemeChange={setTheme}
             selectedPaneWorkspaceTabPath={selectedPaneWorkspaceTabPath}
           />
         ) : renderTerminal ? (
@@ -3625,6 +3627,8 @@ export function App() {
               }
             }}
             pinned={selectedPanePinned}
+            theme={theme}
+            onThemeChange={setTheme}
             placeholder={selectedPaneWorkspaceTabPath}
           />
         ) : (
@@ -4968,6 +4972,8 @@ function SplitGrid({
   onVoicePinCycle,
   onPinToggle,
   selectedPanePinned,
+  theme,
+  onThemeChange,
   selectedPaneWorkspaceTabPath,
 }: {
   cells: { pane: PaneInfo; style: CSSProperties }[];
@@ -4995,6 +5001,8 @@ function SplitGrid({
   onVoicePinCycle: (direction: "next" | "prev") => void;
   onPinToggle: () => void;
   selectedPanePinned: boolean;
+  theme: Theme;
+  onThemeChange: (theme: Theme) => void;
   selectedPaneWorkspaceTabPath: string;
 }) {
   // On touch devices, showing every split pane at once (e.g. a small tmux
@@ -5056,6 +5064,8 @@ function SplitGrid({
               onVoicePinCycle={onVoicePinCycle}
               onPinToggle={onPinToggle}
               pinned={selected && selectedPanePinned}
+              theme={theme}
+              onThemeChange={onThemeChange}
               placeholder={selectedPaneWorkspaceTabPath}
             />
           </div>

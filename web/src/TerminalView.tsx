@@ -4,11 +4,13 @@ import {
   ExternalLink,
   Keyboard,
   Link,
+  Moon,
   Paperclip,
   Send,
   SkipForward,
   Smartphone,
   SquareTerminal,
+  Sun,
   TextCursorInput,
   X,
 } from "lucide-react";
@@ -60,11 +62,14 @@ import {
   isTerminalScrolledAwayFromPresent,
 } from "./terminalScrollPresence";
 import { readTerminalUsage, terminalUsageLevel } from "./terminalUsage";
+import { nextTheme } from "./theme";
+import type { Theme } from "./theme";
 import type { PaneInfo } from "./types";
 import {
   matchTrailingVoiceClearPhrase,
   matchTrailingVoicePinPhrase,
   matchTrailingVoiceSubmitPhrase,
+  matchTrailingVoiceThemePhrase,
   stripVoiceSubmitPhrase,
   voiceTailStillMatches,
   VOICE_SUBMIT_TIMER_MS,
@@ -116,6 +121,10 @@ type Props = {
   onPinToggle?: () => void;
   /** Whether this pane is currently pinned; tints the mobile keyboard area as a hands-free cue. */
   pinned?: boolean;
+  /** Current app color theme, mirrored onto a mobile theme-toggle button and voice phrases. */
+  theme?: Theme;
+  /** Called when the mobile theme-toggle button is pressed or the captain dictates a theme phrase. */
+  onThemeChange?: (theme: Theme) => void;
   /** Placeholder shown in the empty mobile command input, e.g. "workspace/tab". */
   placeholder?: string;
 };
@@ -184,6 +193,8 @@ export function TerminalView({
   onVoicePinCycle = () => {},
   onPinToggle = () => {},
   pinned = false,
+  theme = "dark",
+  onThemeChange = () => {},
   placeholder = "",
 }: Props) {
   const terminalUsage = readTerminalUsage(pane?.state_labels);
@@ -474,7 +485,8 @@ export function TerminalView({
     terminalScrollOffsetRef.current = 0;
     setScrolledAwayFromPresent(false);
     rendererRef.current?.scrollToBottom();
-  }, []);
+    focusPreferredInput();
+  }, [focusPreferredInput]);
 
   useEffect(() => {
     if (terminalInputBatchDelayMs <= 0) {
@@ -502,6 +514,19 @@ export function TerminalView({
       }
     };
   }, [focusPreferredInput, focusToken]);
+
+  // The mobile command input is disabled until the newly-selected pane's
+  // socket attaches, so a focus request (e.g. voice pin-cycle switching to a
+  // pane that hasn't attached yet) can outlive the retries above. Catch that
+  // by refocusing right when the connection actually finishes attaching.
+  const wasAttachedRef = useRef(connectionState === "attached");
+  useEffect(() => {
+    const isAttached = connectionState === "attached";
+    if (!wasAttachedRef.current && isAttached && focusToken > 0) {
+      focusPreferredInput();
+    }
+    wasAttachedRef.current = isAttached;
+  }, [connectionState, focusToken, focusPreferredInput]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -1433,6 +1458,8 @@ export function TerminalView({
           onPinCycle={onVoicePinCycle}
           onPinToggle={onPinToggle}
           pinned={pinned}
+          theme={theme}
+          onThemeChange={onThemeChange}
           placeholder={placeholder}
           usageHourlyPct={terminalUsage.hourlyPct}
           usageWeeklyPct={terminalUsage.weeklyPct}
@@ -1534,6 +1561,8 @@ function MobileTerminalControls({
   onPinCycle,
   onPinToggle,
   pinned,
+  theme,
+  onThemeChange,
   placeholder,
   usageHourlyPct,
   usageWeeklyPct,
@@ -1557,6 +1586,8 @@ function MobileTerminalControls({
   onPinCycle: (direction: "next" | "prev") => void;
   onPinToggle: () => void;
   pinned: boolean;
+  theme: Theme;
+  onThemeChange: (theme: Theme) => void;
   placeholder: string;
   /** Percent (0-100) of the account's rolling hourly usage window consumed, if reported. */
   usageHourlyPct?: number;
@@ -1595,7 +1626,9 @@ function MobileTerminalControls({
     const clearTail = disabled || submitTail ? null : matchTrailingVoiceClearPhrase(value);
     const pinMatch =
       disabled || submitTail || clearTail ? null : matchTrailingVoicePinPhrase(value);
-    const matchedTail = submitTail ?? clearTail ?? pinMatch?.tail ?? null;
+    const themeMatch =
+      disabled || submitTail || clearTail || pinMatch ? null : matchTrailingVoiceThemePhrase(value);
+    const matchedTail = submitTail ?? clearTail ?? pinMatch?.tail ?? themeMatch?.tail ?? null;
     if (!matchedTail) {
       if (voiceSubmitTimerRef.current) {
         clearTimeout(voiceSubmitTimerRef.current);
@@ -1621,10 +1654,12 @@ function MobileTerminalControls({
         onSubmitCommand(stripped);
       } else if (pinMatch) {
         onPinCycle(pinMatch.direction);
+      } else if (themeMatch) {
+        onThemeChange(themeMatch.theme);
       }
       setValue("");
     }, VOICE_SUBMIT_TIMER_MS);
-  }, [value, disabled, onSubmitCommand, onPinCycle]);
+  }, [value, disabled, onSubmitCommand, onPinCycle, onThemeChange]);
 
   useEffect(() => {
     return () => {
@@ -1854,6 +1889,15 @@ function MobileTerminalControls({
           {...pinCyclePress}
         >
           <SkipForward size={15} />
+        </button>
+        <button
+          className="term-key term-key-icon term-theme-toggle"
+          type="button"
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          onClick={() => onThemeChange(nextTheme(theme))}
+        >
+          {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
         </button>
         {expandingInput ? (
           <textarea

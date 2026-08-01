@@ -29,8 +29,11 @@ Files: cli/herdr-channel.ts
   `pan next`, `pam next`, `in next`, and `one` are also accepted as aliases for `pin next`, and
   `pan previous`, `pan prev`, `pin past`, and `pan past` are accepted as aliases for `pin previous`,
   to tolerate dictation mis-hearings.
-- Added a light/dark theme toggle to the sidebar header, reachable with a single tap next to the
-  Settings/Refresh icons. The choice persists across sessions.
+- Added a light/dark theme toggle to the sidebar header (next to Settings/Refresh) and, for easier
+  reach on mobile, to the terminal command row's icon strip next to the pin-cycle button. Also
+  reachable by voice: trailing phrases `light mode`/`toggle light mode`/`light mode toggle` and
+  `dark mode`/`toggle dark mode`/`dark mode toggle` switch the theme without touching the buffered
+  dictation. The choice persists across sessions.
 - Added a "Next pinned pane" toolbar button next to the pin toggle for manually cycling to the
   next pinned pane.
 - Added a "Next pinned agent" button to the mobile command row (next to the keyboard/statusline
@@ -66,6 +69,11 @@ Files: cli/herdr-channel.ts
 
 - Fixed pinned-pane cycling (voice or button) not returning focus to the mobile command input
   after switching panes.
+- Fixed a follow-on case of the above: if the newly-selected pane's terminal socket hadn't finished
+  attaching within the focus retry window, the command input stayed disabled and focus was never
+  applied. It now also refocuses right when the connection finishes attaching.
+- The "Jump to present" button now also returns focus to the mobile command input (or terminal
+  keyboard area), instead of leaving focus wherever it was before scrolling.
 - Uploaded files now get a unique hash suffix appended to their stored name, so repeat uploads
   that share a client-side name (e.g. a screenshot tool that always calls it `image.png`) no
   longer collide or prompt an overwrite confirmation.

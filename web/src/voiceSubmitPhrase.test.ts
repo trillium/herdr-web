@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   matchTrailingVoicePinPhrase,
   matchTrailingVoiceSubmitPhrase,
+  matchTrailingVoiceThemePhrase,
   stripVoiceSubmitPhrase,
 } from "./voiceSubmitPhrase";
 
@@ -59,6 +60,43 @@ describe("matchTrailingVoicePinPhrase", () => {
   it("does not match 'one' embedded in a larger word or not trailing", () => {
     expect(matchTrailingVoicePinPhrase("someone")).toBeNull();
     expect(matchTrailingVoicePinPhrase("one more thing")).toBeNull();
+  });
+});
+
+describe("matchTrailingVoiceThemePhrase", () => {
+  it("matches 'light mode' and its aliases", () => {
+    expect(matchTrailingVoiceThemePhrase("light mode")).toEqual({
+      theme: "light",
+      tail: "light mode",
+    });
+    expect(matchTrailingVoiceThemePhrase("toggle light mode")).toEqual({
+      theme: "light",
+      tail: "toggle light mode",
+    });
+    expect(matchTrailingVoiceThemePhrase("light mode toggle")).toEqual({
+      theme: "light",
+      tail: "light mode toggle",
+    });
+  });
+
+  it("matches 'dark mode' and its aliases", () => {
+    expect(matchTrailingVoiceThemePhrase("dark mode")).toEqual({
+      theme: "dark",
+      tail: "dark mode",
+    });
+    expect(matchTrailingVoiceThemePhrase("toggle dark mode")).toEqual({
+      theme: "dark",
+      tail: "toggle dark mode",
+    });
+    expect(matchTrailingVoiceThemePhrase("dark mode toggle")).toEqual({
+      theme: "dark",
+      tail: "dark mode toggle",
+    });
+  });
+
+  it("returns null when there is no theme phrase", () => {
+    expect(matchTrailingVoiceThemePhrase("just some text")).toBeNull();
+    expect(matchTrailingVoiceThemePhrase("")).toBeNull();
   });
 });
 

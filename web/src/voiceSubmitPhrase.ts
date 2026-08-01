@@ -22,6 +22,11 @@ export const VOICE_PIN_PREV_PHRASES = [
   "pin past",
   "pan past",
 ];
+// "light mode"/"dark mode" (plus "toggle light mode"/"light mode toggle" and
+// the dark equivalents) switch the app's color theme, same fire-and-clear
+// behavior as the pin-cycle phrases above.
+export const VOICE_THEME_LIGHT_PHRASES = ["toggle light mode", "light mode toggle", "light mode"];
+export const VOICE_THEME_DARK_PHRASES = ["toggle dark mode", "dark mode toggle", "dark mode"];
 export const VOICE_SUBMIT_TIMER_MS = 1000;
 
 const VOICE_SUBMIT_PHRASE_SEP = "[\\s,.!?;:]+";
@@ -50,6 +55,8 @@ const VOICE_SUBMIT_PHRASE_MATCHERS = buildVoicePhraseMatchers(VOICE_SUBMIT_PHRAS
 const VOICE_CLEAR_PHRASE_MATCHERS = buildVoicePhraseMatchers(VOICE_CLEAR_PHRASES);
 const VOICE_PIN_NEXT_PHRASE_MATCHERS = buildVoicePhraseMatchers(VOICE_PIN_NEXT_PHRASES);
 const VOICE_PIN_PREV_PHRASE_MATCHERS = buildVoicePhraseMatchers(VOICE_PIN_PREV_PHRASES);
+const VOICE_THEME_LIGHT_PHRASE_MATCHERS = buildVoicePhraseMatchers(VOICE_THEME_LIGHT_PHRASES);
+const VOICE_THEME_DARK_PHRASE_MATCHERS = buildVoicePhraseMatchers(VOICE_THEME_DARK_PHRASES);
 
 function matchTrailingPhrase(value: string, matchers: RegExp[]): string | null {
   for (const matcher of matchers) {
@@ -82,6 +89,21 @@ export function matchTrailingVoicePinPhrase(
   const prevTail = matchTrailingPhrase(value, VOICE_PIN_PREV_PHRASE_MATCHERS);
   if (prevTail) {
     return { direction: "prev", tail: prevTail };
+  }
+  return null;
+}
+
+/** Returns the trailing "light mode"/"dark mode" phrase theme + matched text, else null. */
+export function matchTrailingVoiceThemePhrase(
+  value: string,
+): { theme: "light" | "dark"; tail: string } | null {
+  const lightTail = matchTrailingPhrase(value, VOICE_THEME_LIGHT_PHRASE_MATCHERS);
+  if (lightTail) {
+    return { theme: "light", tail: lightTail };
+  }
+  const darkTail = matchTrailingPhrase(value, VOICE_THEME_DARK_PHRASE_MATCHERS);
+  if (darkTail) {
+    return { theme: "dark", tail: darkTail };
   }
   return null;
 }
