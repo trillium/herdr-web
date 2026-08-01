@@ -28,7 +28,9 @@ Files: cli/herdr-channel.ts
   command input that cycle terminal focus across pinned panes without touching the buffered text.
   `pan next`, `pam next`, `in next`, and `one` are also accepted as aliases for `pin next`, and
   `pan previous`, `pan prev`, `pin past`, and `pan past` are accepted as aliases for `pin previous`,
-  to tolerate dictation mis-hearings.
+  to tolerate dictation mis-hearings. A bare `next` also cycles to the next pinned pane, but only
+  when it's the entire buffer — unlike the other aliases it isn't trailing-matched, since "next" is
+  too common a word to end ordinary commands with safely.
 - Added a light/dark theme toggle to the sidebar header (next to Settings/Refresh) and, for easier
   reach on mobile, to the terminal command row's icon strip next to the pin-cycle button. Also
   reachable by voice: trailing phrases `light mode`/`toggle light mode`/`light mode toggle` and

@@ -14,6 +14,10 @@ export const VOICE_CLEAR_PHRASES = ["change"];
 // "pan"/"pam"/"in". "pan previous"/"pan prev"/"pin past"/"pan past" cover the
 // same "pin"->"pan" mishearing plus "prev"->"past" for the previous phrase.
 export const VOICE_PIN_NEXT_PHRASES = ["pin next", "pan next", "pam next", "in next", "one"];
+// Bare "next" is too common a trailing word in ordinary commands ("run the
+// next test") to trailing-match safely, so it only fires as pin-next when
+// it's the *entire* buffer.
+export const VOICE_PIN_NEXT_WHOLE_PHRASES = ["next"];
 export const VOICE_PIN_PREV_PHRASES = [
   "pin previous",
   "pin prev",
@@ -51,9 +55,18 @@ function buildVoicePhraseMatchers(phrases: string[]): RegExp[] {
   );
 }
 
+function buildVoiceWholePhraseMatchers(phrases: string[]): RegExp[] {
+  return phrases.map(
+    (phrase) => new RegExp(`^\\s*(${buildVoiceSubmitPhraseCore(phrase)})[.!?,;]*\\s*$`, "i"),
+  );
+}
+
 const VOICE_SUBMIT_PHRASE_MATCHERS = buildVoicePhraseMatchers(VOICE_SUBMIT_PHRASES);
 const VOICE_CLEAR_PHRASE_MATCHERS = buildVoicePhraseMatchers(VOICE_CLEAR_PHRASES);
 const VOICE_PIN_NEXT_PHRASE_MATCHERS = buildVoicePhraseMatchers(VOICE_PIN_NEXT_PHRASES);
+const VOICE_PIN_NEXT_WHOLE_PHRASE_MATCHERS = buildVoiceWholePhraseMatchers(
+  VOICE_PIN_NEXT_WHOLE_PHRASES,
+);
 const VOICE_PIN_PREV_PHRASE_MATCHERS = buildVoicePhraseMatchers(VOICE_PIN_PREV_PHRASES);
 const VOICE_THEME_LIGHT_PHRASE_MATCHERS = buildVoicePhraseMatchers(VOICE_THEME_LIGHT_PHRASES);
 const VOICE_THEME_DARK_PHRASE_MATCHERS = buildVoicePhraseMatchers(VOICE_THEME_DARK_PHRASES);
@@ -85,6 +98,10 @@ export function matchTrailingVoicePinPhrase(
   const nextTail = matchTrailingPhrase(value, VOICE_PIN_NEXT_PHRASE_MATCHERS);
   if (nextTail) {
     return { direction: "next", tail: nextTail };
+  }
+  const wholeNextTail = matchTrailingPhrase(value, VOICE_PIN_NEXT_WHOLE_PHRASE_MATCHERS);
+  if (wholeNextTail) {
+    return { direction: "next", tail: wholeNextTail };
   }
   const prevTail = matchTrailingPhrase(value, VOICE_PIN_PREV_PHRASE_MATCHERS);
   if (prevTail) {

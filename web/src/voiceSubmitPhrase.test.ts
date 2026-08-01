@@ -61,6 +61,17 @@ describe("matchTrailingVoicePinPhrase", () => {
     expect(matchTrailingVoicePinPhrase("someone")).toBeNull();
     expect(matchTrailingVoicePinPhrase("one more thing")).toBeNull();
   });
+
+  it("matches bare 'next' only when it's the entire buffer", () => {
+    expect(matchTrailingVoicePinPhrase("next")).toEqual({ direction: "next", tail: "next" });
+    expect(matchTrailingVoicePinPhrase("Next!")).toEqual({ direction: "next", tail: "Next" });
+    expect(matchTrailingVoicePinPhrase("  next  ")).toEqual({ direction: "next", tail: "next" });
+  });
+
+  it("does not match 'next' trailing inside an ordinary command", () => {
+    expect(matchTrailingVoicePinPhrase("run the next test")).toBeNull();
+    expect(matchTrailingVoicePinPhrase("skip to the next")).toBeNull();
+  });
 });
 
 describe("matchTrailingVoiceThemePhrase", () => {
