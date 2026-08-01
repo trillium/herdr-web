@@ -87,9 +87,81 @@ describe("LaunchDialog", () => {
     expect(options[0].getAttribute("aria-checked")).toBe("true");
     expect(document.activeElement).toBe(options[0]);
   });
+
+  it("disables create and shows an empty message when there are no options", async () => {
+    const { container } = await renderDialog([], "Loading launchers…");
+
+    expect(launchOptions(container)).toHaveLength(0);
+    expect(container.querySelector(".launch-empty")?.textContent).toBe("Loading launchers…");
+    expect(createButton(container).disabled).toBe(true);
+  });
+
+  it("reselects the first option when the current preset disappears from the list", async () => {
+    const { container, root } = await renderDialog([
+      preset("builtin:shell", "Shell", null, true),
+      preset("builtin:codex", "Codex", "codex", true),
+    ]);
+
+    await act(async () => {
+      launchOptions(container)[1].click();
+    });
+    expect(titleInput(container).value).toBe("Codex");
+    expect(launchOptions(container)[1].getAttribute("aria-checked")).toBe("true");
+
+    await act(async () => {
+      root.render(
+        <LaunchDialog
+          target={{ mode: "tab", workspaceId: "space-1" }}
+          options={[
+            preset("builtin:grok", "Grok", "grok", true),
+            preset("builtin:opencode", "OpenCode", "opencode", true),
+          ]}
+          onCancel={vi.fn()}
+          onSubmit={vi.fn()}
+        />,
+      );
+    });
+
+    const options = launchOptions(container);
+    expect(options.map((option) => option.textContent)).toEqual(["Grok", "OpenCode"]);
+    expect(options[0].getAttribute("aria-checked")).toBe("true");
+    expect(titleInput(container).value).toBe("Grok");
+  });
+
+  it("preserves a custom title when options change", async () => {
+    const { container, root } = await renderDialog([
+      preset("builtin:shell", "Shell", null, true),
+      preset("builtin:codex", "Codex", "codex", true),
+    ]);
+
+    await act(async () => {
+      const input = titleInput(container);
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "reviewer");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(titleInput(container).value).toBe("reviewer");
+
+    await act(async () => {
+      root.render(
+        <LaunchDialog
+          target={{ mode: "tab", workspaceId: "space-1" }}
+          options={[
+            preset("builtin:grok", "Grok", "grok", true),
+            preset("builtin:opencode", "OpenCode", "opencode", true),
+          ]}
+          onCancel={vi.fn()}
+          onSubmit={vi.fn()}
+        />,
+      );
+    });
+
+    expect(titleInput(container).value).toBe("reviewer");
+    expect(launchOptions(container)[0].getAttribute("aria-checked")).toBe("true");
+  });
 });
 
-async function renderDialog(options: LauncherPresetOption[]) {
+async function renderDialog(options: LauncherPresetOption[], emptyMessage?: string) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -101,13 +173,14 @@ async function renderDialog(options: LauncherPresetOption[]) {
       <LaunchDialog
         target={{ mode: "tab", workspaceId: "space-1" }}
         options={options}
+        emptyMessage={emptyMessage}
         onCancel={vi.fn()}
         onSubmit={onSubmit}
       />,
     );
   });
 
-  return { container, onSubmit };
+  return { container, onSubmit, root };
 }
 
 function launchOptions(container: HTMLElement) {

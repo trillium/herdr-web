@@ -1,9 +1,9 @@
 import type { PaneInfo } from "./types";
-import type { LauncherPresetOption } from "./launcherPresets";
+import type { LauncherPresetOption, LegacyLaunchKind } from "./launcherPresets";
 import { FALLBACK_LAUNCHER_PRESETS, legacyKindForPresetId } from "./launcherPresets";
 
 export type SplitDirection = "right" | "down";
-export type LaunchKind = "shell" | "codex" | "claude" | "pi";
+export type LaunchKind = LegacyLaunchKind;
 
 export type LaunchSpec = {
   presetId: string;
@@ -20,12 +20,16 @@ export const LAUNCH_OPTIONS: { kind: LaunchKind; label: string }[] = [
   { kind: "codex", label: "Codex" },
   { kind: "claude", label: "Claude" },
   { kind: "pi", label: "pi" },
+  { kind: "grok", label: "Grok" },
+  { kind: "opencode", label: "OpenCode" },
 ];
 
 const AGENT_ARGV: Record<Exclude<LaunchKind, "shell">, string[]> = {
   codex: ["codex"],
   claude: ["claude"],
   pi: ["pi"],
+  grok: ["grok"],
+  opencode: ["opencode"],
 };
 
 export function launchLabel(kind: LaunchKind) {

@@ -20,7 +20,7 @@ navigation, multi-client viewing, mobile input controls, and synchronized pane s
 - Shared browser terminal viewing with synchronized pane selection across desktop and mobile.
 - Mobile-friendly text input with stage/send actions, configurable tap focus, and extended
   terminal key controls.
-- Agent-focused sidebar with styled icons for detected Codex/OpenAI, Claude, and Pi panes.
+- Agent-focused sidebar with styled icons for detected Codex/OpenAI, Claude, Pi, Grok, and OpenCode panes.
 - Image and file uploads from the terminal toolbar, paste, or drag/drop, with uploaded paths inserted
   into the active terminal input.
 - Context menus for renaming, closing, splitting, and moving panes between tabs or spaces.
@@ -163,6 +163,10 @@ flushed early once the pending UTF-8 input reaches 32 bytes, so paste-like input
 
 ## Launcher Presets
 
+The create menu is owned by the bridge. By default it shows these built-ins, in order:
+
+`Shell`, `Codex`, `Claude`, `pi`, `Grok`, `OpenCode`.
+
 The bridge can load local launcher presets from:
 
 ```text
@@ -171,11 +175,18 @@ ${XDG_CONFIG_HOME:-~/.config}/herdr-web/launcher-presets.json
 
 Override the path with `--launcher-presets PATH` or `HERDR_WEB_LAUNCHER_PRESETS=PATH`.
 
+Optional `builtins` is an allowlist that chooses which built-ins appear and in what order. Omit it to
+show every built-in. Use `[]` to hide all built-ins and keep only custom presets. Entries may be short
+names (`shell`) or full ids (`builtin:shell`). Unknown names are ignored with a warning. Bridges that
+do not yet understand `builtins` reject the whole file (unknown field); upgrade the bridge before
+adding this key.
+
 Example:
 
 ```json
 {
   "version": 1,
+  "builtins": ["shell", "claude", "grok", "opencode"],
   "presets": [
     {
       "id": "codex-gpt5",

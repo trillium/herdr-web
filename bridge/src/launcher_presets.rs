@@ -14,6 +14,8 @@ const BUILTIN_SHELL_ID: &str = "builtin:shell";
 const BUILTIN_CODEX_ID: &str = "builtin:codex";
 const BUILTIN_CLAUDE_ID: &str = "builtin:claude";
 const BUILTIN_PI_ID: &str = "builtin:pi";
+const BUILTIN_GROK_ID: &str = "builtin:grok";
+const BUILTIN_OPENCODE_ID: &str = "builtin:opencode";
 
 const KNOWN_AGENT_HINTS: &[&str] = &[
     "amp",
@@ -91,6 +93,12 @@ pub struct LauncherPresetDisplay {
 struct LauncherPresetFile {
     #[serde(default)]
     version: Option<u32>,
+    /// Optional allowlist/order of built-in launcher entries.
+    /// When omitted, every built-in is shown in the default order.
+    /// When present (including empty), only the listed built-ins are shown.
+    /// Accepts short names (`shell`) or full ids (`builtin:shell`).
+    #[serde(default)]
+    builtins: Option<Vec<String>>,
     #[serde(default)]
     presets: Vec<serde_json::Value>,
 }
@@ -128,7 +136,6 @@ impl LauncherPresetStore {
     }
 
     fn load_from_path_with_mode(path: &Path, explicit: bool) -> Result<Self, String> {
-        let mut presets = builtin_presets();
         let mut warnings = Vec::new();
         if !path.exists() {
             if explicit {
@@ -137,7 +144,10 @@ impl LauncherPresetStore {
                     path.display()
                 ));
             }
-            return Ok(Self { presets, warnings });
+            return Ok(Self {
+                presets: builtin_presets(),
+                warnings,
+            });
         }
         let text = match fs::read_to_string(path) {
             Ok(text) => text,
@@ -147,7 +157,10 @@ impl LauncherPresetStore {
                     return Err(message);
                 }
                 warnings.push(message);
-                return Ok(Self { presets, warnings });
+                return Ok(Self {
+                    presets: builtin_presets(),
+                    warnings,
+                });
             }
         };
         let config: LauncherPresetFile = match serde_json::from_str(&text) {
@@ -158,7 +171,10 @@ impl LauncherPresetStore {
                     return Err(message);
                 }
                 warnings.push(message);
-                return Ok(Self { presets, warnings });
+                return Ok(Self {
+                    presets: builtin_presets(),
+                    warnings,
+                });
             }
         };
         if config.version.unwrap_or(1) != 1 {
@@ -170,8 +186,12 @@ impl LauncherPresetStore {
                 return Err(message);
             }
             warnings.push(message);
-            return Ok(Self { presets, warnings });
+            return Ok(Self {
+                presets: builtin_presets(),
+                warnings,
+            });
         }
+        let mut presets = select_builtin_presets(config.builtins.as_deref(), &mut warnings);
         let mut ids: HashSet<String> = presets.iter().map(|preset| preset.id.clone()).collect();
         for config_preset in config.presets {
             let config_preset = match serde_json::from_value::<LauncherPresetConfig>(config_preset)
@@ -329,7 +349,61 @@ fn builtin_presets() -> Vec<ResolvedLauncherPreset> {
             Some(vec!["claude".into()]),
         ),
         builtin(BUILTIN_PI_ID, "pi", Some("pi"), Some(vec!["pi".into()])),
+        builtin(
+            BUILTIN_GROK_ID,
+            "Grok",
+            Some("grok"),
+            Some(vec!["grok".into()]),
+        ),
+        builtin(
+            BUILTIN_OPENCODE_ID,
+            "OpenCode",
+            Some("opencode"),
+            Some(vec!["opencode".into()]),
+        ),
     ]
+}
+
+fn select_builtin_presets(
+    selection: Option<&[String]>,
+    warnings: &mut Vec<String>,
+) -> Vec<ResolvedLauncherPreset> {
+    let all = builtin_presets();
+    let Some(selection) = selection else {
+        return all;
+    };
+    let by_key: HashMap<String, &ResolvedLauncherPreset> = all
+        .iter()
+        .flat_map(|preset| {
+            let short = builtin_short_name(&preset.id)
+                .map(str::to_string)
+                .unwrap_or_else(|| preset.id.clone());
+            [(preset.id.clone(), preset), (short, preset)]
+        })
+        .collect();
+    let mut selected = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in selection {
+        let key = entry.trim().to_ascii_lowercase();
+        if key.is_empty() {
+            warnings.push("invalid builtins entry: empty name".to_string());
+            continue;
+        }
+        let Some(preset) = by_key.get(&key).copied() else {
+            warnings.push(format!(
+                "unknown builtin launcher entry {entry:?}; expected shell, codex, claude, pi, grok, opencode, or builtin:<name>"
+            ));
+            continue;
+        };
+        if seen.insert(preset.id.clone()) {
+            selected.push(preset.clone());
+        }
+    }
+    selected
+}
+
+fn builtin_short_name(id: &str) -> Option<&str> {
+    id.strip_prefix("builtin:")
 }
 
 fn builtin(
@@ -359,7 +433,9 @@ fn resolve_config_preset(
         .trim()
         .to_string();
     validate_slug(&id, "preset id").map_err(|err| format!("invalid preset {id:?}: {err}"))?;
-    if used_ids.contains(&id) {
+    // Always reserve the builtin: namespace so filtered-out built-ins cannot be
+    // reclaimed as customs (e.g. builtin:shell must not become a plain shell launch).
+    if id.starts_with("builtin:") || used_ids.contains(&id) {
         return Err(format!("invalid preset {id}: duplicate or reserved id"));
     }
     let label = preset
@@ -487,8 +563,22 @@ mod tests {
         let store =
             LauncherPresetStore::load_from_path(Path::new("/definitely/missing.json")).unwrap();
         let response = store.response();
-        assert_eq!(response.presets.len(), 4);
-        assert_eq!(response.presets[0].id, "builtin:shell");
+        assert_eq!(response.presets.len(), 6);
+        assert_eq!(
+            response
+                .presets
+                .iter()
+                .map(|preset| preset.id.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "builtin:shell",
+                "builtin:codex",
+                "builtin:claude",
+                "builtin:pi",
+                "builtin:grok",
+                "builtin:opencode",
+            ]
+        );
     }
 
     #[test]
@@ -499,7 +589,7 @@ mod tests {
         )
         .unwrap();
         let response = store.response();
-        assert_eq!(response.presets.len(), 4);
+        assert_eq!(response.presets.len(), 6);
         assert_eq!(response.warnings.len(), 1);
         assert!(response.warnings[0].contains("file not found"));
     }
@@ -514,10 +604,118 @@ mod tests {
         let store = LauncherPresetStore::load_from_path(&path).unwrap();
         let response = store.response();
 
-        assert_eq!(response.presets.len(), 4);
+        assert_eq!(response.presets.len(), 6);
         assert_eq!(response.presets[0].id, "builtin:shell");
         assert_eq!(response.warnings.len(), 1);
         assert!(response.warnings[0].contains("parse error"));
+    }
+
+    #[test]
+    fn builtins_allowlist_filters_and_orders_built_ins() {
+        let root = unique_test_dir("launcher-presets-builtins-filter");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("presets.json");
+        fs::write(
+            &path,
+            r#"{"version":1,"builtins":["opencode","shell","unknown","grok","shell"],"presets":[
+                {"id":"team","label":"Team","argv":["team-agent"]}
+            ]}"#,
+        )
+        .unwrap();
+
+        let store = LauncherPresetStore::load_from_path(&path).unwrap();
+        let response = store.response();
+        assert_eq!(
+            response
+                .presets
+                .iter()
+                .map(|preset| preset.id.as_str())
+                .collect::<Vec<_>>(),
+            ["builtin:opencode", "builtin:shell", "builtin:grok", "team"]
+        );
+        assert_eq!(response.warnings.len(), 1);
+        assert!(response.warnings[0].contains("unknown"));
+    }
+
+    #[test]
+    fn empty_builtins_list_hides_all_built_ins() {
+        let root = unique_test_dir("launcher-presets-builtins-empty");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("presets.json");
+        fs::write(
+            &path,
+            r#"{"version":1,"builtins":[],"presets":[
+                {"id":"team","label":"Team","argv":["team-agent"]}
+            ]}"#,
+        )
+        .unwrap();
+
+        let store = LauncherPresetStore::load_from_path(&path).unwrap();
+        let response = store.response();
+        assert_eq!(
+            response
+                .presets
+                .iter()
+                .map(|preset| preset.id.as_str())
+                .collect::<Vec<_>>(),
+            ["team"]
+        );
+        assert!(response.warnings.is_empty());
+    }
+
+    #[test]
+    fn builtins_accept_full_builtin_ids() {
+        let root = unique_test_dir("launcher-presets-builtins-full-id");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("presets.json");
+        fs::write(
+            &path,
+            r#"{"version":1,"builtins":["builtin:claude","builtin:pi"]}"#,
+        )
+        .unwrap();
+
+        let store = LauncherPresetStore::load_from_path(&path).unwrap();
+        let response = store.response();
+        assert_eq!(
+            response
+                .presets
+                .iter()
+                .map(|preset| preset.id.as_str())
+                .collect::<Vec<_>>(),
+            ["builtin:claude", "builtin:pi"]
+        );
+    }
+
+    #[test]
+    fn custom_presets_cannot_claim_filtered_out_builtin_ids() {
+        let root = unique_test_dir("launcher-presets-reserved-builtin-id");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("presets.json");
+        fs::write(
+            &path,
+            r#"{"version":1,"builtins":["claude"],"presets":[
+                {"id":"builtin:shell","label":"My Tool","argv":["my-tool"]},
+                {"id":"ok","label":"OK","argv":["ok"]}
+            ]}"#,
+        )
+        .unwrap();
+
+        let store = LauncherPresetStore::load_from_path(&path).unwrap();
+        let response = store.response();
+        assert!(store.preset("builtin:shell").is_none());
+        assert!(store.preset("ok").is_some());
+        assert_eq!(
+            response
+                .presets
+                .iter()
+                .map(|preset| preset.id.as_str())
+                .collect::<Vec<_>>(),
+            ["builtin:claude", "ok"]
+        );
+        assert!(response
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("reserved")));
     }
 
     #[test]

@@ -54,6 +54,7 @@ use crate::notes::{
     AttachNoteRequest, CreateNoteRequest, NoteResponse, NotesError, NotesListQuery,
     NotesListResponse, NotesManager, RevisionRequest, UpdateNoteRequest,
 };
+use crate::store_util::{default_store_dir, ensure_private_dir, set_private_file_permissions};
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8787;
@@ -1018,11 +1019,18 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
             "/api/launcher-presets/launch",
             post(launcher_preset_launch_handler).options(preflight_handler),
         );
+    let mobile_mode_routes = Router::new().route(
+        "/api/mobile-mode",
+        get(mobile_mode_get_handler)
+            .post(mobile_mode_toggle_handler)
+            .options(preflight_handler),
+    );
     let app = Router::new()
         .merge(agent_activity_routes)
         .merge(agent_pins_routes)
         .merge(notes_routes)
         .merge(launcher_preset_routes)
+        .merge(mobile_mode_routes)
         .route(
             "/api/snapshot",
             get(snapshot_handler).options(preflight_handler),
@@ -2590,6 +2598,46 @@ async fn agent_pins_unpin_handler(
     .await?;
     broadcast_agent_pins_changed(&state, Some(&event_pane_id));
     Ok(Json(response))
+}
+
+// Lives entirely under herdr-web's own data dir; herdr-web has no knowledge of what,
+// if anything, reads this flag. Any presence-checker (e.g. a statusline script) is
+// expected to read this path directly rather than herdr-web reaching into its config.
+fn mobile_mode_flag_path() -> PathBuf {
+    default_store_dir("HERDR_WEB_DATA_DIR", "", "herdr-web-data").join("mobile-mode")
+}
+
+async fn mobile_mode_get_handler(
+    State(state): State<BridgeState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, BridgeError> {
+    ensure_allowed_request(&headers, &state.request_policy)?;
+    let active = mobile_mode_flag_path().is_file();
+    Ok(Json(serde_json::json!({ "active": active })))
+}
+
+async fn mobile_mode_toggle_handler(
+    State(state): State<BridgeState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, BridgeError> {
+    ensure_allowed_request(&headers, &state.request_policy)?;
+    let path = mobile_mode_flag_path();
+    let active = tokio::task::spawn_blocking(move || -> io::Result<bool> {
+        if path.is_file() {
+            std::fs::remove_file(&path)?;
+            Ok(false)
+        } else {
+            if let Some(parent) = path.parent() {
+                ensure_private_dir(parent)?;
+            }
+            std::fs::File::create(&path)?;
+            set_private_file_permissions(&path)?;
+            Ok(true)
+        }
+    })
+    .await
+    .map_err(|err| BridgeError::Protocol(err.to_string()))??;
+    Ok(Json(serde_json::json!({ "active": active })))
 }
 
 async fn notes_list_handler(

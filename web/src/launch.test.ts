@@ -21,6 +21,8 @@ describe("launch helpers", () => {
     expect(agentArgv("codex")).toEqual(["codex"]);
     expect(agentArgv("claude")).toEqual(["claude"]);
     expect(agentArgv("pi")).toEqual(["pi"]);
+    expect(agentArgv("grok")).toEqual(["grok"]);
+    expect(agentArgv("opencode")).toEqual(["opencode"]);
   });
 
   it("keeps custom launch titles", () => {

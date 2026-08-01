@@ -45,9 +45,27 @@ describe("launcher presets", () => {
     expect(parseLauncherPresetsResponse({}).presets).toEqual(FALLBACK_LAUNCHER_PRESETS);
   });
 
+  it("preserves an intentionally empty preset list", () => {
+    expect(
+      parseLauncherPresetsResponse({
+        version: 1,
+        presets: [],
+        warnings: [],
+      }),
+    ).toEqual({
+      version: 1,
+      presets: [],
+      warnings: [],
+    });
+  });
+
   it("maps built-in preset ids to legacy launch kinds", () => {
     expect(legacyKindForPresetId("builtin:shell")).toBe("shell");
     expect(legacyKindForPresetId("builtin:codex")).toBe("codex");
+    expect(legacyKindForPresetId("builtin:claude")).toBe("claude");
+    expect(legacyKindForPresetId("builtin:pi")).toBe("pi");
+    expect(legacyKindForPresetId("builtin:grok")).toBe("grok");
+    expect(legacyKindForPresetId("builtin:opencode")).toBe("opencode");
     expect(legacyKindForPresetId("custom")).toBeNull();
   });
 });

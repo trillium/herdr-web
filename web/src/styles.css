@@ -1770,54 +1770,18 @@ button {
   white-space: nowrap;
 }
 
-.terminal-touch-endpoint-line {
+.terminal-touch-endpoint-ring {
   position: absolute;
-  left: 50%;
-  top: 8px;
-  width: 2px;
-  height: 18px;
-  transform: translateX(-50%);
+  left: var(--terminal-touch-endpoint-ring-left);
+  top: var(--terminal-touch-endpoint-ring-top);
+  box-sizing: border-box;
+  width: var(--terminal-touch-endpoint-ring-diameter);
+  height: var(--terminal-touch-endpoint-ring-diameter);
+  border: 3px solid color-mix(in srgb, var(--terminal-touch-marker) 82%, white);
   border-radius: 999px;
-  background: var(--terminal-touch-marker);
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 26%);
+  background: color-mix(in srgb, var(--terminal-touch-marker) 8%, transparent);
+  box-shadow: 0 3px 12px rgb(0 0 0 / 24%), 0 0 0 1px rgb(0 0 0 / 20%);
   pointer-events: none;
-}
-
-.terminal-touch-endpoint-line::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: -2px;
-  width: 10px;
-  height: 2px;
-  transform: translateX(-50%);
-  border-radius: inherit;
-  background: inherit;
-  box-shadow: inherit;
-}
-
-.terminal-touch-endpoint-knob {
-  position: absolute;
-  left: 13px;
-  top: 22px;
-  display: grid;
-  width: 46px;
-  height: 46px;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--accent) 72%, white);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 78%, var(--mantle));
-  box-shadow: 0 10px 28px rgb(0 0 0 / 38%);
-  pointer-events: none;
-}
-
-.terminal-touch-endpoint-knob::after {
-  content: "";
-  width: 10px;
-  height: 10px;
-  border-radius: inherit;
-  background: var(--base);
-  box-shadow: 0 0 0 1px rgb(255 255 255 / 42%);
 }
 
 .terminal-mobile-controls {
@@ -2019,6 +1983,28 @@ button {
 
 .pane-cell .terminal-host {
   padding: 6px 6px 6px 8px;
+}
+
+.pane-grid-toggle {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--subtext0);
+  background: var(--surface0);
+  opacity: 0.85;
+}
+
+.pane-grid-toggle:hover,
+.pane-grid-toggle:active {
+  opacity: 1;
+  color: var(--text);
 }
 
 .terminal-overlay {
@@ -2370,6 +2356,15 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.launch-empty {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 4px;
+  color: var(--subtext0);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .backend-modal {

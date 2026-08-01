@@ -7,6 +7,8 @@ import {
   trimUrlPunctuation,
 } from "./terminalSelection";
 import type { TerminalSelectionPoint } from "./terminalSelection";
+import { terminalEndpointBubblePosition } from "./terminalEndpointBubblePosition";
+import { terminalLoupeCursorGeometry } from "./terminalLoupeCursorGeometry";
 import { terminalTapFocusAction } from "./terminalTapFocus";
 import type { TerminalTapFocusResult } from "./terminalTapFocus";
 import {
@@ -17,6 +19,7 @@ import {
   moveTouchSelectionEndpoint,
   moveTouchSelectionPlacement,
   startTouchSelectionPlacement,
+  terminalTouchSelectionEndpointFromDrag,
 } from "./terminalTouchSelection";
 import type { TerminalTouchSelectionState } from "./terminalTouchSelection";
 import { DEFAULT_MOBILE_TOUCH_SELECTION_ENDPOINT_TIMEOUT_MS } from "./mobileTerminalPrefs";
@@ -42,7 +45,7 @@ const TOUCH_LOUPE_OFFSET_Y_PX = 132;
 const TOUCH_LOUPE_TARGET_OFFSET_Y_PX = 48;
 const TOUCH_ENDPOINT_HIT_WIDTH_PX = 72;
 const TOUCH_ENDPOINT_HIT_HEIGHT_PX = 72;
-const TOUCH_ENDPOINT_HANDLE_OFFSET_Y_PX = TOUCH_LOUPE_TARGET_OFFSET_Y_PX;
+const TOUCH_ENDPOINT_RING_DIAMETER_PX = 42;
 const TAP_URL_PATTERN = /\bhttps?:\/\/[^\s"'<>`]+/giu;
 
 type GhosttyModule = typeof import("ghostty-web");
@@ -461,8 +464,27 @@ export class GhosttyRenderer implements TerminalRenderer {
       touchCellPosition(terminal, clientX, clientY - TOUCH_LOUPE_TARGET_OFFSET_Y_PX);
     const loupePositionFromTouch = (touch: Touch) =>
       loupePositionFromClient(touch.clientX, touch.clientY);
-    const endpointPositionFromTouch = (touch: Touch) =>
-      touchCellPosition(terminal, touch.clientX, touch.clientY - TOUCH_ENDPOINT_HANDLE_OFFSET_Y_PX);
+    const endpointPositionFromDrag = (touch: Touch) => {
+      if (
+        selectionState.phase !== "dragging-endpoint" ||
+        endpointDragStartX === null ||
+        endpointDragStartY === null
+      ) {
+        return selectionState.phase === "idle" ? { col: 0, row: 0 } : selectionState.endpoint;
+      }
+      const metrics = terminal.renderer?.getMetrics();
+      return terminalTouchSelectionEndpointFromDrag(
+        selectionState.start,
+        { clientX: endpointDragStartX, clientY: endpointDragStartY },
+        clientFromTouch(touch),
+        {
+          cellWidth: metrics?.width ?? 9,
+          cellHeight: metrics?.height ?? 16,
+          cols: terminal.cols,
+          rows: terminal.rows,
+        },
+      );
+    };
     const updateSimpleTouchSelection = (touch: Touch) => {
       if (!simpleSelectionStart) {
         return;
@@ -560,35 +582,35 @@ export class GhosttyRenderer implements TerminalRenderer {
         TOUCH_LOUPE_WIDTH_PX,
         TOUCH_LOUPE_HEIGHT_PX,
       );
-      const markerLeft = ((point.col * cellWidth - sxCss) / sourceWidth) * TOUCH_LOUPE_WIDTH_PX;
-      const markerRight = (((point.col + 1) * cellWidth - sxCss) / sourceWidth) * TOUCH_LOUPE_WIDTH_PX;
-      const markerY = (((point.row + 1) * cellHeight - syCss) / sourceHeight) * TOUCH_LOUPE_HEIGHT_PX - 2;
-      const anchorLeft = clampNumber(markerLeft, 4, TOUCH_LOUPE_WIDTH_PX - 4);
-      const anchorRight = clampNumber(markerRight, 4, TOUCH_LOUPE_WIDTH_PX - 4);
-      const anchorY = clampNumber(markerY, 8, TOUCH_LOUPE_HEIGHT_PX - 18);
-      const anchorCenter = (anchorLeft + anchorRight) / 2;
-      const markerBottom = TOUCH_LOUPE_HEIGHT_PX - 2;
+      const cursor = terminalLoupeCursorGeometry({
+        col: point.col,
+        row: point.row,
+        cellWidth,
+        cellHeight,
+        sourceX: sxCss,
+        sourceY: syCss,
+        sourceWidth,
+        sourceHeight,
+        loupeWidth: TOUCH_LOUPE_WIDTH_PX,
+        loupeHeight: TOUCH_LOUPE_HEIGHT_PX,
+      });
       const markerColor = cssColor(
         container,
         "--terminal-touch-marker",
         cssColor(container, "--accent", "#b4befe"),
       );
-      ctx.lineCap = "round";
+      ctx.lineCap = "butt";
       ctx.strokeStyle = "rgba(17, 17, 27, 0.78)";
       ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.moveTo(anchorLeft, anchorY + 1);
-      ctx.lineTo(anchorRight, anchorY + 1);
-      ctx.moveTo(anchorCenter, anchorY + 1);
-      ctx.lineTo(anchorCenter, markerBottom);
+      ctx.moveTo(cursor.caretX, cursor.caretTop);
+      ctx.lineTo(cursor.caretX, cursor.caretBottom);
       ctx.stroke();
       ctx.strokeStyle = markerColor;
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(anchorLeft, anchorY);
-      ctx.lineTo(anchorRight, anchorY);
-      ctx.moveTo(anchorCenter, anchorY);
-      ctx.lineTo(anchorCenter, markerBottom);
+      ctx.moveTo(cursor.caretX, cursor.caretTop);
+      ctx.lineTo(cursor.caretX, cursor.caretBottom);
       ctx.stroke();
       ctx.lineCap = "butt";
       ctx.strokeStyle = "rgba(17, 17, 27, 0.85)";
@@ -615,11 +637,13 @@ export class GhosttyRenderer implements TerminalRenderer {
       endpointBubble.className = "terminal-touch-endpoint";
       endpointBubble.setAttribute("aria-hidden", "true");
       endpointBubble.setAttribute("data-hint", "Drag");
-      const line = document.createElement("span");
-      line.className = "terminal-touch-endpoint-line";
-      const knob = document.createElement("span");
-      knob.className = "terminal-touch-endpoint-knob";
-      endpointBubble.append(line, knob);
+      endpointBubble.style.setProperty(
+        "--terminal-touch-endpoint-ring-diameter",
+        `${TOUCH_ENDPOINT_RING_DIAMETER_PX}px`,
+      );
+      const ring = document.createElement("span");
+      ring.className = "terminal-touch-endpoint-ring";
+      endpointBubble.append(ring);
       container.append(endpointBubble);
       return endpointBubble;
     };
@@ -633,14 +657,21 @@ export class GhosttyRenderer implements TerminalRenderer {
       const bubble = ensureEndpointBubble();
       delete bubble.dataset.dragging;
       bubble.setAttribute("data-hint", "Drag");
-      positionOverlay(
-        bubble,
-        client.clientX,
-        client.clientY,
-        TOUCH_ENDPOINT_HIT_WIDTH_PX,
-        TOUCH_ENDPOINT_HIT_HEIGHT_PX,
-        0,
-      );
+      const rect = container.getBoundingClientRect();
+      const position = terminalEndpointBubblePosition({
+        targetClientX: client.clientX,
+        targetClientY: client.clientY,
+        containerLeft: rect.left,
+        containerTop: rect.top,
+        containerWidth: rect.width,
+        containerHeight: rect.height,
+        bubbleWidth: TOUCH_ENDPOINT_HIT_WIDTH_PX,
+        bubbleHeight: TOUCH_ENDPOINT_HIT_HEIGHT_PX,
+        ringDiameter: TOUCH_ENDPOINT_RING_DIAMETER_PX,
+      });
+      bubble.style.setProperty("--terminal-touch-endpoint-ring-left", `${position.ringLeft}px`);
+      bubble.style.setProperty("--terminal-touch-endpoint-ring-top", `${position.ringTop}px`);
+      bubble.style.transform = `translate(${position.left}px, ${position.top}px)`;
     };
     const startTouchSelection = () => {
       selectionTimer = null;
@@ -708,9 +739,8 @@ export class GhosttyRenderer implements TerminalRenderer {
       endpointDragStartX = touch.clientX;
       endpointDragStartY = touch.clientY;
       endpointDragMoved = false;
-      const position = endpointPositionFromTouch(touch);
       const client = clientFromTouch(touch);
-      selectionState = beginTouchSelectionEndpointDrag(selectionState, position, client);
+      selectionState = beginTouchSelectionEndpointDrag(selectionState, client);
       if (selectionState.phase !== "dragging-endpoint") {
         return;
       }
@@ -731,7 +761,7 @@ export class GhosttyRenderer implements TerminalRenderer {
         }
         endpointDragMoved = true;
       }
-      const position = endpointPositionFromTouch(touch);
+      const position = endpointPositionFromDrag(touch);
       const client = clientFromTouch(touch);
       selectionState = moveTouchSelectionEndpoint(selectionState, position, client);
       selectCurrentTouchRange();

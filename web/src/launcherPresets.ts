@@ -15,6 +15,8 @@ export type LauncherPresetsResponse = {
   warnings: string[];
 };
 
+export type LegacyLaunchKind = "shell" | "codex" | "claude" | "pi" | "grok" | "opencode";
+
 export const FALLBACK_LAUNCHER_PRESETS: LauncherPresetOption[] = [
   {
     id: "builtin:shell",
@@ -40,6 +42,18 @@ export const FALLBACK_LAUNCHER_PRESETS: LauncherPresetOption[] = [
     agent_hint: "pi",
     built_in: true,
   },
+  {
+    id: "builtin:grok",
+    label: "Grok",
+    agent_hint: "grok",
+    built_in: true,
+  },
+  {
+    id: "builtin:opencode",
+    label: "OpenCode",
+    agent_hint: "opencode",
+    built_in: true,
+  },
 ];
 
 export function supportsLauncherPresets(capabilities: BridgeCapabilities | null | undefined) {
@@ -60,23 +74,27 @@ export function parseLauncherPresetsResponse(value: unknown): LauncherPresetsRes
   if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.presets)) {
     return { version: 1, presets: FALLBACK_LAUNCHER_PRESETS, warnings: [] };
   }
+  // Preserve an intentionally empty list (e.g. builtins: [] with no customs).
+  // Only fall back when the response shape itself is unusable.
   const presets = value.presets
     .map(parseLauncherPreset)
     .filter((preset): preset is LauncherPresetOption => Boolean(preset));
   return {
     version: 1,
-    presets: presets.length > 0 ? presets : FALLBACK_LAUNCHER_PRESETS,
+    presets,
     warnings: Array.isArray(value.warnings)
       ? value.warnings.filter((warning): warning is string => typeof warning === "string")
       : [],
   };
 }
 
-export function legacyKindForPresetId(id: string): "shell" | "codex" | "claude" | "pi" | null {
+export function legacyKindForPresetId(id: string): LegacyLaunchKind | null {
   if (id === "builtin:shell") return "shell";
   if (id === "builtin:codex") return "codex";
   if (id === "builtin:claude") return "claude";
   if (id === "builtin:pi") return "pi";
+  if (id === "builtin:grok") return "grok";
+  if (id === "builtin:opencode") return "opencode";
   return null;
 }
 
