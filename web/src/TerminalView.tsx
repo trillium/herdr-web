@@ -6,6 +6,7 @@ import {
   Link,
   Paperclip,
   Send,
+  SkipForward,
   Smartphone,
   SquareTerminal,
   TextCursorInput,
@@ -1795,6 +1796,15 @@ function MobileTerminalControls({
           onClick={onToggleMobileMode}
         >
           <Smartphone size={15} />
+        </button>
+        <button
+          className="term-key term-key-icon term-pin-cycle"
+          type="button"
+          aria-label="Next pinned agent"
+          title="Next pinned agent"
+          onClick={() => onPinCycle("next")}
+        >
+          <SkipForward size={15} />
         </button>
         {expandingInput ? (
           <textarea

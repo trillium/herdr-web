@@ -30,6 +30,8 @@ Files: cli/herdr-channel.ts
   dictation mis-hearings.
 - Added a "Next pinned pane" toolbar button next to the pin toggle for manually cycling to the
   next pinned pane.
+- Added a "Next pinned agent" button to the mobile command row (next to the keyboard/statusline
+  toggles), so cycling to the next pinned pane is reachable without voice input.
 - Added a collapse toggle to the sidebar's spaces list, so it can be minimized to make room for
   the agents/tabs/notes list below it on small screens.
 - Added a `--remote-bridge <url>` bridge CLI flag (repeatable) to register other herdr-web bridge
