@@ -1850,6 +1850,11 @@ button {
   background: color-mix(in srgb, var(--mantle) 94%, black);
 }
 
+.terminal-mobile-controls[data-pinned="true"] {
+  border-top-color: color-mix(in srgb, var(--green) 55%, var(--line));
+  background: color-mix(in srgb, var(--green) 10%, color-mix(in srgb, var(--mantle) 94%, black));
+}
+
 .term-key-strip,
 .term-key-group,
 .term-key-actions,

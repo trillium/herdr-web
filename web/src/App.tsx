@@ -3568,6 +3568,7 @@ export function App() {
             httpUrl={selectedHttpUrl}
             wsUrl={selectedWsUrl}
             onVoicePinCycle={cyclePinnedPane}
+            selectedPanePinned={selectedPanePinned}
           />
         ) : renderTerminal ? (
           <TerminalView
@@ -3594,6 +3595,7 @@ export function App() {
             refitToken={refitToken}
             focusToken={terminalFocusToken}
             onVoicePinCycle={cyclePinnedPane}
+            pinned={selectedPanePinned}
           />
         ) : (
           <div className="terminal-stage" aria-hidden="true" />
@@ -4934,6 +4936,7 @@ function SplitGrid({
   httpUrl,
   wsUrl,
   onVoicePinCycle,
+  selectedPanePinned,
 }: {
   cells: { pane: PaneInfo; style: CSSProperties }[];
   selectedPaneId: string | null;
@@ -4958,6 +4961,7 @@ function SplitGrid({
   httpUrl: (path: string, query?: URLSearchParams) => string;
   wsUrl: (path: string, query?: URLSearchParams) => string;
   onVoicePinCycle: (direction: "next" | "prev") => void;
+  selectedPanePinned: boolean;
 }) {
   // On touch devices, showing every split pane at once (e.g. a small tmux
   // status pane stacked under the main agent pane) leaves too little room for
@@ -5016,6 +5020,7 @@ function SplitGrid({
               refitToken={selected ? refitToken : 0}
               focusToken={selected ? focusToken : 0}
               onVoicePinCycle={onVoicePinCycle}
+              pinned={selected && selectedPanePinned}
             />
           </div>
         );

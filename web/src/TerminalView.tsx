@@ -112,6 +112,8 @@ type Props = {
   focusToken?: number;
   /** Called when the captain dictates "pin next"/"pin previous" into the mobile command input. */
   onVoicePinCycle?: (direction: "next" | "prev") => void;
+  /** Whether this pane is currently pinned; tints the mobile keyboard area as a hands-free cue. */
+  pinned?: boolean;
 };
 
 type UploadCandidate = {
@@ -176,6 +178,7 @@ export function TerminalView({
   refitToken = 0,
   focusToken = 0,
   onVoicePinCycle = () => {},
+  pinned = false,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLElement | null>(null);
@@ -1429,6 +1432,7 @@ export function TerminalView({
           onStageCommand={(command) => enqueueTerminalInput([command])}
           onSubmitCommand={(command) => enqueueTerminalInput([command, "\r"])}
           onPinCycle={onVoicePinCycle}
+          pinned={pinned}
         />
       ) : null}
       {mobileSelectionAction ? (
@@ -1525,6 +1529,7 @@ function MobileTerminalControls({
   onStageCommand,
   onSubmitCommand,
   onPinCycle,
+  pinned,
 }: {
   commandInputRef: RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
   disabled: boolean;
@@ -1543,6 +1548,7 @@ function MobileTerminalControls({
   onStageCommand: (command: string) => void;
   onSubmitCommand: (command: string) => void;
   onPinCycle: (direction: "next" | "prev") => void;
+  pinned: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [value, setValue] = useState("");
@@ -1664,7 +1670,12 @@ function MobileTerminalControls({
   };
 
   return (
-    <div ref={rootRef} className="terminal-mobile-controls" data-expanded={expanded ? "true" : "false"}>
+    <div
+      ref={rootRef}
+      className="terminal-mobile-controls"
+      data-expanded={expanded ? "true" : "false"}
+      data-pinned={pinned ? "true" : "false"}
+    >
       {!compactControls ? (
         <>
           <div className="term-key-strip" aria-label="Common terminal keys">
