@@ -60,7 +60,6 @@ import {
   isTerminalScrolledAwayFromPresent,
   MAX_TERMINAL_SCROLL_JUMP_LINES,
 } from "./terminalScrollPresence";
-import { paneTitle } from "./state";
 import type { PaneInfo } from "./types";
 import {
   matchTrailingVoiceClearPhrase,
@@ -115,6 +114,8 @@ type Props = {
   onVoicePinCycle?: (direction: "next" | "prev") => void;
   /** Whether this pane is currently pinned; tints the mobile keyboard area as a hands-free cue. */
   pinned?: boolean;
+  /** Placeholder shown in the empty mobile command input, e.g. "workspace/tab". */
+  placeholder?: string;
 };
 
 type UploadCandidate = {
@@ -180,6 +181,7 @@ export function TerminalView({
   focusToken = 0,
   onVoicePinCycle = () => {},
   pinned = false,
+  placeholder = "",
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLElement | null>(null);
@@ -1434,7 +1436,7 @@ export function TerminalView({
           onSubmitCommand={(command) => enqueueTerminalInput([command, "\r"])}
           onPinCycle={onVoicePinCycle}
           pinned={pinned}
-          placeholder={pane ? paneTitle(pane) : ""}
+          placeholder={placeholder}
         />
       ) : null}
       {mobileSelectionAction ? (

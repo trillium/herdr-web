@@ -1692,6 +1692,7 @@ export function App() {
     selectedRuntime && selectedPane
       ? isAgentPinned(pinnedAgentKeys, selectedRuntime.id, selectedPane.pane_id)
       : false;
+  const selectedPaneWorkspaceTabPath = paneWorkspaceTabPath(snapshot, selectedPane);
   const selectedPanePinTarget = selectedPane && isAgentPane(selectedPane) ? "agent" : "pane";
   const selectedPanePinTitle = selectedPanePinned
     ? `Unpin ${selectedPanePinTarget}`
@@ -3569,6 +3570,7 @@ export function App() {
             wsUrl={selectedWsUrl}
             onVoicePinCycle={cyclePinnedPane}
             selectedPanePinned={selectedPanePinned}
+            selectedPaneWorkspaceTabPath={selectedPaneWorkspaceTabPath}
           />
         ) : renderTerminal ? (
           <TerminalView
@@ -3596,6 +3598,7 @@ export function App() {
             focusToken={terminalFocusToken}
             onVoicePinCycle={cyclePinnedPane}
             pinned={selectedPanePinned}
+            placeholder={selectedPaneWorkspaceTabPath}
           />
         ) : (
           <div className="terminal-stage" aria-hidden="true" />
@@ -4937,6 +4940,7 @@ function SplitGrid({
   wsUrl,
   onVoicePinCycle,
   selectedPanePinned,
+  selectedPaneWorkspaceTabPath,
 }: {
   cells: { pane: PaneInfo; style: CSSProperties }[];
   selectedPaneId: string | null;
@@ -4962,6 +4966,7 @@ function SplitGrid({
   wsUrl: (path: string, query?: URLSearchParams) => string;
   onVoicePinCycle: (direction: "next" | "prev") => void;
   selectedPanePinned: boolean;
+  selectedPaneWorkspaceTabPath: string;
 }) {
   // On touch devices, showing every split pane at once (e.g. a small tmux
   // status pane stacked under the main agent pane) leaves too little room for
@@ -5021,6 +5026,7 @@ function SplitGrid({
               focusToken={selected ? focusToken : 0}
               onVoicePinCycle={onVoicePinCycle}
               pinned={selected && selectedPanePinned}
+              placeholder={selectedPaneWorkspaceTabPath}
             />
           </div>
         );
@@ -7761,6 +7767,16 @@ function stageBreadcrumb(
   const tab = snapshot?.tabs.find((item) => item.tab_id === pane.tab_id);
   const tabLabel = tab && snapshot ? displayTabLabel(tab, snapshot.panes) : undefined;
   return [workspace?.label, tabLabel].filter(Boolean).join(" · ") || pane.pane_id;
+}
+
+function paneWorkspaceTabPath(snapshot: Snapshot | null, pane: PaneInfo | null) {
+  if (!pane) {
+    return "";
+  }
+  const workspace = snapshot?.workspaces.find((item) => item.workspace_id === pane.workspace_id);
+  const tab = snapshot?.tabs.find((item) => item.tab_id === pane.tab_id);
+  const tabLabel = tab && snapshot ? displayTabLabel(tab, snapshot.panes) : undefined;
+  return [workspace?.label, tabLabel].filter(Boolean).join("/") || paneTitle(pane);
 }
 
 async function fetchSnapshot(httpUrl: (path: string, query?: URLSearchParams) => string) {
