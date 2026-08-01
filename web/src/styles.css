@@ -1942,6 +1942,13 @@ button {
   color: var(--accent);
 }
 
+.terminal-mobile-controls[data-pinned="true"] .term-key,
+.terminal-mobile-controls[data-pinned="true"] .term-send {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line));
+  background: color-mix(in srgb, var(--green) 18%, var(--surface0));
+  color: color-mix(in srgb, var(--green) 70%, var(--text));
+}
+
 .term-key:disabled,
 .term-send:disabled,
 .term-native-input:disabled,
