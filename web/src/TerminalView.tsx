@@ -55,8 +55,11 @@ import type {
 } from "./mobileTerminalPrefs";
 import type { PaneInfo } from "./types";
 import {
+  matchTrailingVoiceClearPhrase,
+  matchTrailingVoicePinPhrase,
   matchTrailingVoiceSubmitPhrase,
   stripVoiceSubmitPhrase,
+  voiceTailStillMatches,
   VOICE_SUBMIT_TIMER_MS,
 } from "./voiceSubmitPhrase";
 
@@ -100,6 +103,8 @@ type Props = {
   refitToken?: number;
   /** Incrementing token from the parent that requests focus on the preferred terminal input. */
   focusToken?: number;
+  /** Called when the captain dictates "pin next"/"pin previous" into the mobile command input. */
+  onVoicePinCycle?: (direction: "next" | "prev") => void;
 };
 
 type UploadCandidate = {
@@ -163,6 +168,7 @@ export function TerminalView({
   terminalOutputCoalesceMs = DEFAULT_TERMINAL_OUTPUT_COALESCE_MS,
   refitToken = 0,
   focusToken = 0,
+  onVoicePinCycle = () => {},
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLElement | null>(null);
@@ -1373,6 +1379,7 @@ export function TerminalView({
           onUpload={openFilePicker}
           onStageCommand={(command) => enqueueTerminalInput([command])}
           onSubmitCommand={(command) => enqueueTerminalInput([command, "\r"])}
+          onPinCycle={onVoicePinCycle}
         />
       ) : null}
       {mobileSelectionAction ? (
@@ -1468,6 +1475,7 @@ function MobileTerminalControls({
   onUpload,
   onStageCommand,
   onSubmitCommand,
+  onPinCycle,
 }: {
   commandInputRef: RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
   disabled: boolean;
@@ -1485,6 +1493,7 @@ function MobileTerminalControls({
   onUpload: () => void;
   onStageCommand: (command: string) => void;
   onSubmitCommand: (command: string) => void;
+  onPinCycle: (direction: "next" | "prev") => void;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [value, setValue] = useState("");
@@ -1513,7 +1522,11 @@ function MobileTerminalControls({
   };
 
   useEffect(() => {
-    const matchedTail = disabled ? null : matchTrailingVoiceSubmitPhrase(value);
+    const submitTail = disabled ? null : matchTrailingVoiceSubmitPhrase(value);
+    const clearTail = disabled || submitTail ? null : matchTrailingVoiceClearPhrase(value);
+    const pinMatch =
+      disabled || submitTail || clearTail ? null : matchTrailingVoicePinPhrase(value);
+    const matchedTail = submitTail ?? clearTail ?? pinMatch?.tail ?? null;
     if (!matchedTail) {
       if (voiceSubmitTimerRef.current) {
         clearTimeout(voiceSubmitTimerRef.current);
@@ -1528,14 +1541,21 @@ function MobileTerminalControls({
       voiceSubmitTimerRef.current = null;
       // Re-verify the buffer still ends with what we matched before firing —
       // dictation may have kept correcting the tail during the arm window.
-      const stripped = stripVoiceSubmitPhrase(value, matchedTail);
-      if (!stripped) {
+      if (!voiceTailStillMatches(value, matchedTail)) {
         return;
       }
-      onSubmitCommand(stripped);
+      if (submitTail) {
+        const stripped = stripVoiceSubmitPhrase(value, matchedTail);
+        if (!stripped) {
+          return;
+        }
+        onSubmitCommand(stripped);
+      } else if (pinMatch) {
+        onPinCycle(pinMatch.direction);
+      }
       setValue("");
     }, VOICE_SUBMIT_TIMER_MS);
-  }, [value, disabled, onSubmitCommand]);
+  }, [value, disabled, onSubmitCommand, onPinCycle]);
 
   useEffect(() => {
     return () => {

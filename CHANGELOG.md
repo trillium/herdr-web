@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-07-21 — session 6d608521
+
+Files: cli/herdr-channel.ts
 ## [Unreleased]
 
 ### Breaking Changes
@@ -19,10 +22,24 @@
   (`~/.local/share/herdr-web/mobile-mode` by default). herdr-web has no knowledge of what, if
   anything, reads the flag; a companion statusline script can check it directly to blank its
   output and save vertical space on mobile. [PR #39](https://github.com/kcosr/herdr-web/pull/39)
+- Added a trailing voice-clear phrase (`change`) to the mobile command input that discards the
+  buffered dictation instead of sending it.
+- Added trailing voice-pin-cycle phrases (`pin next`, `pin previous`/`pin prev`) to the mobile
+  command input that cycle terminal focus across pinned panes without touching the buffered text.
+- Added a "Next pinned pane" toolbar button next to the pin toggle for manually cycling to the
+  next pinned pane.
+- Added a collapse toggle to the sidebar's spaces list, so it can be minimized to make room for
+  the agents/tabs/notes list below it on small screens.
 
 ### Changed
 
 ### Fixed
+
+- Fixed pinned-pane cycling (voice or button) not returning focus to the mobile command input
+  after switching panes.
+- Uploaded files now get a unique hash suffix appended to their stored name, so repeat uploads
+  that share a client-side name (e.g. a screenshot tool that always calls it `image.png`) no
+  longer collide or prompt an overwrite confirmation.
 
 ### Removed
 

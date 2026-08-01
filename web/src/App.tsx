@@ -1,8 +1,11 @@
 import {
   Activity,
   Archive,
+  ChevronDown,
   ChevronLeft,
+  ChevronRight,
   Link2,
+  Menu,
   MoreVertical,
   PanelLeft,
   Pin,
@@ -10,6 +13,7 @@ import {
   RefreshCw,
   RotateCcw,
   Settings,
+  SkipForward,
   SplitSquareHorizontal,
   SplitSquareVertical,
   SquareTerminal,
@@ -803,6 +807,7 @@ export function App() {
   const [resizingNotesListPane, setResizingNotesListPane] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(initialPrefs.sidebarOpen);
   const [showDetail, setShowDetail] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [noteDeleteTarget, setNoteDeleteTarget] = useState<ScopedNoteEntry | null>(null);
@@ -1691,6 +1696,24 @@ export function App() {
   const selectedPanePinTitle = selectedPanePinned
     ? `Unpin ${selectedPanePinTarget}`
     : `Pin ${selectedPanePinTarget}`;
+  const orderedPinnedPanes = useMemo(() => {
+    const panes = snapshot?.panes ?? [];
+    const pins = selectedAgentPinsState?.response?.pins ?? [];
+    const byId = new Map(panes.map((pane) => [pane.pane_id, pane]));
+    const seen = new Set<string>();
+    const ordered: PaneInfo[] = [];
+    for (const pin of pins) {
+      if (seen.has(pin.pane_id)) {
+        continue;
+      }
+      seen.add(pin.pane_id);
+      const pane = byId.get(pin.pane_id);
+      if (pane) {
+        ordered.push(pane);
+      }
+    }
+    return ordered;
+  }, [snapshot, selectedAgentPinsState]);
   const selectedNotesState =
     selectedRuntime && notesStates[selectedRuntime.id]?.connectionKey === selectedRuntime.connectionKey
       ? notesStates[selectedRuntime.id]
@@ -1915,6 +1938,24 @@ export function App() {
     if (isCompactLayout) {
       openMobileDetail();
     }
+  };
+
+  const cyclePinnedPane = (direction: "next" | "prev") => {
+    if (!selectedRuntime || orderedPinnedPanes.length === 0) {
+      return;
+    }
+    const currentIdx = selectedPane
+      ? orderedPinnedPanes.findIndex((pane) => pane.pane_id === selectedPane.pane_id)
+      : -1;
+    const targetIdx =
+      currentIdx === -1
+        ? 0
+        : (currentIdx + (direction === "next" ? 1 : -1) + orderedPinnedPanes.length) %
+          orderedPinnedPanes.length;
+    openPane(selectedRuntime.id, orderedPinnedPanes[targetIdx]);
+    // Voice-driven — the whole point is never touching the screen, so the
+    // dictation-capable command input has to regain focus on its own.
+    requestTerminalFocus();
   };
 
   const requestTerminalFocus = () => setTerminalFocusToken((token) => token + 1);
@@ -3343,11 +3384,33 @@ export function App() {
       </aside>
 
       <section className="stage" aria-label="Terminal">
+        {isCompactLayout ? (
+          <button
+            className="stage-nav-fab"
+            type="button"
+            aria-label={mobileNavOpen ? "Hide navigation" : "Show navigation"}
+            title={mobileNavOpen ? "Hide navigation" : "Show navigation"}
+            data-open={mobileNavOpen ? "true" : "false"}
+            onClick={() => setMobileNavOpen((open) => !open)}
+          >
+            {mobileNavOpen ? <X size={18} /> : <Menu size={18} />}
+          </button>
+        ) : null}
+        <div
+          className="stage-nav"
+          data-mobile={isCompactLayout ? "true" : "false"}
+          data-open={isCompactLayout ? (mobileNavOpen ? "true" : "false") : "true"}
+        >
         <TabBar
           snapshot={snapshot}
           activeSpace={activeSpace}
           selectedPane={selectedPane}
-          onSelectTab={(tabId) => selectedRuntime && selectTab(selectedRuntime.id, tabId)}
+          onSelectTab={(tabId) => {
+            if (selectedRuntime) {
+              selectTab(selectedRuntime.id, tabId);
+            }
+            setMobileNavOpen(false);
+          }}
           onCreateTab={(workspaceId) =>
             selectedRuntime &&
             setLaunchTarget({ mode: "tab", workspaceId, bridgeId: selectedRuntime.id })
@@ -3443,6 +3506,17 @@ export function App() {
               <Pin size={16} />
             </button>
           ) : null}
+          {selectedRuntime && orderedPinnedPanes.length > 1 ? (
+            <button
+              className="icon-btn stage-pin-next-button"
+              type="button"
+              aria-label="Next pinned pane"
+              title="Next pinned pane"
+              onClick={() => cyclePinnedPane("next")}
+            >
+              <SkipForward size={16} />
+            </button>
+          ) : null}
           {selectedPane ? (
             <button
               className="icon-btn"
@@ -3456,6 +3530,12 @@ export function App() {
           ) : null}
           {selectedPane ? <StatusBadge status={selectedPane.agent_status} /> : null}
         </header>
+        </div>
+        {isCompactLayout && selectedPane ? (
+          <div className="stage-status-fab">
+            <StatusBadge status={selectedPane.agent_status} />
+          </div>
+        ) : null}
         {showSplit && splitCells ? (
           <SplitGrid
             cells={splitCells}
@@ -3487,6 +3567,7 @@ export function App() {
             resumeToken={selectedRuntime?.resumeToken ?? 0}
             httpUrl={selectedHttpUrl}
             wsUrl={selectedWsUrl}
+            onVoicePinCycle={cyclePinnedPane}
           />
         ) : renderTerminal ? (
           <TerminalView
@@ -3512,6 +3593,7 @@ export function App() {
             terminalOutputCoalesceMs={terminalOutputCoalesceMs}
             refitToken={refitToken}
             focusToken={terminalFocusToken}
+            onVoicePinCycle={cyclePinnedPane}
           />
         ) : (
           <div className="terminal-stage" aria-hidden="true" />
@@ -3973,6 +4055,10 @@ export function BridgeConnectionController({
       "/ws/ui-events",
       (event) => {
         if (!isCurrentConnection()) {
+          return;
+        }
+        if (isReloadEvent(event)) {
+          window.location.reload();
           return;
         }
         const paneId = selectionPaneId(event);
@@ -4847,6 +4933,7 @@ function SplitGrid({
   resumeToken,
   httpUrl,
   wsUrl,
+  onVoicePinCycle,
 }: {
   cells: { pane: PaneInfo; style: CSSProperties }[];
   selectedPaneId: string | null;
@@ -4870,6 +4957,7 @@ function SplitGrid({
   resumeToken: number;
   httpUrl: (path: string, query?: URLSearchParams) => string;
   wsUrl: (path: string, query?: URLSearchParams) => string;
+  onVoicePinCycle: (direction: "next" | "prev") => void;
 }) {
   // On touch devices, showing every split pane at once (e.g. a small tmux
   // status pane stacked under the main agent pane) leaves too little room for
@@ -4927,6 +5015,7 @@ function SplitGrid({
               terminalOutputCoalesceMs={terminalOutputCoalesceMs}
               refitToken={selected ? refitToken : 0}
               focusToken={selected ? focusToken : 0}
+              onVoicePinCycle={onVoicePinCycle}
             />
           </div>
         );
@@ -5120,6 +5209,7 @@ function Switcher({
   ) => void;
 }) {
   const [optionsMenu, setOptionsMenu] = useState<{ x: number; y: number } | null>(null);
+  const [spacesExpanded, setSpacesExpanded] = useState(true);
   const selectedBridgeView = selectedBridgeId
     ? (bridgeViews.find((view) => view.runtime.id === selectedBridgeId) ?? null)
     : null;
@@ -5615,6 +5705,16 @@ function Switcher({
             {scope === "space" && hostBridgeViews.some((view) => view.snapshot) ? (
             <section className="sec">
               <div className="sec-head">
+                <button
+                  className="sec-collapse"
+                  type="button"
+                  aria-label={spacesExpanded ? "Collapse spaces" : "Expand spaces"}
+                  title={spacesExpanded ? "Collapse spaces" : "Expand spaces"}
+                  aria-expanded={spacesExpanded}
+                  onClick={() => setSpacesExpanded((expanded) => !expanded)}
+                >
+                  {spacesExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </button>
                 <span className="sec-label">spaces</span>
                 <span className="sec-rule" />
                 <span className="sec-count mono">{spaceCount}</span>
@@ -5645,7 +5745,7 @@ function Switcher({
                   </button>
                 )}
               </div>
-              {spaceCount === 0 ? (
+              {!spacesExpanded ? null : spaceCount === 0 ? (
                 <div className="empty">
                   <strong>No spaces yet</strong>
                   <span>{hostScope === "selected" ? "Tap + to create one." : "No enabled host has spaces."}</span>
@@ -7733,6 +7833,18 @@ function isAgentPinsChangedEvent(event: MessageEvent) {
   try {
     const parsed = JSON.parse(event.data) as { type?: unknown };
     return parsed.type === "herdr_web.agent_pins_changed";
+  } catch {
+    return false;
+  }
+}
+
+function isReloadEvent(event: MessageEvent) {
+  if (typeof event.data !== "string") {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(event.data) as { type?: unknown };
+    return parsed.type === "herdr_web.reload";
   } catch {
     return false;
   }

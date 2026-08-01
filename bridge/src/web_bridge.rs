@@ -1048,6 +1048,10 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
             post(selection_handler).options(preflight_handler),
         )
         .route(
+            "/api/reload",
+            post(reload_handler).options(preflight_handler),
+        )
+        .route(
             "/api/uploads",
             post(upload_handler).options(preflight_handler),
         )
@@ -1235,14 +1239,37 @@ fn finalize_upload_file_name(name: String) -> Option<String> {
     }
 }
 
-fn generated_upload_name(mime: Option<&str>) -> String {
-    let extension = upload_extension_for_mime(mime).unwrap_or("bin");
+// Every upload gets a unique hash suffix so repeat uploads of the same
+// client-side name (e.g. a screenshot tool that always calls it
+// "image.png") never collide and never need the overwrite-conflict prompt.
+fn unique_upload_file_name(base_name: Option<&str>, mime: Option<&str>) -> String {
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or(0);
-    let suffix = UPLOAD_TEMP_COUNTER.fetch_add(1, Ordering::AcqRel);
-    format!("pasted-file-{millis}-{suffix}.{extension}")
+    let counter = UPLOAD_TEMP_COUNTER.fetch_add(1, Ordering::AcqRel);
+    let hash = format!("{millis:x}{counter:x}");
+    match base_name {
+        Some(name) => {
+            let path = Path::new(name);
+            let stem = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "file".to_string());
+            match path
+                .extension()
+                .map(|ext| ext.to_string_lossy().to_string())
+            {
+                Some(ext) if !ext.is_empty() => format!("{stem}-{hash}.{ext}"),
+                _ => format!("{stem}-{hash}"),
+            }
+        }
+        None => {
+            let extension = upload_extension_for_mime(mime).unwrap_or("bin");
+            format!("upload-{hash}.{extension}")
+        }
+    }
 }
 
 fn upload_extension_for_mime(mime: Option<&str>) -> Option<&'static str> {
@@ -2335,6 +2362,23 @@ async fn selection_handler(
     Ok(Json(serde_json::json!({ "selected_pane_id": pane_id })))
 }
 
+/// Tells every connected browser tab to hard-reload — used after a bridge/
+/// frontend redeploy so clients pick up the new build without a manual
+/// refresh.
+async fn reload_handler(
+    State(state): State<BridgeState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, BridgeError> {
+    ensure_allowed_request(&headers, &state.request_policy)?;
+    let _ = state.ui_event_tx.send(
+        serde_json::json!({
+            "type": "herdr_web.reload",
+        })
+        .to_string(),
+    );
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 async fn upload_handler(
     State(state): State<BridgeState>,
     Query(query): Query<UploadQuery>,
@@ -2357,10 +2401,8 @@ async fn upload_handler(
         overwrite = query.overwrite,
         "herdr-web-bridge upload request"
     );
-    let name = match query.name.as_deref().and_then(sanitize_upload_file_name) {
-        Some(name) => name,
-        None => generated_upload_name(mime.as_deref()),
-    };
+    let base_name = query.name.as_deref().and_then(sanitize_upload_file_name);
+    let name = unique_upload_file_name(base_name.as_deref(), mime.as_deref());
     let destination = state.upload_dir.join(&name);
     if !is_direct_child(&state.upload_dir, &destination) {
         return Err(UploadError::BadRequest("invalid file name".to_string()));
@@ -5671,6 +5713,21 @@ mod tests {
         );
         let dots = ".".repeat(181);
         assert_eq!(sanitize_upload_file_name(&dots), None);
+    }
+
+    #[test]
+    fn unique_upload_file_name_hashes_repeat_names_differently() {
+        let first = unique_upload_file_name(Some("image.png"), Some("image/png"));
+        let second = unique_upload_file_name(Some("image.png"), Some("image/png"));
+        assert_ne!(first, second);
+        assert!(first.starts_with("image-") && first.ends_with(".png"));
+        assert!(second.starts_with("image-") && second.ends_with(".png"));
+    }
+
+    #[test]
+    fn unique_upload_file_name_falls_back_to_mime_extension_without_name() {
+        let name = unique_upload_file_name(None, Some("image/jpeg"));
+        assert!(name.starts_with("upload-") && name.ends_with(".jpg"));
     }
 
     #[test]
