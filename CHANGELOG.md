@@ -44,6 +44,8 @@ Files: cli/herdr-channel.ts
   scrolled away from the live tail (tracked from the net scroll lines already sent to the bridge)
   and disappears once back at the bottom, whether by clicking it or scrolling back down manually.
   Tracked per pane, so each split-grid pane shows its own button independently.
+- The mobile keyboard/command-row area now tints muted green when the active pane is pinned, as a
+  hands-free visual cue of pin state.
 
 ### Changed
 
