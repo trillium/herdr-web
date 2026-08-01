@@ -26,6 +26,8 @@ Files: cli/herdr-channel.ts
   buffered dictation instead of sending it.
 - Added trailing voice-pin-cycle phrases (`pin next`, `pin previous`/`pin prev`) to the mobile
   command input that cycle terminal focus across pinned panes without touching the buffered text.
+  `pan next` and `one` are also accepted as aliases for `pin next` to tolerate dictation
+  mis-hearings.
 - Added a "Next pinned pane" toolbar button next to the pin toggle for manually cycling to the
   next pinned pane.
 - Added a collapse toggle to the sidebar's spaces list, so it can be minimized to make room for

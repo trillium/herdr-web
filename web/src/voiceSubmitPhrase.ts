@@ -9,7 +9,9 @@ export const VOICE_SUBMIT_PHRASES = ["bravely", "gravely", "briefly", "lap"];
 export const VOICE_CLEAR_PHRASES = ["change"];
 // "pin next"/"pin previous" cycle focus across pinned panes instead of
 // touching the buffered text at all — the buffer is left as-is on fire.
-export const VOICE_PIN_NEXT_PHRASES = ["pin next"];
+// "one" is a short, more reliably-transcribed alias for "pin next"; "pan
+// next" covers dictation mishearing "pin" as "pan".
+export const VOICE_PIN_NEXT_PHRASES = ["pin next", "pan next", "one"];
 export const VOICE_PIN_PREV_PHRASES = ["pin previous", "pin prev"];
 export const VOICE_SUBMIT_TIMER_MS = 1000;
 

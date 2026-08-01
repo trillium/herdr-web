@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { matchTrailingVoiceSubmitPhrase, stripVoiceSubmitPhrase } from "./voiceSubmitPhrase";
+import {
+  matchTrailingVoicePinPhrase,
+  matchTrailingVoiceSubmitPhrase,
+  stripVoiceSubmitPhrase,
+} from "./voiceSubmitPhrase";
 
 describe("matchTrailingVoiceSubmitPhrase", () => {
   it("matches a trailing submit phrase case-insensitively", () => {
@@ -25,6 +29,27 @@ describe("matchTrailingVoiceSubmitPhrase", () => {
   it("returns null when there is no submit phrase", () => {
     expect(matchTrailingVoiceSubmitPhrase("just some text")).toBeNull();
     expect(matchTrailingVoiceSubmitPhrase("")).toBeNull();
+  });
+});
+
+describe("matchTrailingVoicePinPhrase", () => {
+  it("matches 'pin next' and its aliases", () => {
+    expect(matchTrailingVoicePinPhrase("pin next")).toEqual({ direction: "next", tail: "pin next" });
+    expect(matchTrailingVoicePinPhrase("okay one")).toEqual({ direction: "next", tail: "one" });
+    expect(matchTrailingVoicePinPhrase("pan next")).toEqual({ direction: "next", tail: "pan next" });
+  });
+
+  it("matches 'pin previous'/'pin prev'", () => {
+    expect(matchTrailingVoicePinPhrase("pin previous")).toEqual({
+      direction: "prev",
+      tail: "pin previous",
+    });
+    expect(matchTrailingVoicePinPhrase("pin prev")).toEqual({ direction: "prev", tail: "pin prev" });
+  });
+
+  it("does not match 'one' embedded in a larger word or not trailing", () => {
+    expect(matchTrailingVoicePinPhrase("someone")).toBeNull();
+    expect(matchTrailingVoicePinPhrase("one more thing")).toBeNull();
   });
 });
 
