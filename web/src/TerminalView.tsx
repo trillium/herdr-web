@@ -57,6 +57,7 @@ import type {
 } from "./mobileTerminalPrefs";
 import {
   advanceTerminalScrollOffset,
+  countTerminalOutputNewlines,
   isTerminalScrolledAwayFromPresent,
   MAX_TERMINAL_SCROLL_JUMP_LINES,
 } from "./terminalScrollPresence";
@@ -752,6 +753,12 @@ export function TerminalView({
         rendererReadyRef.current?.generation !== ready.generation
       ) {
         return;
+      }
+      if (terminalScrollOffsetRef.current > 0) {
+        const newLines = countTerminalOutputNewlines(data);
+        if (newLines > 0) {
+          terminalScrollOffsetRef.current += newLines;
+        }
       }
       ready.renderer.write(data);
     };
