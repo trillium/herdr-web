@@ -112,10 +112,14 @@ type Props = {
   refitToken?: number;
   /** Incrementing token from the parent that requests focus on the preferred terminal input. */
   focusToken?: number;
-  /** Called when the captain dictates "pin next"/"pin previous" into the mobile command input. */
+  /** Called when the captain dictates "pin next"/"pin previous" into the mobile command input. Always pin-only, regardless of the pane-cycle button's current mode. */
   onVoicePinCycle?: (direction: "next" | "prev") => void;
-  /** Called when the pane-cycle button is held down; toggles pin state for this pane. */
-  onPinToggle?: () => void;
+  /** Called when the pane-cycle button is tapped; cycles through whichever pool paneCycleMode selects. */
+  onPaneCycle?: (direction: "next" | "prev") => void;
+  /** Called when the pane-cycle button is held down; toggles paneCycleMode between "pin" and "all". */
+  onPaneCycleModeToggle?: () => void;
+  /** Which pool the pane-cycle button cycles through; also the button's own color signal. */
+  paneCycleMode?: "pin" | "all";
   /** Whether this pane is currently pinned; tints the mobile keyboard area as a hands-free cue. */
   pinned?: boolean;
   /** Current app color theme, mirrored onto a mobile theme-toggle button and voice phrases. */
@@ -195,7 +199,9 @@ export function TerminalView({
   refitToken = 0,
   focusToken = 0,
   onVoicePinCycle = () => {},
-  onPinToggle = () => {},
+  onPaneCycle = () => {},
+  onPaneCycleModeToggle = () => {},
+  paneCycleMode = "pin",
   pinned = false,
   theme = "dark",
   onThemeChange = () => {},
@@ -1490,8 +1496,10 @@ export function TerminalView({
           onUpload={openFilePicker}
           onStageCommand={(command) => enqueueTerminalInput([command])}
           onSubmitCommand={(command) => enqueueTerminalInput([command, "\r"])}
-          onPinCycle={onVoicePinCycle}
-          onPinToggle={onPinToggle}
+          onVoicePinCycle={onVoicePinCycle}
+          onPaneCycle={onPaneCycle}
+          onPaneCycleModeToggle={onPaneCycleModeToggle}
+          paneCycleMode={paneCycleMode}
           pinned={pinned}
           onThemeChange={onThemeChange}
           placeholder={placeholder}
@@ -1592,8 +1600,10 @@ function MobileTerminalControls({
   onUpload,
   onStageCommand,
   onSubmitCommand,
-  onPinCycle,
-  onPinToggle,
+  onVoicePinCycle,
+  onPaneCycle,
+  onPaneCycleModeToggle,
+  paneCycleMode,
   pinned,
   onThemeChange,
   placeholder,
@@ -1616,8 +1626,10 @@ function MobileTerminalControls({
   onUpload: () => void;
   onStageCommand: (command: string) => void;
   onSubmitCommand: (command: string) => void;
-  onPinCycle: (direction: "next" | "prev") => void;
-  onPinToggle: () => void;
+  onVoicePinCycle: (direction: "next" | "prev") => void;
+  onPaneCycle: (direction: "next" | "prev") => void;
+  onPaneCycleModeToggle: () => void;
+  paneCycleMode: "pin" | "all";
   pinned: boolean;
   onThemeChange: (theme: Theme) => void;
   placeholder: string;
@@ -1631,7 +1643,7 @@ function MobileTerminalControls({
   const [expanded, setExpanded] = useState(false);
   const [ctrlLatch, setCtrlLatch] = useState(false);
   const voiceSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pinCyclePress = useLongPress(onPinToggle, () => onPinCycle("next"));
+  const paneCyclePress = useLongPress(onPaneCycleModeToggle, () => onPaneCycle("next"));
   const setCommandInputNode = (node: HTMLInputElement | HTMLTextAreaElement | null) => {
     commandInputRef.current = node;
   };
@@ -1685,13 +1697,13 @@ function MobileTerminalControls({
         }
         onSubmitCommand(stripped);
       } else if (pinMatch) {
-        onPinCycle(pinMatch.direction);
+        onVoicePinCycle(pinMatch.direction);
       } else if (themeMatch) {
         onThemeChange(themeMatch.theme);
       }
       setValue("");
     }, VOICE_SUBMIT_TIMER_MS);
-  }, [value, disabled, onSubmitCommand, onPinCycle, onThemeChange]);
+  }, [value, disabled, onSubmitCommand, onVoicePinCycle, onThemeChange]);
 
   useEffect(() => {
     return () => {
@@ -1916,9 +1928,10 @@ function MobileTerminalControls({
         <button
           className="term-key term-key-icon term-pin-cycle"
           type="button"
-          aria-label="Next pinned agent (hold to pin/unpin)"
-          title="Next pinned agent (hold to pin/unpin)"
-          {...pinCyclePress}
+          aria-label="Next pane (hold to switch between pinned-only and all panes)"
+          title={paneCycleMode === "pin" ? "Next pinned agent (hold to switch mode)" : "Next agent (hold to switch mode)"}
+          data-cycle-mode={paneCycleMode}
+          {...paneCyclePress}
         >
           <SkipForward size={15} />
         </button>

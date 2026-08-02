@@ -895,6 +895,10 @@ export function App() {
   const [showDetail, setShowDetail] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Session-local: which pool the "next pane" buttons cycle through. Not
+  // persisted to DisplayPrefs — it's a transient interaction mode, not a
+  // durable preference.
+  const [paneCycleMode, setPaneCycleMode] = useState<"pin" | "all">("pin");
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [noteDeleteTarget, setNoteDeleteTarget] = useState<ScopedNoteEntry | null>(null);
   const [deletingNote, setDeletingNote] = useState(false);
@@ -1820,6 +1824,20 @@ export function App() {
     }
     return ordered;
   }, [bridgeViews, agentPinsStates]);
+  // Every pane across every enabled bridge, unfiltered — the pool for the
+  // "next pane" buttons' all-mode, as opposed to orderedPinnedPanes above.
+  const orderedAllPanes = useMemo(() => {
+    const ordered: { bridgeId: BridgeId; pane: PaneInfo }[] = [];
+    for (const view of bridgeViews) {
+      if (!view.snapshot) {
+        continue;
+      }
+      for (const pane of view.snapshot.panes) {
+        ordered.push({ bridgeId: view.runtime.id, pane });
+      }
+    }
+    return ordered;
+  }, [bridgeViews]);
   const selectedNotesState =
     selectedRuntime && notesStates[selectedRuntime.id]?.connectionKey === selectedRuntime.connectionKey
       ? notesStates[selectedRuntime.id]
@@ -2066,6 +2084,32 @@ export function App() {
     // dictation-capable command input has to regain focus on its own.
     requestTerminalFocus();
   };
+
+  // Button-driven cycling (toolbar + mobile row): pool depends on paneCycleMode.
+  // Voice's "pin next"/"pin previous" always stays pin-only (cyclePinnedPane
+  // above) regardless of the buttons' current mode — the phrase says "pin".
+  const cycleAgentPane = (direction: "next" | "prev") => {
+    const pool = paneCycleMode === "pin" ? orderedPinnedPanes : orderedAllPanes;
+    if (pool.length === 0) {
+      return;
+    }
+    const currentIdx = selectedPane
+      ? pool.findIndex(
+          (entry) => entry.bridgeId === selectedBridgeId && entry.pane.pane_id === selectedPane.pane_id,
+        )
+      : -1;
+    const targetIdx =
+      currentIdx === -1
+        ? 0
+        : (currentIdx + (direction === "next" ? 1 : -1) + pool.length) % pool.length;
+    const target = pool[targetIdx];
+    openPane(target.bridgeId, target.pane);
+  };
+
+  const togglePaneCycleMode = () => {
+    setPaneCycleMode((mode) => (mode === "pin" ? "all" : "pin"));
+  };
+  const paneCyclePress = useLongPress(togglePaneCycleMode, () => cycleAgentPane("next"));
 
   const requestTerminalFocus = () => setTerminalFocusToken((token) => token + 1);
   const requestNoteTitleFocus = (bridgeId: BridgeId, noteId: string) => {
@@ -3617,13 +3661,15 @@ export function App() {
               <Pin size={16} />
             </button>
           ) : null}
-          {selectedRuntime && orderedPinnedPanes.length > 1 ? (
+          {selectedRuntime &&
+          (paneCycleMode === "pin" ? orderedPinnedPanes.length > 1 : orderedAllPanes.length > 1) ? (
             <button
               className="icon-btn stage-pin-next-button"
               type="button"
-              aria-label="Next pinned pane"
-              title="Next pinned pane"
-              onClick={() => cyclePinnedPane("next")}
+              aria-label="Next pane (hold to switch between pinned-only and all panes)"
+              title={paneCycleMode === "pin" ? "Next pinned pane (hold to switch mode)" : "Next pane (hold to switch mode)"}
+              data-cycle-mode={paneCycleMode}
+              {...paneCyclePress}
             >
               <SkipForward size={16} />
             </button>
@@ -3679,11 +3725,9 @@ export function App() {
             httpUrl={selectedHttpUrl}
             wsUrl={selectedWsUrl}
             onVoicePinCycle={cyclePinnedPane}
-            onPinToggle={() => {
-              if (selectedRuntime && selectedPane) {
-                void toggleAgentPin(selectedRuntime.id, selectedPane.pane_id, selectedPanePinned);
-              }
-            }}
+            onPaneCycle={cycleAgentPane}
+            onPaneCycleModeToggle={togglePaneCycleMode}
+            paneCycleMode={paneCycleMode}
             selectedPanePinned={selectedPanePinned}
             theme={theme}
             onThemeChange={setTheme}
@@ -3714,11 +3758,9 @@ export function App() {
             refitToken={refitToken}
             focusToken={terminalFocusToken}
             onVoicePinCycle={cyclePinnedPane}
-            onPinToggle={() => {
-              if (selectedRuntime && selectedPane) {
-                void toggleAgentPin(selectedRuntime.id, selectedPane.pane_id, selectedPanePinned);
-              }
-            }}
+            onPaneCycle={cycleAgentPane}
+            onPaneCycleModeToggle={togglePaneCycleMode}
+            paneCycleMode={paneCycleMode}
             pinned={selectedPanePinned}
             theme={theme}
             onThemeChange={setTheme}
@@ -5063,7 +5105,9 @@ function SplitGrid({
   httpUrl,
   wsUrl,
   onVoicePinCycle,
-  onPinToggle,
+  onPaneCycle,
+  onPaneCycleModeToggle,
+  paneCycleMode,
   selectedPanePinned,
   theme,
   onThemeChange,
@@ -5092,7 +5136,9 @@ function SplitGrid({
   httpUrl: (path: string, query?: URLSearchParams) => string;
   wsUrl: (path: string, query?: URLSearchParams) => string;
   onVoicePinCycle: (direction: "next" | "prev") => void;
-  onPinToggle: () => void;
+  onPaneCycle: (direction: "next" | "prev") => void;
+  onPaneCycleModeToggle: () => void;
+  paneCycleMode: "pin" | "all";
   selectedPanePinned: boolean;
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
@@ -5155,7 +5201,9 @@ function SplitGrid({
               refitToken={selected ? refitToken : 0}
               focusToken={selected ? focusToken : 0}
               onVoicePinCycle={onVoicePinCycle}
-              onPinToggle={onPinToggle}
+              onPaneCycle={onPaneCycle}
+              onPaneCycleModeToggle={onPaneCycleModeToggle}
+              paneCycleMode={paneCycleMode}
               pinned={selected && selectedPanePinned}
               theme={theme}
               onThemeChange={onThemeChange}

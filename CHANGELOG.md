@@ -77,6 +77,11 @@ Files: cli/herdr-channel.ts
   bookmarking, or sharing a link now returns to the same view.
 - Added PostHog analytics, initialized on app start. The bridge's CSP now allows `connect-src` to
   PostHog's US ingestion hosts (`us.i.posthog.com`, `us-assets.i.posthog.com`).
+- The "Next pinned pane" button (toolbar and mobile command row) now has two cycling modes:
+  pin mode (cycle pinned panes only, the previous behavior) and all mode (cycle every pane across
+  every enabled bridge). Holding the button toggles between modes; the button's own color signals
+  the current mode (green for pin, neutral for all). Toggling pin state on the current pane is now
+  exclusively the header pin button's job — the next-pane button's long-press no longer does this.
 
 ### Changed
 

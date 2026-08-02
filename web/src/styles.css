@@ -1012,6 +1012,14 @@ button {
   background: color-mix(in srgb, var(--accent) 11%, transparent);
 }
 
+/* Next-pane toolbar button: color is the paneCycleMode signal, same
+   convention as the mobile row's .term-pin-cycle button. */
+.stage-pin-next-button[data-cycle-mode="pin"] {
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 11%, transparent);
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -2013,6 +2021,21 @@ button {
   border-color: color-mix(in srgb, var(--green) 45%, var(--line));
   background: color-mix(in srgb, var(--green) 18%, var(--surface0));
   color: color-mix(in srgb, var(--green) 70%, var(--text));
+}
+
+/* The next-pane button's color is its own mode signal (pin vs. all), not the
+   row's ambient pinned-pane tint above — it opts out of that rule and always
+   reflects paneCycleMode instead. */
+.terminal-mobile-controls .term-key-icon.term-pin-cycle[data-cycle-mode="pin"] {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line));
+  background: color-mix(in srgb, var(--green) 18%, var(--surface0));
+  color: color-mix(in srgb, var(--green) 70%, var(--text));
+}
+
+.terminal-mobile-controls .term-key-icon.term-pin-cycle[data-cycle-mode="all"] {
+  border-color: var(--line);
+  background: var(--surface0);
+  color: var(--text);
 }
 
 .term-key:disabled,
