@@ -163,6 +163,13 @@ type TerminalRendererReady = {
 };
 const MAX_UPLOAD_FILES = 8;
 const DEBUG_TERMINAL_RECONNECT = false;
+// Mount, the ResizeObserver's initial callback, and document.fonts.ready all
+// fire within a few ms of each other on a fresh pane and each would otherwise
+// send its own "resize" over the socket — one full reflow/redraw round trip
+// per send. Harmless on a local bridge; visibly slow and chunky over a
+// remote-proxied (double-hop) connection. Coalescing to the last one in this
+// window cuts that to at most one corrective resize after the first connect.
+const TERMINAL_RESIZE_SETTLE_MS = 120;
 
 export function TerminalView({
   pane,
@@ -584,6 +591,20 @@ export function TerminalView({
       }
       sendResizeRef.current(size);
     };
+    let settleTimer: number | null = null;
+    let pendingSettleMode: "fit" | "refresh" = "fit";
+    const scheduleSettledPublish = (mode: "fit" | "refresh") => {
+      pendingSettleMode = pendingSettleMode === "refresh" ? "refresh" : mode;
+      if (settleTimer !== null) {
+        window.clearTimeout(settleTimer);
+      }
+      settleTimer = window.setTimeout(() => {
+        settleTimer = null;
+        const flushMode = pendingSettleMode;
+        pendingSettleMode = "fit";
+        publishReady(flushMode);
+      }, TERMINAL_RESIZE_SETTLE_MS);
+    };
 
     void renderer
       .mount(host)
@@ -635,7 +656,7 @@ export function TerminalView({
         });
 
         resizeObserver = new ResizeObserver(() => {
-          publishReady();
+          scheduleSettledPublish("fit");
           if (socketRef.current?.readyState !== WebSocket.OPEN) {
             requestReconnectRef.current("resize");
           }
@@ -646,7 +667,7 @@ export function TerminalView({
         if (fontReady) {
           void fontReady.then(() => {
             if (!disposed) {
-              publishReady("refresh");
+              scheduleSettledPublish("refresh");
             }
           });
         }
@@ -663,6 +684,9 @@ export function TerminalView({
 
     return () => {
       disposed = true;
+      if (settleTimer !== null) {
+        window.clearTimeout(settleTimer);
+      }
       flushBatchedTerminalInput();
       batchedInputRef.current = emptyTerminalInputBatch();
       clearQueuedTerminalInput();
