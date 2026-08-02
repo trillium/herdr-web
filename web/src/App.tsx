@@ -7279,7 +7279,7 @@ function AgentRow({
           {pinned ? (
             <Pin className="agent-pin-indicator" size={10} aria-label="Pinned" />
           ) : null}
-          <span className="agent-title-text">{agentTitle(pane)}</span>
+          <span className="agent-title-text">{agentTitle(pane, workspace, tabLabel)}</span>
         </span>
         <span className="pane-meta mono">{agentSubtitle(pane, workspace, tabLabel, bridgeLabel)}</span>
       </span>
@@ -7625,8 +7625,19 @@ function compareLastStatusTransition(a: ScopedAgentPane, b: ScopedAgentPane) {
   return 0;
 }
 
-function agentTitle(pane: PaneInfo) {
-  return pane.display_agent || pane.label || pane.agent || pane.title || paneTitle(pane);
+function agentTitle(pane: PaneInfo, workspace?: WorkspaceInfo, tabLabel?: string) {
+  // The workspace/tab name distinguishes agent windows from one another; the
+  // agent binary name (e.g. "claude") is the same across every row and isn't
+  // useful as the primary label — it still shows up via the agent icon.
+  return (
+    workspace?.label ||
+    tabLabel ||
+    pane.display_agent ||
+    pane.label ||
+    pane.agent ||
+    pane.title ||
+    paneTitle(pane)
+  );
 }
 
 function agentSubtitle(
@@ -7640,7 +7651,18 @@ function agentSubtitle(
     pane.state_labels?.[statusLabel(pane.agent_status)] ||
     statusLabel(pane.agent_status);
   const dir = basename(pane.foreground_cwd || pane.cwd);
-  return [stateText, bridgeLabel, workspace?.label, tabLabel, dir].filter(Boolean).join(" · ");
+  const title = agentTitle(pane, workspace, tabLabel);
+  const parts = [stateText, bridgeLabel];
+  if (workspace?.label && workspace.label !== title) {
+    parts.push(workspace.label);
+  }
+  if (tabLabel && tabLabel !== title) {
+    parts.push(tabLabel);
+  }
+  if (dir && dir !== title) {
+    parts.push(dir);
+  }
+  return parts.filter(Boolean).join(" · ");
 }
 
 function SplitGlyph() {
