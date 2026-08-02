@@ -89,6 +89,9 @@ Files: cli/herdr-channel.ts
   free-form keys). An external usage-monitor process can now report account usage into any
   Claude pane via `herdr pane report-metadata <pane_id> --source <id> --token
   usage_hourly_pct=<pct> --token usage_weekly_pct=<pct>`.
+- Added a pane search dialog (search icon in the sidebar header) that fuzzy-matches panes across
+  every enabled bridge by label, title, agent, cwd, and workspace/tab path, so a specific tab can
+  be found and jumped to without visually scanning every connected bridge.
 
 ### Changed
 

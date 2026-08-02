@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Search,
   Settings,
   SkipForward,
   SplitSquareHorizontal,
@@ -80,6 +81,8 @@ import {
 } from "./displayPrefs";
 import { LaunchDialog } from "./LaunchDialog";
 import { resolveLaunchSpec } from "./launch";
+import { PaneSearchDialog } from "./PaneSearchDialog";
+import type { PaneSearchEntry } from "./paneSearch";
 import type { LaunchTarget } from "./launch";
 import {
   FALLBACK_LAUNCHER_PRESETS,
@@ -903,6 +906,7 @@ export function App() {
   const [noteDeleteTarget, setNoteDeleteTarget] = useState<ScopedNoteEntry | null>(null);
   const [deletingNote, setDeletingNote] = useState(false);
   const [backendSettingsOpen, setBackendSettingsOpen] = useState(false);
+  const [paneSearchOpen, setPaneSearchOpen] = useState(false);
   const [terminalFontSizePx, setTerminalFontSizePx] = useState(
     initialPrefs.terminalFontSizePx,
   );
@@ -1837,6 +1841,23 @@ export function App() {
       }
     }
     return ordered;
+  }, [bridgeViews]);
+  const paneSearchEntries = useMemo<PaneSearchEntry[]>(() => {
+    const entries: PaneSearchEntry[] = [];
+    for (const view of bridgeViews) {
+      if (!view.snapshot) {
+        continue;
+      }
+      for (const pane of view.snapshot.panes) {
+        entries.push({
+          bridgeId: view.runtime.id,
+          bridgeLabel: view.runtime.label,
+          pane,
+          path: paneWorkspaceTabPath(view.snapshot, pane),
+        });
+      }
+    }
+    return entries;
   }, [bridgeViews]);
   const selectedNotesState =
     selectedRuntime && notesStates[selectedRuntime.id]?.connectionKey === selectedRuntime.connectionKey
@@ -3444,6 +3465,7 @@ export function App() {
           onSelectSpace={selectSpace}
           onSelectTab={selectTab}
           onSelectPane={openPane}
+          onOpenPaneSearch={() => setPaneSearchOpen(true)}
           onRefresh={refreshNow}
           onRefreshBridge={(bridgeId) => {
             bridge.retryBridgeProbe(bridgeId);
@@ -3968,6 +3990,17 @@ export function App() {
           emptyMessage={launchEmptyMessage}
           onCancel={() => setLaunchTarget(null)}
           onSubmit={submitLaunch}
+        />
+      ) : null}
+
+      {paneSearchOpen ? (
+        <PaneSearchDialog
+          entries={paneSearchEntries}
+          onCancel={() => setPaneSearchOpen(false)}
+          onSelect={(bridgeId, pane) => {
+            setPaneSearchOpen(false);
+            openPane(bridgeId, pane);
+          }}
         />
       ) : null}
 
@@ -5328,6 +5361,7 @@ function Switcher({
   onSelectSpace,
   onSelectTab,
   onSelectPane,
+  onOpenPaneSearch,
   onRefresh,
   onRefreshBridge,
   onBackendSettings,
@@ -5378,6 +5412,7 @@ function Switcher({
   onSelectSpace: (bridgeId: BridgeId, workspaceId: string) => void;
   onSelectTab: (bridgeId: BridgeId, tabId: string) => void;
   onSelectPane: (bridgeId: BridgeId, pane: PaneInfo) => void;
+  onOpenPaneSearch: () => void;
   onRefresh: () => void;
   onRefreshBridge: (bridgeId: BridgeId) => void;
   onBackendSettings: () => void;
@@ -5768,6 +5803,15 @@ function Switcher({
             <span className="brand-sub">{bridgeLabel}</span>
           ) : null}
         </div>
+        <button
+          className="icon-btn"
+          type="button"
+          aria-label="Search panes"
+          title="Search panes across all bridges"
+          onClick={onOpenPaneSearch}
+        >
+          <Search size={16} />
+        </button>
         <button
           className="icon-btn"
           type="button"
