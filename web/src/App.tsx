@@ -1712,24 +1712,31 @@ export function App() {
   const selectedPanePinTitle = selectedPanePinned
     ? `Unpin ${selectedPanePinTarget}`
     : `Pin ${selectedPanePinTarget}`;
+  // Spans every enabled bridge (not just the one currently selected), so
+  // cycling pinned panes rotates through all of them, including other machines.
   const orderedPinnedPanes = useMemo(() => {
-    const panes = snapshot?.panes ?? [];
-    const pins = selectedAgentPinsState?.response?.pins ?? [];
-    const byId = new Map(panes.map((pane) => [pane.pane_id, pane]));
     const seen = new Set<string>();
-    const ordered: PaneInfo[] = [];
-    for (const pin of pins) {
-      if (seen.has(pin.pane_id)) {
+    const ordered: { bridgeId: BridgeId; pane: PaneInfo }[] = [];
+    for (const view of bridgeViews) {
+      const state = agentPinsStates[view.runtime.id];
+      if (!state || state.connectionKey !== view.runtime.connectionKey || !view.snapshot) {
         continue;
       }
-      seen.add(pin.pane_id);
-      const pane = byId.get(pin.pane_id);
-      if (pane) {
-        ordered.push(pane);
+      const byId = new Map(view.snapshot.panes.map((pane) => [pane.pane_id, pane]));
+      for (const pin of state.response?.pins ?? []) {
+        const key = agentPinKey(view.runtime.id, pin.pane_id);
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        const pane = byId.get(pin.pane_id);
+        if (pane) {
+          ordered.push({ bridgeId: view.runtime.id, pane });
+        }
       }
     }
     return ordered;
-  }, [snapshot, selectedAgentPinsState]);
+  }, [bridgeViews, agentPinsStates]);
   const selectedNotesState =
     selectedRuntime && notesStates[selectedRuntime.id]?.connectionKey === selectedRuntime.connectionKey
       ? notesStates[selectedRuntime.id]
@@ -1957,18 +1964,21 @@ export function App() {
   };
 
   const cyclePinnedPane = (direction: "next" | "prev") => {
-    if (!selectedRuntime || orderedPinnedPanes.length === 0) {
+    if (orderedPinnedPanes.length === 0) {
       return;
     }
     const currentIdx = selectedPane
-      ? orderedPinnedPanes.findIndex((pane) => pane.pane_id === selectedPane.pane_id)
+      ? orderedPinnedPanes.findIndex(
+          (entry) => entry.bridgeId === selectedBridgeId && entry.pane.pane_id === selectedPane.pane_id,
+        )
       : -1;
     const targetIdx =
       currentIdx === -1
         ? 0
         : (currentIdx + (direction === "next" ? 1 : -1) + orderedPinnedPanes.length) %
           orderedPinnedPanes.length;
-    openPane(selectedRuntime.id, orderedPinnedPanes[targetIdx]);
+    const target = orderedPinnedPanes[targetIdx];
+    openPane(target.bridgeId, target.pane);
     // Voice-driven — the whole point is never touching the screen, so the
     // dictation-capable command input has to regain focus on its own.
     requestTerminalFocus();
