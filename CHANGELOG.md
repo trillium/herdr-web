@@ -72,8 +72,14 @@ Files: cli/herdr-channel.ts
   calling `pane.report_metadata` with `state_labels` keys `usage_hourly_pct`/`usage_weekly_pct` set
   to a `"0"`-`"100"` string; bars are omitted entirely until a pane reports them, and turn
   yellow/red past 70%/90%.
+- The current bridge/pane/workspace selection is now reflected in the URL as
+  `?bridge=&pane=&workspace=` query params, kept in sync via `history.replaceState`. Reloading,
+  bookmarking, or sharing a link now returns to the same view.
 
 ### Changed
+
+- The agent list row title now prefers the workspace/tab label over the agent binary name (e.g.
+  "claude"), which was identical across every row and not useful as a primary label.
 
 ### Fixed
 
@@ -91,6 +97,16 @@ Files: cli/herdr-channel.ts
   scroll down by a client-tracked line count, which fell out of sync whenever output streamed in
   while scrolled away. All output is already written to the local terminal buffer regardless of
   scroll position, so jumping to present is now a local viewport reset with no server round trip.
+- "Jump to present" now also sends a ctrl+enter keystroke to the remote pane, since apps like
+  Claude Code's CLI track their own scrolled-up state and only clear their own "jump to present"
+  hint on a literal ctrl+enter (encoded as the Kitty keyboard protocol's CSI-u sequence, since
+  plain ctrl+enter is indistinguishable from Enter over a legacy PTY).
+- Fixed pinned-pane cycling only rotating through pins on whichever bridge happened to be
+  selected; it now cycles through pinned panes across every enabled bridge.
+- Fixed slow, chunky terminal loading over remote-proxied (double-hop) bridges: mount, the
+  resize observer's initial callback, and the fonts-ready callback each fired their own resize
+  round trip within a few ms of each other. These are now coalesced to at most one resize after
+  the first connect.
 
 ### Removed
 
