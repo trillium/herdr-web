@@ -104,6 +104,10 @@ Files: cli/herdr-channel.ts
   applied. It now also refocuses right when the connection finishes attaching.
 - The "Jump to present" button now also returns focus to the mobile command input (or terminal
   keyboard area), instead of leaving focus wherever it was before scrolling.
+- Fixed the mobile voice-submit phrase (`bravely`/`gravely`/`briefly`/`lap`) sometimes never firing
+  in a busy session: the buffered text would show the phrase but never actually send. The 1s arm
+  timer was keyed to callback props that get recreated on every unrelated re-render (e.g. any
+  pane's activity update on any bridge), which could reset the timer before it ever completed.
 - Uploaded files now get a unique hash suffix appended to their stored name, so repeat uploads
   that share a client-side name (e.g. a screenshot tool that always calls it `image.png`) no
   longer collide or prompt an overwrite confirmation.
