@@ -427,6 +427,7 @@ mod tests {
             agent_status: AgentStatus::Idle,
             custom_status: None,
             state_labels: HashMap::new(),
+            tokens: HashMap::new(),
             scroll: None,
             revision: 1,
         }

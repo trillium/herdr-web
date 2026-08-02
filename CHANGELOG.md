@@ -82,6 +82,13 @@ Files: cli/herdr-channel.ts
   every enabled bridge). Holding the button toggles between modes; the button's own color signals
   the current mode (green for pin, neutral for all). Toggling pin state on the current pane is now
   exclusively the header pin button's job — the next-pane button's long-press no longer does this.
+- `PaneInfo` now carries a `tokens` map (mirroring Herdr's `pane.report_metadata --token` field,
+  previously missing from the vendored compatibility crate), and the mobile command row's dormant
+  usage bars now read live `usage_hourly_pct`/`usage_weekly_pct` from it instead of the
+  `state_labels` bag (which Herdr restricts to a fixed `agent_status` enum and can't carry
+  free-form keys). An external usage-monitor process can now report account usage into any
+  Claude pane via `herdr pane report-metadata <pane_id> --source <id> --token
+  usage_hourly_pct=<pct> --token usage_weekly_pct=<pct>`.
 
 ### Changed
 

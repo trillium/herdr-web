@@ -490,6 +490,7 @@ fn session_snapshot_request_and_response_round_trip() {
                     agent_status: AgentStatus::Working,
                     custom_status: Some("reviewing".into()),
                     state_labels: HashMap::from([("phase".into(), "review".into())]),
+                    tokens: HashMap::new(),
                     agent_session: None,
                     scroll: Some(PaneScrollInfo {
                         offset_from_bottom: 4,
@@ -619,6 +620,7 @@ fn worktree_request_and_response_round_trip() {
                 agent_status: AgentStatus::Unknown,
                 custom_status: None,
                 state_labels: HashMap::new(),
+                tokens: HashMap::new(),
                 agent_session: None,
                 scroll: None,
                 revision: 0,
@@ -936,6 +938,7 @@ fn create_response_round_trips_with_root_pane() {
                 agent_status: AgentStatus::Unknown,
                 custom_status: None,
                 state_labels: HashMap::new(),
+                tokens: HashMap::new(),
                 agent_session: None,
                 scroll: None,
                 revision: 0,

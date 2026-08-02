@@ -207,7 +207,7 @@ export function TerminalView({
   onThemeChange = () => {},
   placeholder = "",
 }: Props) {
-  const terminalUsage = readTerminalUsage(pane?.state_labels);
+  const terminalUsage = readTerminalUsage(pane?.tokens);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);

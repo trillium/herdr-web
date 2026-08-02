@@ -1,5 +1,5 @@
 // Agents report their own account usage via the existing pane.report_metadata
-// state_labels bag (see PaneReportMetadataParams in vendor/herdr-compat), setting
+// tokens bag (see PaneReportMetadataParams in vendor/herdr-compat), setting
 // usage_hourly_pct / usage_weekly_pct to a "0".."100" string. There is no bridge or
 // protocol support specific to usage — this just knows which two keys to read.
 const HOURLY_KEY = "usage_hourly_pct";
@@ -23,10 +23,10 @@ function parseUsagePercent(raw: string | undefined): number | undefined {
   return Math.min(100, Math.max(0, value));
 }
 
-export function readTerminalUsage(stateLabels: Record<string, string> | undefined): TerminalUsage {
+export function readTerminalUsage(tokens: Record<string, string> | undefined): TerminalUsage {
   return {
-    hourlyPct: parseUsagePercent(stateLabels?.[HOURLY_KEY]),
-    weeklyPct: parseUsagePercent(stateLabels?.[WEEKLY_KEY]),
+    hourlyPct: parseUsagePercent(tokens?.[HOURLY_KEY]),
+    weeklyPct: parseUsagePercent(tokens?.[WEEKLY_KEY]),
   };
 }
 

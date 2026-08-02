@@ -1395,6 +1395,7 @@ mod tests {
             agent_status: AgentStatus::Unknown,
             custom_status: None,
             state_labels: Default::default(),
+            tokens: Default::default(),
             agent_session: None,
             scroll: None,
             revision,
