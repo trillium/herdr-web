@@ -700,6 +700,16 @@ function applyUrlSelection(prefs: DisplayPrefs): DisplayPrefs {
     activeWorkspace: selection.workspaceId
       ? { bridgeId: selection.bridgeId, workspaceId: selection.workspaceId }
       : prefs.activeWorkspace,
+    // The per-bridge fallback maps are what actually resolve the selected pane
+    // once the snapshot loads (see the effect syncing selectedPaneRefState from
+    // selectedPanesByBridgeId) — seeding selectedPane/activeWorkspace alone gets
+    // overwritten by that effect the moment the snapshot arrives.
+    selectedPanesByBridgeId: selection.paneId
+      ? { ...prefs.selectedPanesByBridgeId, [selection.bridgeId]: selection.paneId }
+      : prefs.selectedPanesByBridgeId,
+    activeWorkspacesByBridgeId: selection.workspaceId
+      ? { ...prefs.activeWorkspacesByBridgeId, [selection.bridgeId]: selection.workspaceId }
+      : prefs.activeWorkspacesByBridgeId,
   };
 }
 
