@@ -1581,7 +1581,12 @@ fn connect_sources_for_origin(origin: &str) -> Result<Vec<String>, String> {
 }
 
 fn content_security_policy(policy: &RequestPolicy) -> HeaderValue {
-    let mut connect_src = vec!["'self'".to_string(), "data:".to_string()];
+    let mut connect_src = vec![
+        "'self'".to_string(),
+        "data:".to_string(),
+        "https://us.i.posthog.com".to_string(),
+        "https://us-assets.i.posthog.com".to_string(),
+    ];
     connect_src.extend(policy.allowed_connect_sources.iter().cloned());
     let value = format!(
         "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src {}; \
@@ -5721,7 +5726,10 @@ mod tests {
         let header = content_security_policy(&policy);
         let value = header.to_str().unwrap();
 
-        assert!(value.contains("connect-src 'self' data: http://srv:8787 ws://srv:8787;"));
+        assert!(value.contains(
+            "connect-src 'self' data: https://us.i.posthog.com https://us-assets.i.posthog.com \
+             http://srv:8787 ws://srv:8787;"
+        ));
         assert!(value.contains("img-src 'self' data: blob:;"));
         assert!(value.contains("frame-ancestors 'none'"));
     }

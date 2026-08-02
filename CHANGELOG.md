@@ -75,6 +75,8 @@ Files: cli/herdr-channel.ts
 - The current bridge/pane/workspace selection is now reflected in the URL as
   `?bridge=&pane=&workspace=` query params, kept in sync via `history.replaceState`. Reloading,
   bookmarking, or sharing a link now returns to the same view.
+- Added PostHog analytics, initialized on app start. The bridge's CSP now allows `connect-src` to
+  PostHog's US ingestion hosts (`us.i.posthog.com`, `us-assets.i.posthog.com`).
 
 ### Changed
 
