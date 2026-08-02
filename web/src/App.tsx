@@ -667,6 +667,75 @@ async function writeDisplayPrefs(prefs: DisplayPrefs) {
   }
 }
 
+// A URL with ?bridge=&pane=&workspace= reflects (and can seed) the current
+// selection, so reloading, sharing, or bookmarking a link returns to the
+// same view. `pane`/`workspace` are only meaningful alongside `bridge`.
+function readUrlSelection(): {
+  bridgeId: BridgeId;
+  paneId: string | null;
+  workspaceId: string | null;
+} | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const params = new URLSearchParams(window.location.search);
+  const bridgeId = params.get("bridge");
+  if (!bridgeId) {
+    return null;
+  }
+  return { bridgeId, paneId: params.get("pane"), workspaceId: params.get("workspace") };
+}
+
+function applyUrlSelection(prefs: DisplayPrefs): DisplayPrefs {
+  const selection = readUrlSelection();
+  if (!selection) {
+    return prefs;
+  }
+  return {
+    ...prefs,
+    selectedBridgeId: selection.bridgeId,
+    selectedPane: selection.paneId
+      ? { bridgeId: selection.bridgeId, paneId: selection.paneId }
+      : prefs.selectedPane,
+    activeWorkspace: selection.workspaceId
+      ? { bridgeId: selection.bridgeId, workspaceId: selection.workspaceId }
+      : prefs.activeWorkspace,
+  };
+}
+
+function writeUrlSelection(
+  bridgeId: BridgeId | null,
+  pane: ScopedPaneRef | null,
+  workspace: ScopedWorkspaceRef | null,
+) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const params = new URLSearchParams(window.location.search);
+  const previous = params.toString();
+  if (bridgeId) {
+    params.set("bridge", bridgeId);
+  } else {
+    params.delete("bridge");
+  }
+  if (bridgeId && pane?.bridgeId === bridgeId) {
+    params.set("pane", pane.paneId);
+  } else {
+    params.delete("pane");
+  }
+  if (bridgeId && workspace?.bridgeId === bridgeId) {
+    params.set("workspace", workspace.workspaceId);
+  } else {
+    params.delete("workspace");
+  }
+  const next = params.toString();
+  if (next === previous) {
+    return;
+  }
+  const url = `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`;
+  window.history.replaceState(window.history.state, "", url);
+}
+
 function isNativeApp() {
   return Capacitor.isNativePlatform();
 }
@@ -751,7 +820,7 @@ function usePointerDragResize(
 
 export function App() {
   const bridge = useBridge();
-  const initialPrefs = useMemo(readDisplayPrefs, []);
+  const initialPrefs = useMemo(() => applyUrlSelection(readDisplayPrefs()), []);
   const legacySelectionPrefs = useMemo(readLegacyDisplaySelectionPrefs, []);
   const [displayPrefsLoaded, setDisplayPrefsLoaded] = useState(() => !isNativeApp());
   const [connectionStates, setConnectionStates] = useState<Record<string, BridgeConnectionState>>({});
@@ -1454,6 +1523,10 @@ export function App() {
     mobileCompactControls,
     theme,
   ]);
+
+  useEffect(() => {
+    writeUrlSelection(selectedBridgeId, selectedPaneRefState, activeWorkspaceRefState);
+  }, [selectedBridgeId, selectedPaneRefState, activeWorkspaceRefState]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
