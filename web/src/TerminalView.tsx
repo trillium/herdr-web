@@ -28,7 +28,7 @@ import {
 } from "./terminalConnectionStatus";
 import type { TerminalConnectionState } from "./terminalConnectionStatus";
 import { findFirstUrlInSelection, openableHttpUrl } from "./terminalSelection";
-import { GhosttyRenderer } from "./terminalRenderer";
+import { CTRL_ENTER_KITTY_SEQUENCE, GhosttyRenderer } from "./terminalRenderer";
 import type { MobileTerminalTouchEvent, TerminalRenderer, TerminalSize } from "./terminalRenderer";
 import {
   appendTerminalInputBatch,
@@ -484,8 +484,13 @@ export function TerminalView({
     terminalScrollOffsetRef.current = 0;
     setScrolledAwayFromPresent(false);
     rendererRef.current?.scrollToBottom();
+    // Also nudge the remote pane itself: apps like Claude Code's CLI track their own
+    // scrolled-up state and only clear it on a literal ctrl+enter keystroke (sent as the
+    // Kitty keyboard protocol's CSI-u sequence, since plain ctrl+enter is indistinguishable
+    // from Enter over a legacy PTY).
+    sendTerminalInputData(CTRL_ENTER_KITTY_SEQUENCE);
     focusPreferredInput();
-  }, [focusPreferredInput]);
+  }, [focusPreferredInput, sendTerminalInputData]);
 
   useEffect(() => {
     if (terminalInputBatchDelayMs <= 0) {

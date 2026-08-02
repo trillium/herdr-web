@@ -1394,9 +1394,19 @@ function keyboardEventOutput(event: KeyboardEvent) {
   }
 }
 
+// Kitty keyboard protocol CSI-u encoding for Enter (keycode 13) with the ctrl modifier
+// (modifier value 5 = ctrl(4) + base(1)). Plain Enter is indistinguishable from Ctrl+Enter
+// in legacy terminal protocols (both are CR, 0x0D), so apps that want to tell them apart —
+// e.g. Claude Code's CLI, which shows a "ctrl+enter to jump to present" hint once scrolled up
+// in its own transcript view — rely on this enhanced sequence instead.
+export const CTRL_ENTER_KITTY_SEQUENCE = "\x1B[13;5u";
+
 function customKeyboardEventOutput(event: KeyboardEvent) {
   if (event.key === "Tab" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
     return "\x1B[Z";
+  }
+  if (event.key === "Enter" && event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
+    return CTRL_ENTER_KITTY_SEQUENCE;
   }
   return null;
 }
