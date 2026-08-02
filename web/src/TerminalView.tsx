@@ -1643,6 +1643,17 @@ function MobileTerminalControls({
   const [expanded, setExpanded] = useState(false);
   const [ctrlLatch, setCtrlLatch] = useState(false);
   const voiceSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // onSubmitCommand/onVoicePinCycle/onThemeChange are inline closures re-created on every parent
+  // render, which can happen more often than the 1s voice-submit arm window (e.g. any pane
+  // activity update across any bridge). Reading them from refs at fire time — instead of putting
+  // them in the effect's dependency array — keeps the debounce timer from being reset by
+  // unrelated parent re-renders, which previously could prevent it from ever firing.
+  const onSubmitCommandRef = useRef(onSubmitCommand);
+  onSubmitCommandRef.current = onSubmitCommand;
+  const onVoicePinCycleRef = useRef(onVoicePinCycle);
+  onVoicePinCycleRef.current = onVoicePinCycle;
+  const onThemeChangeRef = useRef(onThemeChange);
+  onThemeChangeRef.current = onThemeChange;
   const paneCyclePress = useLongPress(onPaneCycleModeToggle, () => onPaneCycle("next"));
   const setCommandInputNode = (node: HTMLInputElement | HTMLTextAreaElement | null) => {
     commandInputRef.current = node;
@@ -1695,15 +1706,15 @@ function MobileTerminalControls({
         if (!stripped) {
           return;
         }
-        onSubmitCommand(stripped);
+        onSubmitCommandRef.current(stripped);
       } else if (pinMatch) {
-        onVoicePinCycle(pinMatch.direction);
+        onVoicePinCycleRef.current(pinMatch.direction);
       } else if (themeMatch) {
-        onThemeChange(themeMatch.theme);
+        onThemeChangeRef.current(themeMatch.theme);
       }
       setValue("");
     }, VOICE_SUBMIT_TIMER_MS);
-  }, [value, disabled, onSubmitCommand, onVoicePinCycle, onThemeChange]);
+  }, [value, disabled]);
 
   useEffect(() => {
     return () => {
