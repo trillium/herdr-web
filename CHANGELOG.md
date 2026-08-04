@@ -26,6 +26,13 @@
 
 ### Fixed
 
+- Fixed herdr-web compatibility with herdr 0.8.0+: the bridge automatically allows
+  `http://localhost` origins to work around herdr 0.8.0's CORS origin check that only
+  permits localhost/127.0.0.1. Users serving herdr-web from a non-localhost address
+  (machine hostname, Tailscale name, remote IP) should pass
+  `--allow-origin http://HOSTNAME:PORT` when launching the bridge, or configure herdr
+  itself with an `--allow-origin` flag for the serving hostname.
+
 ### Removed
 
 ## [0.3.3] - 2026-07-19

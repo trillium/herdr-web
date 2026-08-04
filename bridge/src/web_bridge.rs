@@ -881,6 +881,19 @@ fn parse_options(args: &[String]) -> Result<Option<BridgeOptions>, String> {
     allowed_connect_sources.sort();
     allowed_connect_sources.dedup();
 
+    // Workaround for herdr 0.8.0+ CORS origin check:
+    // herdr 0.8.0 added a CORS origin check that only allows localhost/127.0.0.1.
+    // When herdr-web is served from a non-localhost origin (e.g., machine hostname,
+    // Tailscale name, or remote IP), requests with non-localhost Origin headers
+    // get rejected with 403 "cross-origin requests are not allowed".
+    // We mitigate this by always allowing localhost as an origin, and instructing
+    // users to either (a) pass --allow-origin with their serving hostname, or
+    // (b) start herdr with an --allow-origin flag for their hostname.
+    // This ensures localhost-to-localhost communication always works.
+    if !allowed_origins.iter().any(|o| o.starts_with("http://localhost")) {
+        allowed_origins.push("http://localhost".to_string());
+    }
+
     if let Some(name) = explicit_session {
         crate::session::configure_explicit_session(&name)?;
     }
@@ -910,6 +923,7 @@ Runs the local HTTP/WebSocket bridge for herdr-web.\n\
 Defaults to the active Herdr daemon sockets and 127.0.0.1:8787.\n\
 Use --session NAME to target a named Herdr session and ignore HERDR_SOCKET_PATH.\n\
 Use --host 0.0.0.0 to listen on non-loopback interfaces.\n\
+Use --allow-origin http://HOSTNAME:PORT when serving from a non-localhost address to work around herdr 0.8.0+ CORS checks.\n\
 Use --allow-origin http://localhost for bundled Android app access.\n\
 Use --allow-host HOSTNAME to accept that exact DNS hostname in Host headers.\n\
 Use --allow-connect-origin ORIGIN to let the served web app connect to another bridge origin.\n\
