@@ -41,7 +41,7 @@ import { autosizeMobileCommandTextarea } from "./mobileCommandTextarea";
 // "localhost" would resolve to the client device itself when this page is
 // loaded remotely (e.g. over Tailscale/LAN from a phone), not the machine
 // serving it — derive the host from the page's own origin instead.
-const PARLAY_SERVER_URL = `http://${window.location.hostname}:4242`;
+const PARLAY_SERVER_URL = `${window.location.protocol}//${window.location.hostname}:4242`;
 
 setEvalServerBaseUrl(PARLAY_SERVER_URL);
 
