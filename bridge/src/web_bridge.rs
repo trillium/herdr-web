@@ -6526,16 +6526,13 @@ mod tests {
     }
 
     #[test]
-    fn remote_bridge_url_validation_rejects_query_strings_and_fragments() {
-        assert!(origin_authority("http://mini1:8787").is_ok());
-        assert!(origin_authority("http://mini1:8787/").is_ok());
-        assert!(origin_authority("mini1:8787").is_ok());
-        assert!(origin_authority("http://mini1:8787?query=value").is_err());
-        assert!(origin_authority("http://mini1:8787#fragment").is_err());
-        assert!(origin_authority("mini1:8787?x").is_err());
-        assert!(origin_authority("mini1:8787#x").is_err());
-        assert!(origin_authority("http://user@mini1:8787").is_err());
-        assert!(origin_authority("http://mini1:8787/path").is_err());
+    fn origin_authority_extraction() {
+        assert_eq!(origin_authority("http://mini1:8787"), Some("mini1:8787"));
+        assert_eq!(origin_authority("https://mini1:8787"), Some("mini1:8787"));
+        assert!(origin_authority("http://mini1:8787/").is_none());
+        assert!(origin_authority("http://mini1:8787/path").is_none());
+        assert!(origin_authority("mini1:8787").is_none());
+        assert!(origin_authority("http://").is_none());
     }
 
     fn origin_headers(host: &str, origin: Option<&str>) -> HeaderMap {
