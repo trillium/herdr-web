@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { KeyboardEvent } from "react";
 import { autosizeMobileCommandTextarea } from "./mobileCommandTextarea";
+import { randomId } from "./randomId";
 
 // @parlay/client is optional — it requires web/local-deps/parlay-client (local symlink).
 // If unavailable, this component degrades to a plain input. See web/README.md for setup.
@@ -101,12 +102,17 @@ export function ParlayMobileInput({
   const PARLAY_SERVER_URL = `${window.location.protocol}//${window.location.hostname}:4242`;
   parlay.setEvalServerBaseUrl(PARLAY_SERVER_URL);
 
-  // Session-scoped device IDs so one browser tab can't receive another's SSE actions.
+  // Session-scoped device IDs so one browser tab can't receive another's SSE
+  // actions (the server's /api/chat/events stream is otherwise unauthenticated
+  // and keyed only by these IDs). randomId() rather than a bare
+  // crypto.randomUUID(): this component only mounts in mobile mode, and the
+  // origins herdr-web is reached from on a phone (plain-HTTP LAN / .local /
+  // Tailscale) are exactly the insecure contexts where randomUUID is undefined.
   const idsRef = useRef<{ device: string; stream: string } | undefined>(undefined);
   if (!idsRef.current) {
     idsRef.current = {
-      device: `herdr-web-mobile-${crypto.randomUUID()}`,
-      stream: `herdr-web-mobile-command-${crypto.randomUUID()}`,
+      device: `herdr-web-mobile-${randomId()}`,
+      stream: `herdr-web-mobile-command-${randomId()}`,
     };
   }
   const { device: deviceId, stream: streamId } = idsRef.current;
