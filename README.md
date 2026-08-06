@@ -289,7 +289,7 @@ server-side with a repeatable `--remote-bridge URL` flag (for example, reaching 
 Tailscale):
 
 ```bash
-scripts/run-bridge.sh --remote-bridge http://mini2:8787 --remote-bridge http://mini3:8787
+scripts/run-bridge.sh --remote-bridge http://host-b:8787 --remote-bridge http://host-c:8787
 ```
 
 Each `--remote-bridge` URL must use `http://` (Tailscale traffic is plain HTTP; the bridge's outbound

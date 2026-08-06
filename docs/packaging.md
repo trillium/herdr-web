@@ -179,7 +179,7 @@ As an alternative, a bridge can proxy another herdr-web bridge server-side (for 
 other machines over Tailscale) with a repeatable `--remote-bridge URL` flag:
 
 ```bash
-bin/herdr-web --remote-bridge http://mini2:8787 --remote-bridge http://mini3:8787
+bin/herdr-web --remote-bridge http://host-b:8787 --remote-bridge http://host-c:8787
 ```
 
 `--remote-bridge` URLs must use `http://`. The bridge derives an id from each URL's hostname and

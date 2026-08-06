@@ -1048,7 +1048,7 @@ Use --allow-origin http://localhost for bundled Android app access.\n\
 Use --allow-host HOSTNAME to accept that exact DNS hostname in Host headers.\n\
 Use --allow-connect-origin ORIGIN to let the served web app connect to another bridge origin.\n\
 Use --launcher-presets PATH or HERDR_WEB_LAUNCHER_PRESETS to load custom launch presets.\n\
-Use --remote-bridge URL (repeatable) to register another herdr-web bridge (e.g. http://mini2:8787)\n\
+Use --remote-bridge URL (repeatable) to register another herdr-web bridge (e.g. http://host-b:8787)\n\
   to proxy through: reads at /api/remote/<id>/... and terminal sessions at\n\
   /ws/remote/<id>/terminal, where <id> is the remote's hostname as reported in /api/snapshot's\n\
   bridges array (also available standalone at GET /api/bridges).\n\
@@ -5926,24 +5926,24 @@ mod tests {
     #[test]
     fn normalize_remote_bridge_url_accepts_http_and_adds_scheme_when_missing() {
         assert_eq!(
-            normalize_remote_bridge_url("mini2:8787").unwrap(),
-            "http://mini2:8787"
+            normalize_remote_bridge_url("host-b:8787").unwrap(),
+            "http://host-b:8787"
         );
         assert_eq!(
             normalize_remote_bridge_url("HTTP://Mini2:8787/").unwrap(),
-            "http://mini2:8787"
+            "http://host-b:8787"
         );
     }
 
     #[test]
     fn normalize_remote_bridge_url_rejects_https() {
-        let err = normalize_remote_bridge_url("https://mini2:8787").unwrap_err();
+        let err = normalize_remote_bridge_url("https://host-b:8787").unwrap_err();
         assert!(err.contains("http://"), "unexpected error: {err}");
     }
 
     #[test]
     fn normalize_remote_bridge_url_rejects_unsupported_scheme() {
-        assert!(normalize_remote_bridge_url("ws://mini2:8787").is_err());
+        assert!(normalize_remote_bridge_url("ws://host-b:8787").is_err());
     }
 
     #[test]
@@ -5955,7 +5955,7 @@ mod tests {
 
     #[test]
     fn normalize_remote_bridge_url_rejects_credentials() {
-        assert!(normalize_remote_bridge_url("http://user:pass@mini2:8787").is_err());
+        assert!(normalize_remote_bridge_url("http://user:pass@host-b:8787").is_err());
     }
 
     #[test]
@@ -6042,12 +6042,12 @@ mod tests {
     #[test]
     fn build_remote_bridges_dedups_exact_duplicate_urls() {
         let urls = vec![
-            "http://mini2:8787".to_string(),
-            "http://mini2:8787".to_string(),
+            "http://host-b:8787".to_string(),
+            "http://host-b:8787".to_string(),
         ];
         let bridges = build_remote_bridges(&urls);
         assert_eq!(bridges.len(), 1);
-        assert_eq!(bridges[0].id, "mini2");
+        assert_eq!(bridges[0].id, "host-b");
     }
 
     #[test]
@@ -6615,15 +6615,15 @@ mod tests {
 
     #[test]
     fn remote_bridge_url_validation_rejects_query_strings_and_fragments() {
-        assert!(origin_authority("http://mini1:8787").is_ok());
-        assert!(origin_authority("http://mini1:8787/").is_ok());
-        assert!(origin_authority("mini1:8787").is_ok());
-        assert!(origin_authority("http://mini1:8787?query=value").is_err());
-        assert!(origin_authority("http://mini1:8787#fragment").is_err());
-        assert!(origin_authority("mini1:8787?x").is_err());
-        assert!(origin_authority("mini1:8787#x").is_err());
-        assert!(origin_authority("http://user@mini1:8787").is_err());
-        assert!(origin_authority("http://mini1:8787/path").is_err());
+        assert!(origin_authority("http://host-a:8787").is_ok());
+        assert!(origin_authority("http://host-a:8787/").is_ok());
+        assert!(origin_authority("host-a:8787").is_ok());
+        assert!(origin_authority("http://host-a:8787?query=value").is_err());
+        assert!(origin_authority("http://host-a:8787#fragment").is_err());
+        assert!(origin_authority("host-a:8787?x").is_err());
+        assert!(origin_authority("host-a:8787#x").is_err());
+        assert!(origin_authority("http://user@host-a:8787").is_err());
+        assert!(origin_authority("http://host-a:8787/path").is_err());
     }
 
     fn origin_headers(host: &str, origin: Option<&str>) -> HeaderMap {
