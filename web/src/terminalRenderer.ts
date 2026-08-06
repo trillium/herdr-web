@@ -1,6 +1,7 @@
 import type { FitAddon, Terminal } from "ghostty-web";
 import {
   findFirstUrlInSelection,
+  openableHttpUrl,
   terminalSelectionRange,
   terminalUrlTapTarget,
   trimUrlPunctuation,
@@ -27,6 +28,7 @@ import type {
   MobileTouchSelectionEndpointTimeoutMs,
 } from "./mobileTerminalPrefs";
 import { DEFAULT_TERMINAL_FONT_SIZE_PX } from "./terminalPrefs";
+import type { Theme } from "./theme";
 
 const TERMINAL_FONT_FAMILY =
   'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace';
@@ -46,6 +48,79 @@ const TOUCH_ENDPOINT_HIT_WIDTH_PX = 72;
 const TOUCH_ENDPOINT_HIT_HEIGHT_PX = 72;
 const TOUCH_ENDPOINT_RING_DIAMETER_PX = 42;
 const TAP_URL_PATTERN = /\bhttps?:\/\/[^\s"'<>`]+/giu;
+
+// Mirrors the app's CSS theme system (styles.css) so terminal content colors
+// follow the light/dark toggle instead of staying fixed to Catppuccin Mocha.
+const TERMINAL_THEME_COLORS: Record<
+  Theme,
+  {
+    background: string;
+    foreground: string;
+    cursor: string;
+    selectionBackground: string;
+    black: string;
+    red: string;
+    green: string;
+    yellow: string;
+    blue: string;
+    magenta: string;
+    cyan: string;
+    white: string;
+    brightBlack: string;
+    brightRed: string;
+    brightGreen: string;
+    brightYellow: string;
+    brightBlue: string;
+    brightMagenta: string;
+    brightCyan: string;
+    brightWhite: string;
+  }
+> = {
+  dark: {
+    background: "#11111b",
+    foreground: "#cdd6f4",
+    cursor: "#f5e0dc",
+    selectionBackground: "#45475a",
+    black: "#45475a",
+    red: "#f38ba8",
+    green: "#a6e3a1",
+    yellow: "#f9e2af",
+    blue: "#89b4fa",
+    magenta: "#f5c2e7",
+    cyan: "#94e2d5",
+    white: "#bac2de",
+    brightBlack: "#585b70",
+    brightRed: "#f38ba8",
+    brightGreen: "#a6e3a1",
+    brightYellow: "#f9e2af",
+    brightBlue: "#89b4fa",
+    brightMagenta: "#f5c2e7",
+    brightCyan: "#94e2d5",
+    brightWhite: "#a6adc8",
+  },
+  light: {
+    background: "#eff1f5",
+    foreground: "#4c4f69",
+    cursor: "#dc8a78",
+    selectionBackground: "#bcc0cc",
+    black: "#bcc0cc",
+    red: "#d20f39",
+    green: "#40a02b",
+    yellow: "#df8e1d",
+    blue: "#1e66f5",
+    magenta: "#ea76cb",
+    cyan: "#179299",
+    white: "#5c5f77",
+    brightBlack: "#acb0be",
+    brightRed: "#d20f39",
+    brightGreen: "#40a02b",
+    brightYellow: "#df8e1d",
+    brightBlue: "#1e66f5",
+    brightMagenta: "#ea76cb",
+    brightCyan: "#179299",
+    brightWhite: "#6c6f85",
+  },
+};
 
 type GhosttyModule = typeof import("ghostty-web");
 
@@ -110,6 +185,7 @@ export type TerminalRenderer = {
   write(data: string | Uint8Array): void;
   onInput(callback: (data: string) => void): () => void;
   onScroll(callback: (lines: number) => void): () => void;
+  scrollToBottom(): void;
   setTapFocusHandler(callback: (() => TerminalTapFocusResult) | null): void;
   setMobileTouchSelection(
     behavior: MobileLongPressBehavior,
@@ -119,6 +195,7 @@ export type TerminalRenderer = {
   fit(): TerminalSize;
   refreshMetrics(): TerminalSize;
   setFontSize(fontSizePx: number): TerminalSize | null;
+  setTheme(theme: Theme): void;
   focus(): void;
   focusTextInput(): void;
   clearSelection(): void;
@@ -141,10 +218,12 @@ export class GhosttyRenderer implements TerminalRenderer {
     DEFAULT_MOBILE_TOUCH_SELECTION_ENDPOINT_TIMEOUT_MS;
   #textInputTapGraceUntil = 0;
   #fontSizePx: number;
+  #theme: Theme;
   #disposed = false;
 
-  constructor(fontSizePx = DEFAULT_TERMINAL_FONT_SIZE_PX) {
+  constructor(fontSizePx = DEFAULT_TERMINAL_FONT_SIZE_PX, theme: Theme = "dark") {
     this.#fontSizePx = fontSizePx;
+    this.#theme = theme;
   }
 
   async mount(container: HTMLElement) {
@@ -161,28 +240,7 @@ export class GhosttyRenderer implements TerminalRenderer {
       fontSize: this.#fontSizePx,
       scrollback: 8000,
       smoothScrollDuration: 0,
-      theme: {
-        background: "#11111b",
-        foreground: "#cdd6f4",
-        cursor: "#f5e0dc",
-        selectionBackground: "#45475a",
-        black: "#45475a",
-        red: "#f38ba8",
-        green: "#a6e3a1",
-        yellow: "#f9e2af",
-        blue: "#89b4fa",
-        magenta: "#f5c2e7",
-        cyan: "#94e2d5",
-        white: "#bac2de",
-        brightBlack: "#585b70",
-        brightRed: "#f38ba8",
-        brightGreen: "#a6e3a1",
-        brightYellow: "#f9e2af",
-        brightBlue: "#89b4fa",
-        brightMagenta: "#f5c2e7",
-        brightCyan: "#94e2d5",
-        brightWhite: "#a6adc8",
-      },
+      theme: TERMINAL_THEME_COLORS[this.#theme],
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -202,7 +260,9 @@ export class GhosttyRenderer implements TerminalRenderer {
     terminal.textarea?.blur();
     container.blur();
     container.removeAttribute("contenteditable");
-    terminal.renderer?.getCanvas().style.setProperty("background-color", "#11111b");
+    terminal.renderer
+      ?.getCanvas()
+      .style.setProperty("background-color", TERMINAL_THEME_COLORS[this.#theme].background);
     terminal.renderer?.getCanvas().style.setProperty("image-rendering", "auto");
     this.#terminal = terminal;
     this.#fitAddon = fitAddon;
@@ -227,6 +287,10 @@ export class GhosttyRenderer implements TerminalRenderer {
         this.#scrollCallback = null;
       }
     };
+  }
+
+  scrollToBottom() {
+    this.#terminal?.scrollToBottom();
   }
 
   setTapFocusHandler(callback: (() => TerminalTapFocusResult) | null) {
@@ -270,6 +334,16 @@ export class GhosttyRenderer implements TerminalRenderer {
       return null;
     }
     return this.refreshMetrics();
+  }
+
+  setTheme(theme: Theme) {
+    this.#theme = theme;
+    const colors = TERMINAL_THEME_COLORS[theme];
+    if (!this.#terminal) {
+      return;
+    }
+    this.#terminal.options.theme = colors;
+    this.#terminal.renderer?.getCanvas().style.setProperty("background-color", colors.background);
   }
 
   focus() {
@@ -1048,7 +1122,15 @@ export class GhosttyRenderer implements TerminalRenderer {
       if (moved) {
         return;
       }
-      const linkText = mouseLinkText(event);
+      // Cmd+click (metaKey) bypasses mouse-tracking so links always open in the
+      // default browser even when a CLI app has mouse tracking enabled.
+      let linkText: string | null;
+      if (event.metaKey) {
+        const position = touchCellPosition(terminal, event.clientX, event.clientY);
+        linkText = openableHttpUrl(terminalLinkAt(terminal, position) ?? "");
+      } else {
+        linkText = mouseLinkText(event);
+      }
       if (!linkText?.trim()) {
         return;
       }
@@ -1098,6 +1180,28 @@ export class GhosttyRenderer implements TerminalRenderer {
     let lastKeydown: { data: string; time: number } | null = null;
     let processedTextareaValue = "";
     const onKeydown = (event: KeyboardEvent) => {
+      // PageUp/PageDown scroll the scrollback buffer at the same rate as
+      // 2-finger trackpad, bypassing the terminal when mouse tracking is off.
+      if (
+        (event.key === "PageUp" || event.key === "PageDown") &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        !this.#hasMouseTracking(terminal)
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === "function") {
+          event.stopImmediatePropagation();
+        }
+        const lines = event.key === "PageUp" ? -terminal.rows : terminal.rows;
+        if (this.#scrollCallback) {
+          this.#scrollCallback(lines);
+        } else {
+          terminal.scrollLines(lines);
+        }
+        return;
+      }
       const customOutput = textareaKeyboardEventOutput(event);
       if (customOutput) {
         event.preventDefault();
@@ -1290,9 +1394,19 @@ function keyboardEventOutput(event: KeyboardEvent) {
   }
 }
 
+// Kitty keyboard protocol CSI-u encoding for Enter (keycode 13) with the ctrl modifier
+// (modifier value 5 = ctrl(4) + base(1)). Plain Enter is indistinguishable from Ctrl+Enter
+// in legacy terminal protocols (both are CR, 0x0D), so apps that want to tell them apart —
+// e.g. Claude Code's CLI, which shows a "ctrl+enter to jump to present" hint once scrolled up
+// in its own transcript view — rely on this enhanced sequence instead.
+export const CTRL_ENTER_KITTY_SEQUENCE = "\x1B[13;5u";
+
 function customKeyboardEventOutput(event: KeyboardEvent) {
   if (event.key === "Tab" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
     return "\x1B[Z";
+  }
+  if (event.key === "Enter" && event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
+    return CTRL_ENTER_KITTY_SEQUENCE;
   }
   return null;
 }

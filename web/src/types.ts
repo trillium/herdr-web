@@ -38,6 +38,7 @@ export type PaneInfo = {
   agent_status: AgentStatus;
   custom_status?: string;
   state_labels?: Record<string, string>;
+  tokens?: Record<string, string>;
   revision: number;
 };
 

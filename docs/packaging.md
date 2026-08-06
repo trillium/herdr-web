@@ -46,8 +46,6 @@ Install dependencies first:
 - npm
 - Rust stable
 - a platform C toolchain usable by Cargo
-- the local `web/local-deps/parlay-client` symlink from [web/README.md](../web/README.md), needed
-  before `npm ci --prefix web` can resolve `@parlay/client`
 
 ```bash
 npm ci
@@ -91,8 +89,7 @@ Confirm the archive contains the expected root directory, `bin/herdr-web`,
 
 ## Build Android APK
 
-Follow [docs/android.md](android.md) for SDK prerequisites, then build (the
-`web/local-deps/parlay-client` symlink noted above is required here too):
+Follow [docs/android.md](android.md) for SDK prerequisites, then build:
 
 ```bash
 npm ci
@@ -185,12 +182,10 @@ other machines over Tailscale) with a repeatable `--remote-bridge URL` flag:
 bin/herdr-web --remote-bridge http://mini2:8787 --remote-bridge http://mini3:8787
 ```
 
-`--remote-bridge` accepts a full `http://host[:port]` URL or a bare `host[:port]` (the bridge adds
-`http://` automatically); `https://` is not accepted. The bridge derives an id from each URL's
-hostname and lists configured remote bridges in `/api/snapshot` and standalone at `GET /api/bridges`;
-`/api/remote/{bridge_id}/...` and `/ws/remote/{bridge_id}/terminal` proxy REST requests (to an
-explicit allow-list of endpoints) and terminal WebSocket sessions to that remote bridge. Only bridges
-the process was started with are reachable this way.
+`--remote-bridge` URLs must use `http://`. The bridge derives an id from each URL's hostname and
+lists configured remote bridges in `/api/snapshot` and standalone at `GET /api/bridges`;
+`/api/remote/{bridge_id}/...` and `/ws/remote/{bridge_id}/terminal` proxy to that remote bridge. Only
+bridges the process was started with are reachable this way.
 
 ## Manual Release Upload
 

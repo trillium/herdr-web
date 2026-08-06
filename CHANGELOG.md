@@ -1,8 +1,8 @@
 # Changelog
 
-## 2026-08-04 — session 573726b5
+## 2026-07-21 — session 6d608521
 
-Files: CHANGELOG.md, AGENTS.md, web/src/App.tsx, web/src/paneSearch.ts, bridge/src/web_bridge.rs
+Files: cli/herdr-channel.ts
 ## [Unreleased]
 
 ### Breaking Changes
@@ -22,39 +22,112 @@ Files: CHANGELOG.md, AGENTS.md, web/src/App.tsx, web/src/paneSearch.ts, bridge/s
   (`~/.local/share/herdr-web/mobile-mode` by default). herdr-web has no knowledge of what, if
   anything, reads the flag; a companion statusline script can check it directly to blank its
   output and save vertical space on mobile. [PR #39](https://github.com/kcosr/herdr-web/pull/39)
+- Added a trailing voice-clear phrase (`change`) to the mobile command input that discards the
+  buffered dictation instead of sending it.
+- Added trailing voice-pin-cycle phrases (`pin next`, `pin previous`/`pin prev`) to the mobile
+  command input that cycle terminal focus across pinned panes without touching the buffered text.
+  `pan next`, `pam next`, `in next`, and `one` are also accepted as aliases for `pin next`, and
+  `pan previous`, `pan prev`, `pin past`, and `pan past` are accepted as aliases for `pin previous`,
+  to tolerate dictation mis-hearings. A bare `next` also cycles to the next pinned pane, but only
+  when it's the entire buffer — unlike the other aliases it isn't trailing-matched, since "next" is
+  too common a word to end ordinary commands with safely.
+- Added a light/dark theme toggle to the sidebar header (next to Settings/Refresh), reachable on
+  mobile via the hamburger menu. Also reachable by voice: trailing phrases
+  `light mode`/`toggle light mode`/`light mode toggle` and
+  `dark mode`/`toggle dark mode`/`dark mode toggle` switch the theme without touching the buffered
+  dictation. The choice persists across sessions. The terminal content area (ghostty-web) now
+  follows the theme too, instead of staying fixed to the dark Catppuccin Mocha palette.
+- Added a "Next pinned pane" toolbar button next to the pin toggle for manually cycling to the
+  next pinned pane.
+- Added a "Next pinned agent" button to the mobile command row (next to the keyboard/statusline
+  toggles), so cycling to the next pinned pane is reachable without voice input.
+- Added a collapse toggle to the sidebar's spaces list, so it can be minimized to make room for
+  the agents/tabs/notes list below it on small screens.
 - Added a `--remote-bridge <url>` bridge CLI flag (repeatable) to register other herdr-web bridge
   instances (e.g. reached over Tailscale) as remote bridges. `/api/snapshot` now includes a
   `bridges` array describing each configured remote bridge (id, label, url), and a standalone
   `GET /api/bridges` endpoint returning the same list (`id`, `url`) without the session-snapshot
-  round trip. The bridge proxies REST requests to an explicit allow-list of endpoints
-  (`/api/remote/{bridge_id}/...`, GET and POST) and terminal WebSocket connections
-  (`/ws/remote/{bridge_id}/terminal`) to the corresponding remote bridge. Paths outside the
-  allow-list are rejected locally with 403; command-execution and upload endpoints are never
-  forwarded. [PR #11](https://github.com/trillium/herdr-web/pull/11)
-- The mobile command input is now backed by a locally running parlay server for phrase-triggered
-  voice submit, replacing the previous native text input.
+  round trip. The bridge proxies REST reads (`/api/remote/{bridge_id}/...`) and terminal, events,
+  activity, and UI-events WebSocket connections (`/ws/remote/{bridge_id}/terminal|events|activity|ui-events`)
+  to the corresponding remote bridge.
+- Remote bridges configured via `--remote-bridge` are now automatically discovered and connected
+  by the web app with no settings required: on load (and on native app resume), it fetches
+  `GET /api/bridges` and adds a runtime for each one, proxied through the local bridge. These
+  show up in the sidebar bridge switcher alongside same-origin/configured bridges automatically —
+  there is no manual add/enable step, so voice-only and other hands-free users don't need to touch
+  Settings to see other machines' sessions.
+- Added a "Jump to present" floating button over the terminal pane that appears once the user has
+  scrolled away from the live tail (tracked from the net scroll lines already sent to the bridge)
+  and disappears once back at the bottom, whether by clicking it or scrolling back down manually.
+  Tracked per pane, so each split-grid pane shows its own button independently.
+- The mobile keyboard/command-row area, including its individual buttons, now tints muted green
+  when the active pane is pinned, as a hands-free visual cue of pin state.
+- The mobile command input now shows the active pane's workspace/tab (e.g. `herdr-web/1`) as its
+  placeholder when empty.
+- Holding down the "Next pinned agent" button in the mobile command row now toggles pin state for
+  the active pane, instead of requiring the separate header pin button; a plain tap still cycles
+  to the next pinned pane.
+- Added hourly/weekly usage progress bars, absolutely positioned along the top edge of the mobile
+  command row. There is no bridge or protocol support for usage yet: an agent process reports it by
+  calling `pane.report_metadata` with `state_labels` keys `usage_hourly_pct`/`usage_weekly_pct` set
+  to a `"0"`-`"100"` string; bars are omitted entirely until a pane reports them, and turn
+  yellow/red past 70%/90%.
+- The current bridge/pane/workspace selection is now reflected in the URL as
+  `?bridge=&pane=&workspace=` query params, kept in sync via `history.replaceState`. Reloading,
+  bookmarking, or sharing a link now returns to the same view.
+- Added PostHog analytics, initialized on app start. The bridge's CSP now allows `connect-src` to
+  PostHog's US ingestion hosts (`us.i.posthog.com`, `us-assets.i.posthog.com`).
+- The "Next pinned pane" button (toolbar and mobile command row) now has two cycling modes:
+  pin mode (cycle pinned panes only, the previous behavior) and all mode (cycle every pane across
+  every enabled bridge). Holding the button toggles between modes; the button's own color signals
+  the current mode (green for pin, neutral for all). Toggling pin state on the current pane is now
+  exclusively the header pin button's job — the next-pane button's long-press no longer does this.
+- `PaneInfo` now carries a `tokens` map (mirroring Herdr's `pane.report_metadata --token` field,
+  previously missing from the vendored compatibility crate), and the mobile command row's dormant
+  usage bars now read live `usage_hourly_pct`/`usage_weekly_pct` from it instead of the
+  `state_labels` bag (which Herdr restricts to a fixed `agent_status` enum and can't carry
+  free-form keys). An external usage-monitor process can now report account usage into any
+  Claude pane via `herdr pane report-metadata <pane_id> --source <id> --token
+  usage_hourly_pct=<pct> --token usage_weekly_pct=<pct>`.
+- Added a pane search dialog (search icon in the sidebar header) that fuzzy-matches panes across
+  every enabled bridge by label, title, agent, cwd, and workspace/tab path, so a specific tab can
+  be found and jumped to without visually scanning every connected bridge.
 
 ### Changed
 
-- Refreshed the vendored `herdr-compat` crate to the herdr `v0.8.0` baseline (wire protocol `19`,
-  up from `v0.7.2`/protocol `16`): copied the exact-compared API schema surface and the
-  `protocol::wire` body, added minimal `input`/`raw_input`/`popup_size` supporting shims for the
-  new upstream types they reference, and migrated the bridge's launcher agent-split to herdr
-  `v0.8.0`'s redesigned `agent.start` (which now starts a managed agent in an existing pane instead
-  of creating and placing the pane itself).
+- The agent list row title now prefers the workspace/tab label over the agent binary name (e.g.
+  "claude"), which was identical across every row and not useful as a primary label.
 
 ### Fixed
 
-- Fixed herdr-web rejecting the herdr `v0.8.0` daemon at startup with "protocol 19 is newer than
-  this herdr-web bridge supports": the vendored protocol constant is now `19`, so the bridge's
-  terminal-attach accept range (`16..=PROTOCOL_VERSION`) admits protocol `19` daemons while still
-  rejecting protocol `15` and older.
-- Fixed herdr-web compatibility with herdr 0.8.0+: the bridge automatically allows
-  `http://localhost` origins to work around herdr 0.8.0's CORS origin check that only
-  permits localhost/127.0.0.1. Users serving herdr-web from a non-localhost address
-  (machine hostname, Tailscale name, remote IP) should pass
-  `--allow-origin http://HOSTNAME:PORT` when launching the bridge, or configure herdr
-  itself with an `--allow-origin` flag for the serving hostname.
+- Fixed pinned-pane cycling (voice or button) not returning focus to the mobile command input
+  after switching panes.
+- Fixed a follow-on case of the above: if the newly-selected pane's terminal socket hadn't finished
+  attaching within the focus retry window, the command input stayed disabled and focus was never
+  applied. It now also refocuses right when the connection finishes attaching.
+- The "Jump to present" button now also returns focus to the mobile command input (or terminal
+  keyboard area), instead of leaving focus wherever it was before scrolling.
+- Fixed the mobile voice-submit phrase (`bravely`/`gravely`/`briefly`/`lap`) sometimes never firing
+  in a busy session: the buffered text would show the phrase but never actually send. The 1s arm
+  timer was keyed to callback props that get recreated on every unrelated re-render (e.g. any
+  pane's activity update on any bridge), which could reset the timer before it ever completed.
+- Uploaded files now get a unique hash suffix appended to their stored name, so repeat uploads
+  that share a client-side name (e.g. a screenshot tool that always calls it `image.png`) no
+  longer collide or prompt an overwrite confirmation.
+- Fixed "Jump to present" undershooting or doing nothing: it previously asked the bridge to
+  scroll down by a client-tracked line count, which fell out of sync whenever output streamed in
+  while scrolled away. All output is already written to the local terminal buffer regardless of
+  scroll position, so jumping to present is now a local viewport reset with no server round trip.
+- "Jump to present" now also sends a ctrl+enter keystroke to the remote pane, since apps like
+  Claude Code's CLI track their own scrolled-up state and only clear their own "jump to present"
+  hint on a literal ctrl+enter (encoded as the Kitty keyboard protocol's CSI-u sequence, since
+  plain ctrl+enter is indistinguishable from Enter over a legacy PTY).
+- Fixed pinned-pane cycling only rotating through pins on whichever bridge happened to be
+  selected; it now cycles through pinned panes across every enabled bridge.
+- Fixed slow, chunky terminal loading over remote-proxied (double-hop) bridges: mount, the
+  resize observer's initial callback, and the fonts-ready callback each fired their own resize
+  round trip within a few ms of each other. These are now coalesced to at most one resize after
+  the first connect.
 
 ### Removed
 

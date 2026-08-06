@@ -1,19 +1,26 @@
 import {
   Activity,
   Archive,
+  ChevronDown,
   ChevronLeft,
+  ChevronRight,
   Link2,
+  Menu,
+  Moon,
   MoreVertical,
   PanelLeft,
   Pin,
   Plus,
   RefreshCw,
   RotateCcw,
+  Search,
   Settings,
+  SkipForward,
   SplitSquareHorizontal,
   SplitSquareVertical,
   SquareTerminal,
   StickyNote,
+  Sun,
   Trash2,
   Unlink,
   X,
@@ -59,7 +66,7 @@ import type { AgentPinsListResponse } from "./agentPins";
 import { applyActivityMessage, parseActivityEventData, replayActivityMessages } from "./activity";
 import type { ActivityLogEntry } from "./activity";
 import { BackendSettingsDialog } from "./BackendSettingsDialog";
-import { useBridge } from "./bridge";
+import { SAME_ORIGIN_BRIDGE_ID, useBridge } from "./bridge";
 import type { BridgeId, BridgeRuntime } from "./bridge";
 import { createCommands, createdPaneId } from "./commands";
 import type { LaunchSpec, PaneFocusDirection, SplitDirection } from "./commands";
@@ -74,6 +81,8 @@ import {
 } from "./displayPrefs";
 import { LaunchDialog } from "./LaunchDialog";
 import { resolveLaunchSpec } from "./launch";
+import { PaneSearchDialog } from "./PaneSearchDialog";
+import type { PaneSearchEntry } from "./paneSearch";
 import type { LaunchTarget } from "./launch";
 import {
   FALLBACK_LAUNCHER_PRESETS,
@@ -138,6 +147,8 @@ import {
   DEFAULT_TERMINAL_FONT_SIZE_PX,
   parseTerminalFontSizePx,
 } from "./terminalPrefs";
+import { DEFAULT_THEME, nextTheme, parseTheme } from "./theme";
+import type { Theme } from "./theme";
 import {
   aggregateStatus,
   basename,
@@ -174,6 +185,7 @@ type HostScope = "selected" | "all";
 type SidebarView = "agents" | "tabs" | "notes";
 type AgentSort = "attention" | "status" | "workspace" | "lastStatusChange";
 type AgentGroup = "none" | "host" | "workspace" | "hostWorkspace";
+type SpaceFilter = "all" | "local" | "external";
 type MenuKind = "space" | "tab" | "pane";
 type ScopedPaneRef = {
   bridgeId: BridgeId;
@@ -320,6 +332,7 @@ type DisplayPrefs = {
   agentGroup: AgentGroup;
   agentPinnedOnly: boolean;
   agentActiveOnly: boolean;
+  spaceFilter: SpaceFilter;
   sidebarWidth: number;
   notesPanelWidth: number;
   notesListPaneWidth: number;
@@ -346,6 +359,7 @@ type DisplayPrefs = {
   mobileCommandExpandingInput: boolean;
   mobileCommandEnterNewline: boolean;
   mobileCompactControls: boolean;
+  theme: Theme;
 };
 type LegacyDisplaySelectionPrefs = {
   activeSpaceId: string | null;
@@ -384,6 +398,7 @@ function readDisplayPrefs(): DisplayPrefs {
     agentGroup: "none",
     agentPinnedOnly: false,
     agentActiveOnly: false,
+    spaceFilter: "all" as SpaceFilter,
     sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
     notesPanelWidth: DEFAULT_NOTES_PANEL_WIDTH,
     notesListPaneWidth: DEFAULT_NOTES_LIST_PANE_WIDTH,
@@ -410,6 +425,7 @@ function readDisplayPrefs(): DisplayPrefs {
     mobileCommandExpandingInput: DEFAULT_MOBILE_COMMAND_EXPANDING_INPUT,
     mobileCommandEnterNewline: DEFAULT_MOBILE_COMMAND_ENTER_NEWLINE,
     mobileCompactControls: DEFAULT_MOBILE_COMPACT_CONTROLS,
+    theme: DEFAULT_THEME,
   };
   try {
     const raw = window.localStorage.getItem(DISPLAY_PREFS_KEY);
@@ -481,6 +497,12 @@ function parseDisplayPrefsValue(
       parsed.agentGroup === "hostWorkspace"
         ? parsed.agentGroup
         : fallback.agentGroup,
+    spaceFilter:
+      parsed.spaceFilter === "all" ||
+      parsed.spaceFilter === "local" ||
+      parsed.spaceFilter === "external"
+        ? parsed.spaceFilter
+        : fallback.spaceFilter,
     agentPinnedOnly:
       typeof parsed.agentPinnedOnly === "boolean"
         ? parsed.agentPinnedOnly
@@ -534,6 +556,7 @@ function parseDisplayPrefsValue(
       parsed.mobileCommandEnterNewline,
     ),
     mobileCompactControls: parseMobileCompactControls(parsed.mobileCompactControls),
+    theme: parseTheme(parsed.theme),
   };
 }
 
@@ -654,6 +677,85 @@ async function writeDisplayPrefs(prefs: DisplayPrefs) {
   }
 }
 
+// A URL with ?bridge=&pane=&workspace= reflects (and can seed) the current
+// selection, so reloading, sharing, or bookmarking a link returns to the
+// same view. `pane`/`workspace` are only meaningful alongside `bridge`.
+function readUrlSelection(): {
+  bridgeId: BridgeId;
+  paneId: string | null;
+  workspaceId: string | null;
+} | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const params = new URLSearchParams(window.location.search);
+  const bridgeId = params.get("bridge");
+  if (!bridgeId) {
+    return null;
+  }
+  return { bridgeId, paneId: params.get("pane"), workspaceId: params.get("workspace") };
+}
+
+function applyUrlSelection(prefs: DisplayPrefs): DisplayPrefs {
+  const selection = readUrlSelection();
+  if (!selection) {
+    return prefs;
+  }
+  return {
+    ...prefs,
+    selectedBridgeId: selection.bridgeId,
+    selectedPane: selection.paneId
+      ? { bridgeId: selection.bridgeId, paneId: selection.paneId }
+      : prefs.selectedPane,
+    activeWorkspace: selection.workspaceId
+      ? { bridgeId: selection.bridgeId, workspaceId: selection.workspaceId }
+      : prefs.activeWorkspace,
+    // The per-bridge fallback maps are what actually resolve the selected pane
+    // once the snapshot loads (see the effect syncing selectedPaneRefState from
+    // selectedPanesByBridgeId) — seeding selectedPane/activeWorkspace alone gets
+    // overwritten by that effect the moment the snapshot arrives.
+    selectedPanesByBridgeId: selection.paneId
+      ? { ...prefs.selectedPanesByBridgeId, [selection.bridgeId]: selection.paneId }
+      : prefs.selectedPanesByBridgeId,
+    activeWorkspacesByBridgeId: selection.workspaceId
+      ? { ...prefs.activeWorkspacesByBridgeId, [selection.bridgeId]: selection.workspaceId }
+      : prefs.activeWorkspacesByBridgeId,
+  };
+}
+
+function writeUrlSelection(
+  bridgeId: BridgeId | null,
+  pane: ScopedPaneRef | null,
+  workspace: ScopedWorkspaceRef | null,
+) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const params = new URLSearchParams(window.location.search);
+  const previous = params.toString();
+  if (bridgeId) {
+    params.set("bridge", bridgeId);
+  } else {
+    params.delete("bridge");
+  }
+  if (bridgeId && pane?.bridgeId === bridgeId) {
+    params.set("pane", pane.paneId);
+  } else {
+    params.delete("pane");
+  }
+  if (bridgeId && workspace?.bridgeId === bridgeId) {
+    params.set("workspace", workspace.workspaceId);
+  } else {
+    params.delete("workspace");
+  }
+  const next = params.toString();
+  if (next === previous) {
+    return;
+  }
+  const url = `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`;
+  window.history.replaceState(window.history.state, "", url);
+}
+
 function isNativeApp() {
   return Capacitor.isNativePlatform();
 }
@@ -738,7 +840,7 @@ function usePointerDragResize(
 
 export function App() {
   const bridge = useBridge();
-  const initialPrefs = useMemo(readDisplayPrefs, []);
+  const initialPrefs = useMemo(() => applyUrlSelection(readDisplayPrefs()), []);
   const legacySelectionPrefs = useMemo(readLegacyDisplaySelectionPrefs, []);
   const [displayPrefsLoaded, setDisplayPrefsLoaded] = useState(() => !isNativeApp());
   const [connectionStates, setConnectionStates] = useState<Record<string, BridgeConnectionState>>({});
@@ -782,6 +884,7 @@ export function App() {
   const [agentGroup, setAgentGroup] = useState<AgentGroup>(initialPrefs.agentGroup);
   const [agentPinnedOnly, setAgentPinnedOnly] = useState(initialPrefs.agentPinnedOnly);
   const [agentActiveOnly, setAgentActiveOnly] = useState(initialPrefs.agentActiveOnly);
+  const [spaceFilter, setSpaceFilter] = useState<SpaceFilter>(initialPrefs.spaceFilter);
   const [sidebarWidth, setSidebarWidth] = useState(initialPrefs.sidebarWidth);
   const [notesPanelWidth, setNotesPanelWidth] = useState(initialPrefs.notesPanelWidth);
   const [notesListPaneWidth, setNotesListPaneWidth] = useState(initialPrefs.notesListPaneWidth);
@@ -800,11 +903,17 @@ export function App() {
   const [resizingNotesListPane, setResizingNotesListPane] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(initialPrefs.sidebarOpen);
   const [showDetail, setShowDetail] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Session-local: which pool the "next pane" buttons cycle through. Not
+  // persisted to DisplayPrefs — it's a transient interaction mode, not a
+  // durable preference.
+  const [paneCycleMode, setPaneCycleMode] = useState<"pin" | "all">("pin");
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [noteDeleteTarget, setNoteDeleteTarget] = useState<ScopedNoteEntry | null>(null);
   const [deletingNote, setDeletingNote] = useState(false);
   const [backendSettingsOpen, setBackendSettingsOpen] = useState(false);
+  const [paneSearchOpen, setPaneSearchOpen] = useState(false);
   const [terminalFontSizePx, setTerminalFontSizePx] = useState(
     initialPrefs.terminalFontSizePx,
   );
@@ -846,6 +955,7 @@ export function App() {
   const [mobileCompactControls, setMobileCompactControls] = useState(
     initialPrefs.mobileCompactControls,
   );
+  const [theme, setTheme] = useState(initialPrefs.theme);
   const [launchTarget, setLaunchTarget] = useState<ScopedLaunchTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -887,6 +997,7 @@ export function App() {
       setAgentGroup(prefs.agentGroup);
       setAgentPinnedOnly(prefs.agentPinnedOnly);
       setAgentActiveOnly(prefs.agentActiveOnly);
+      setSpaceFilter(prefs.spaceFilter);
       setSidebarWidth(prefs.sidebarWidth);
       setNotesPanelWidth(prefs.notesPanelWidth);
       setNotesListPaneWidth(prefs.notesListPaneWidth);
@@ -913,6 +1024,7 @@ export function App() {
       setMobileCommandExpandingInput(prefs.mobileCommandExpandingInput);
       setMobileCommandEnterNewline(prefs.mobileCommandEnterNewline);
       setMobileCompactControls(prefs.mobileCompactControls);
+      setTheme(prefs.theme);
       setDisplayPrefsLoaded(true);
     });
     return () => {
@@ -1369,6 +1481,7 @@ export function App() {
       agentGroup,
       agentPinnedOnly,
       agentActiveOnly,
+      spaceFilter,
       sidebarWidth,
       notesPanelWidth,
       notesListPaneWidth,
@@ -1395,6 +1508,7 @@ export function App() {
       mobileCommandExpandingInput,
       mobileCommandEnterNewline,
       mobileCompactControls,
+      theme,
     });
   }, [
     displayPrefsLoaded,
@@ -1405,6 +1519,7 @@ export function App() {
     agentGroup,
     agentPinnedOnly,
     agentActiveOnly,
+    spaceFilter,
     sidebarWidth,
     notesPanelWidth,
     notesListPaneWidth,
@@ -1431,7 +1546,16 @@ export function App() {
     mobileCommandExpandingInput,
     mobileCommandEnterNewline,
     mobileCompactControls,
+    theme,
   ]);
+
+  useEffect(() => {
+    writeUrlSelection(selectedBridgeId, selectedPaneRefState, activeWorkspaceRefState);
+  }, [selectedBridgeId, selectedPaneRefState, activeWorkspaceRefState]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
 
   useEffect(() => {
     if (!mobileKeyboardHideRefit || !showMobileKeyboardHideRefit) {
@@ -1681,10 +1805,67 @@ export function App() {
     selectedRuntime && selectedPane
       ? isAgentPinned(pinnedAgentKeys, selectedRuntime.id, selectedPane.pane_id)
       : false;
+  const selectedPaneWorkspaceTabPath = paneWorkspaceTabPath(snapshot, selectedPane);
   const selectedPanePinTarget = selectedPane && isAgentPane(selectedPane) ? "agent" : "pane";
   const selectedPanePinTitle = selectedPanePinned
     ? `Unpin ${selectedPanePinTarget}`
     : `Pin ${selectedPanePinTarget}`;
+  // Spans every enabled bridge (not just the one currently selected), so
+  // cycling pinned panes rotates through all of them, including other machines.
+  const orderedPinnedPanes = useMemo(() => {
+    const seen = new Set<string>();
+    const ordered: { bridgeId: BridgeId; pane: PaneInfo }[] = [];
+    for (const view of bridgeViews) {
+      const state = agentPinsStates[view.runtime.id];
+      if (!state || state.connectionKey !== view.runtime.connectionKey || !view.snapshot) {
+        continue;
+      }
+      const byId = new Map(view.snapshot.panes.map((pane) => [pane.pane_id, pane]));
+      for (const pin of state.response?.pins ?? []) {
+        const key = agentPinKey(view.runtime.id, pin.pane_id);
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        const pane = byId.get(pin.pane_id);
+        if (pane) {
+          ordered.push({ bridgeId: view.runtime.id, pane });
+        }
+      }
+    }
+    return ordered;
+  }, [bridgeViews, agentPinsStates]);
+  // Every pane across every enabled bridge, unfiltered — the pool for the
+  // "next pane" buttons' all-mode, as opposed to orderedPinnedPanes above.
+  const orderedAllPanes = useMemo(() => {
+    const ordered: { bridgeId: BridgeId; pane: PaneInfo }[] = [];
+    for (const view of bridgeViews) {
+      if (!view.snapshot) {
+        continue;
+      }
+      for (const pane of view.snapshot.panes) {
+        ordered.push({ bridgeId: view.runtime.id, pane });
+      }
+    }
+    return ordered;
+  }, [bridgeViews]);
+  const paneSearchEntries = useMemo<PaneSearchEntry[]>(() => {
+    const entries: PaneSearchEntry[] = [];
+    for (const view of bridgeViews) {
+      if (!view.snapshot) {
+        continue;
+      }
+      for (const pane of view.snapshot.panes) {
+        entries.push({
+          bridgeId: view.runtime.id,
+          bridgeLabel: view.runtime.label,
+          pane,
+          path: paneWorkspaceTabPath(view.snapshot, pane),
+        });
+      }
+    }
+    return entries;
+  }, [bridgeViews]);
   const selectedNotesState =
     selectedRuntime && notesStates[selectedRuntime.id]?.connectionKey === selectedRuntime.connectionKey
       ? notesStates[selectedRuntime.id]
@@ -1910,6 +2091,53 @@ export function App() {
       openMobileDetail();
     }
   };
+
+  const cyclePinnedPane = (direction: "next" | "prev") => {
+    if (orderedPinnedPanes.length === 0) {
+      return;
+    }
+    const currentIdx = selectedPane
+      ? orderedPinnedPanes.findIndex(
+          (entry) => entry.bridgeId === selectedBridgeId && entry.pane.pane_id === selectedPane.pane_id,
+        )
+      : -1;
+    const targetIdx =
+      currentIdx === -1
+        ? 0
+        : (currentIdx + (direction === "next" ? 1 : -1) + orderedPinnedPanes.length) %
+          orderedPinnedPanes.length;
+    const target = orderedPinnedPanes[targetIdx];
+    openPane(target.bridgeId, target.pane);
+    // Voice-driven — the whole point is never touching the screen, so the
+    // dictation-capable command input has to regain focus on its own.
+    requestTerminalFocus();
+  };
+
+  // Button-driven cycling (toolbar + mobile row): pool depends on paneCycleMode.
+  // Voice's "pin next"/"pin previous" always stays pin-only (cyclePinnedPane
+  // above) regardless of the buttons' current mode — the phrase says "pin".
+  const cycleAgentPane = (direction: "next" | "prev") => {
+    const pool = paneCycleMode === "pin" ? orderedPinnedPanes : orderedAllPanes;
+    if (pool.length === 0) {
+      return;
+    }
+    const currentIdx = selectedPane
+      ? pool.findIndex(
+          (entry) => entry.bridgeId === selectedBridgeId && entry.pane.pane_id === selectedPane.pane_id,
+        )
+      : -1;
+    const targetIdx =
+      currentIdx === -1
+        ? 0
+        : (currentIdx + (direction === "next" ? 1 : -1) + pool.length) % pool.length;
+    const target = pool[targetIdx];
+    openPane(target.bridgeId, target.pane);
+  };
+
+  const togglePaneCycleMode = () => {
+    setPaneCycleMode((mode) => (mode === "pin" ? "all" : "pin"));
+  };
+  const paneCyclePress = useLongPress(togglePaneCycleMode, () => cycleAgentPane("next"));
 
   const requestTerminalFocus = () => setTerminalFocusToken((token) => token + 1);
   const requestNoteTitleFocus = (bridgeId: BridgeId, noteId: string) => {
@@ -3226,6 +3454,7 @@ export function App() {
           agentActiveOnly={agentActiveOnly}
           agentSort={agentSort}
           agentGroup={agentGroup}
+          spaceFilter={spaceFilter}
           activeSpace={activeSpace}
           activeWorkspacesByBridgeId={activeWorkspacesByBridgeId}
           selectedPane={selectedPane}
@@ -3238,10 +3467,12 @@ export function App() {
           onAgentActiveOnly={setAgentActiveOnly}
           onAgentSort={setAgentSort}
           onAgentGroup={setAgentGroup}
+          onSpaceFilter={setSpaceFilter}
           onSelectBridge={setSelectedBridgeId}
           onSelectSpace={selectSpace}
           onSelectTab={selectTab}
           onSelectPane={openPane}
+          onOpenPaneSearch={() => setPaneSearchOpen(true)}
           onRefresh={refreshNow}
           onRefreshBridge={(bridgeId) => {
             bridge.retryBridgeProbe(bridgeId);
@@ -3251,6 +3482,8 @@ export function App() {
             }
           }}
           onBackendSettings={() => setBackendSettingsOpen(true)}
+          theme={theme}
+          onToggleTheme={() => setTheme((current) => nextTheme(current))}
           onCreateSpace={() =>
             selectedRuntime && selectedCommands
               ? void exec(selectedRuntime, () => selectedCommands.createWorkspace(), true)
@@ -3335,11 +3568,33 @@ export function App() {
       </aside>
 
       <section className="stage" aria-label="Terminal">
+        {isCompactLayout ? (
+          <button
+            className="stage-nav-fab"
+            type="button"
+            aria-label={mobileNavOpen ? "Hide navigation" : "Show navigation"}
+            title={mobileNavOpen ? "Hide navigation" : "Show navigation"}
+            data-open={mobileNavOpen ? "true" : "false"}
+            onClick={() => setMobileNavOpen((open) => !open)}
+          >
+            {mobileNavOpen ? <X size={18} /> : <Menu size={18} />}
+          </button>
+        ) : null}
+        <div
+          className="stage-nav"
+          data-mobile={isCompactLayout ? "true" : "false"}
+          data-open={isCompactLayout ? (mobileNavOpen ? "true" : "false") : "true"}
+        >
         <TabBar
           snapshot={snapshot}
           activeSpace={activeSpace}
           selectedPane={selectedPane}
-          onSelectTab={(tabId) => selectedRuntime && selectTab(selectedRuntime.id, tabId)}
+          onSelectTab={(tabId) => {
+            if (selectedRuntime) {
+              selectTab(selectedRuntime.id, tabId);
+            }
+            setMobileNavOpen(false);
+          }}
           onCreateTab={(workspaceId) =>
             selectedRuntime &&
             setLaunchTarget({ mode: "tab", workspaceId, bridgeId: selectedRuntime.id })
@@ -3435,6 +3690,19 @@ export function App() {
               <Pin size={16} />
             </button>
           ) : null}
+          {selectedRuntime &&
+          (paneCycleMode === "pin" ? orderedPinnedPanes.length > 1 : orderedAllPanes.length > 1) ? (
+            <button
+              className="icon-btn stage-pin-next-button"
+              type="button"
+              aria-label="Next pane (hold to switch between pinned-only and all panes)"
+              title={paneCycleMode === "pin" ? "Next pinned pane (hold to switch mode)" : "Next pane (hold to switch mode)"}
+              data-cycle-mode={paneCycleMode}
+              {...paneCyclePress}
+            >
+              <SkipForward size={16} />
+            </button>
+          ) : null}
           {selectedPane ? (
             <button
               className="icon-btn"
@@ -3448,6 +3716,12 @@ export function App() {
           ) : null}
           {selectedPane ? <StatusBadge status={selectedPane.agent_status} /> : null}
         </header>
+        </div>
+        {isCompactLayout && selectedPane ? (
+          <div className="stage-status-fab">
+            <StatusBadge status={selectedPane.agent_status} />
+          </div>
+        ) : null}
         {showSplit && splitCells ? (
           <SplitGrid
             cells={splitCells}
@@ -3479,6 +3753,14 @@ export function App() {
             resumeToken={selectedRuntime?.resumeToken ?? 0}
             httpUrl={selectedHttpUrl}
             wsUrl={selectedWsUrl}
+            onVoicePinCycle={cyclePinnedPane}
+            onPaneCycle={cycleAgentPane}
+            onPaneCycleModeToggle={togglePaneCycleMode}
+            paneCycleMode={paneCycleMode}
+            selectedPanePinned={selectedPanePinned}
+            theme={theme}
+            onThemeChange={setTheme}
+            selectedPaneWorkspaceTabPath={selectedPaneWorkspaceTabPath}
           />
         ) : renderTerminal ? (
           <TerminalView
@@ -3504,6 +3786,14 @@ export function App() {
             terminalOutputCoalesceMs={terminalOutputCoalesceMs}
             refitToken={refitToken}
             focusToken={terminalFocusToken}
+            onVoicePinCycle={cyclePinnedPane}
+            onPaneCycle={cycleAgentPane}
+            onPaneCycleModeToggle={togglePaneCycleMode}
+            paneCycleMode={paneCycleMode}
+            pinned={selectedPanePinned}
+            theme={theme}
+            onThemeChange={setTheme}
+            placeholder={selectedPaneWorkspaceTabPath}
           />
         ) : (
           <div className="terminal-stage" aria-hidden="true" />
@@ -3707,6 +3997,17 @@ export function App() {
           emptyMessage={launchEmptyMessage}
           onCancel={() => setLaunchTarget(null)}
           onSubmit={submitLaunch}
+        />
+      ) : null}
+
+      {paneSearchOpen ? (
+        <PaneSearchDialog
+          entries={paneSearchEntries}
+          onCancel={() => setPaneSearchOpen(false)}
+          onSelect={(bridgeId, pane) => {
+            setPaneSearchOpen(false);
+            openPane(bridgeId, pane);
+          }}
         />
       ) : null}
 
@@ -3965,6 +4266,10 @@ export function BridgeConnectionController({
       "/ws/ui-events",
       (event) => {
         if (!isCurrentConnection()) {
+          return;
+        }
+        if (isReloadEvent(event)) {
+          window.location.reload();
           return;
         }
         const paneId = selectionPaneId(event);
@@ -4839,6 +5144,14 @@ function SplitGrid({
   resumeToken,
   httpUrl,
   wsUrl,
+  onVoicePinCycle,
+  onPaneCycle,
+  onPaneCycleModeToggle,
+  paneCycleMode,
+  selectedPanePinned,
+  theme,
+  onThemeChange,
+  selectedPaneWorkspaceTabPath,
 }: {
   cells: { pane: PaneInfo; style: CSSProperties }[];
   selectedPaneId: string | null;
@@ -4862,6 +5175,14 @@ function SplitGrid({
   resumeToken: number;
   httpUrl: (path: string, query?: URLSearchParams) => string;
   wsUrl: (path: string, query?: URLSearchParams) => string;
+  onVoicePinCycle: (direction: "next" | "prev") => void;
+  onPaneCycle: (direction: "next" | "prev") => void;
+  onPaneCycleModeToggle: () => void;
+  paneCycleMode: "pin" | "all";
+  selectedPanePinned: boolean;
+  theme: Theme;
+  onThemeChange: (theme: Theme) => void;
+  selectedPaneWorkspaceTabPath: string;
 }) {
   // On touch devices, showing every split pane at once (e.g. a small tmux
   // status pane stacked under the main agent pane) leaves too little room for
@@ -4923,6 +5244,14 @@ function SplitGrid({
               terminalOutputCoalesceMs={terminalOutputCoalesceMs}
               refitToken={selected ? refitToken : 0}
               focusToken={selected ? focusToken : 0}
+              onVoicePinCycle={onVoicePinCycle}
+              onPaneCycle={onPaneCycle}
+              onPaneCycleModeToggle={onPaneCycleModeToggle}
+              paneCycleMode={paneCycleMode}
+              pinned={selected && selectedPanePinned}
+              theme={theme}
+              onThemeChange={onThemeChange}
+              placeholder={selectedPaneWorkspaceTabPath}
             />
           </div>
         );
@@ -5025,6 +5354,7 @@ function Switcher({
   agentActiveOnly,
   agentSort,
   agentGroup,
+  spaceFilter,
   activeSpace,
   activeWorkspacesByBridgeId,
   selectedPane,
@@ -5037,13 +5367,17 @@ function Switcher({
   onAgentActiveOnly,
   onAgentSort,
   onAgentGroup,
+  onSpaceFilter,
   onSelectBridge,
   onSelectSpace,
   onSelectTab,
   onSelectPane,
+  onOpenPaneSearch,
   onRefresh,
   onRefreshBridge,
   onBackendSettings,
+  theme,
+  onToggleTheme,
   onCreateSpace,
   onCreateTab,
   onMenu,
@@ -5057,7 +5391,7 @@ function Switcher({
   bridgeCanConnect: boolean;
   bridgeError: string | null;
   bridgeLabel: string;
-  bridgeMode: "same-origin" | "configured" | "disconnected";
+  bridgeMode: "same-origin" | "configured" | "remote-proxy" | "disconnected";
   capabilityState: "idle" | "probing" | "ready" | "error";
   scope: Scope;
   sidebarView: SidebarView;
@@ -5071,6 +5405,7 @@ function Switcher({
   agentActiveOnly: boolean;
   agentSort: AgentSort;
   agentGroup: AgentGroup;
+  spaceFilter: SpaceFilter;
   activeSpace: WorkspaceInfo | null;
   activeWorkspacesByBridgeId: Record<string, string>;
   selectedPane: PaneInfo | null;
@@ -5083,13 +5418,17 @@ function Switcher({
   onAgentActiveOnly: (activeOnly: boolean) => void;
   onAgentSort: (sort: AgentSort) => void;
   onAgentGroup: (group: AgentGroup) => void;
+  onSpaceFilter: (filter: SpaceFilter) => void;
   onSelectBridge: (bridgeId: BridgeId) => void;
   onSelectSpace: (bridgeId: BridgeId, workspaceId: string) => void;
   onSelectTab: (bridgeId: BridgeId, tabId: string) => void;
   onSelectPane: (bridgeId: BridgeId, pane: PaneInfo) => void;
+  onOpenPaneSearch: () => void;
   onRefresh: () => void;
   onRefreshBridge: (bridgeId: BridgeId) => void;
   onBackendSettings: () => void;
+  theme: Theme;
+  onToggleTheme: () => void;
   onCreateSpace: () => void;
   onCreateTab: (bridgeId: BridgeId, workspaceId: string) => void;
   onMenu: (
@@ -5112,6 +5451,7 @@ function Switcher({
   ) => void;
 }) {
   const [optionsMenu, setOptionsMenu] = useState<{ x: number; y: number } | null>(null);
+  const [spacesExpanded, setSpacesExpanded] = useState(true);
   const selectedBridgeView = selectedBridgeId
     ? (bridgeViews.find((view) => view.runtime.id === selectedBridgeId) ?? null)
     : null;
@@ -5215,7 +5555,15 @@ function Switcher({
       ),
     [effectiveAgentPinnedOnly, pinnedAgentKeys, scopedWorkspaces, sidebarView],
   );
-  const spaceCount = hostBridgeViews.reduce(
+  const filteredSpaceBridgeViews =
+    hostScope === "all" && spaceFilter !== "all"
+      ? hostBridgeViews.filter((view) =>
+          spaceFilter === "local"
+            ? view.runtime.id === SAME_ORIGIN_BRIDGE_ID
+            : view.runtime.id !== SAME_ORIGIN_BRIDGE_ID,
+        )
+      : hostBridgeViews;
+  const spaceCount = filteredSpaceBridgeViews.reduce(
     (count, view) => count + (view.snapshot?.workspaces.length ?? 0),
     0,
   );
@@ -5462,10 +5810,28 @@ function Switcher({
             <span className="brand-sub">
               <b>{headerSummary}</b>
             </span>
-          ) : bridgeMode === "configured" ? (
+          ) : bridgeMode === "configured" || bridgeMode === "remote-proxy" ? (
             <span className="brand-sub">{bridgeLabel}</span>
           ) : null}
         </div>
+        <button
+          className="icon-btn"
+          type="button"
+          aria-label="Search panes"
+          title="Search panes across all bridges"
+          onClick={onOpenPaneSearch}
+        >
+          <Search size={16} />
+        </button>
+        <button
+          className="icon-btn"
+          type="button"
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          onClick={onToggleTheme}
+        >
+          {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+        </button>
         <button
           className="icon-btn"
           type="button"
@@ -5599,10 +5965,35 @@ function Switcher({
             {scope === "space" && hostBridgeViews.some((view) => view.snapshot) ? (
             <section className="sec">
               <div className="sec-head">
+                <button
+                  className="sec-collapse"
+                  type="button"
+                  aria-label={spacesExpanded ? "Collapse spaces" : "Expand spaces"}
+                  title={spacesExpanded ? "Collapse spaces" : "Expand spaces"}
+                  aria-expanded={spacesExpanded}
+                  onClick={() => setSpacesExpanded((expanded) => !expanded)}
+                >
+                  {spacesExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </button>
                 <span className="sec-label">spaces</span>
                 <span className="sec-rule" />
                 <span className="sec-count mono">{spaceCount}</span>
-                {hostScope === "selected" ? (
+                {hostScope === "all" ? (
+                  <div className="space-filter-pills">
+                    {(["all", "local", "external"] as SpaceFilter[]).map((f) => (
+                      <button
+                        key={f}
+                        type="button"
+                        className="space-filter-pill"
+                        data-on={spaceFilter === f}
+                        onClick={() => onSpaceFilter(f)}
+                        title={f === "all" ? "All hosts" : f === "local" ? "This machine only" : "Remote hosts only"}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
                   <button
                     className="sec-add"
                     type="button"
@@ -5612,15 +6003,15 @@ function Switcher({
                   >
                     <Plus size={14} />
                   </button>
-                ) : null}
+                )}
               </div>
-              {spaceCount === 0 ? (
+              {!spacesExpanded ? null : spaceCount === 0 ? (
                 <div className="empty">
                   <strong>No spaces yet</strong>
                   <span>{hostScope === "selected" ? "Tap + to create one." : "No enabled host has spaces."}</span>
                 </div>
               ) : hostScope === "all" ? (
-                hostBridgeViews.map((view) => {
+                filteredSpaceBridgeViews.map((view) => {
                   const viewSnapshot = view.snapshot;
                   if (!viewSnapshot) {
                     return null;
@@ -7084,7 +7475,7 @@ function AgentRow({
           {pinned ? (
             <Pin className="agent-pin-indicator" size={10} aria-label="Pinned" />
           ) : null}
-          <span className="agent-title-text">{agentTitle(pane)}</span>
+          <span className="agent-title-text">{agentTitle(pane, workspace, tabLabel)}</span>
         </span>
         <span className="pane-meta mono">{agentSubtitle(pane, workspace, tabLabel, bridgeLabel)}</span>
       </span>
@@ -7430,8 +7821,19 @@ function compareLastStatusTransition(a: ScopedAgentPane, b: ScopedAgentPane) {
   return 0;
 }
 
-function agentTitle(pane: PaneInfo) {
-  return pane.display_agent || pane.label || pane.agent || pane.title || paneTitle(pane);
+function agentTitle(pane: PaneInfo, workspace?: WorkspaceInfo, tabLabel?: string) {
+  // The workspace/tab name distinguishes agent windows from one another; the
+  // agent binary name (e.g. "claude") is the same across every row and isn't
+  // useful as the primary label — it still shows up via the agent icon.
+  return (
+    workspace?.label ||
+    tabLabel ||
+    pane.display_agent ||
+    pane.label ||
+    pane.agent ||
+    pane.title ||
+    paneTitle(pane)
+  );
 }
 
 function agentSubtitle(
@@ -7445,7 +7847,18 @@ function agentSubtitle(
     pane.state_labels?.[statusLabel(pane.agent_status)] ||
     statusLabel(pane.agent_status);
   const dir = basename(pane.foreground_cwd || pane.cwd);
-  return [stateText, bridgeLabel, workspace?.label, tabLabel, dir].filter(Boolean).join(" · ");
+  const title = agentTitle(pane, workspace, tabLabel);
+  const parts = [stateText, bridgeLabel];
+  if (workspace?.label && workspace.label !== title) {
+    parts.push(workspace.label);
+  }
+  if (tabLabel && tabLabel !== title) {
+    parts.push(tabLabel);
+  }
+  if (dir && dir !== title) {
+    parts.push(dir);
+  }
+  return parts.filter(Boolean).join(" · ");
 }
 
 function SplitGlyph() {
@@ -7627,6 +8040,16 @@ function stageBreadcrumb(
   return [workspace?.label, tabLabel].filter(Boolean).join(" · ") || pane.pane_id;
 }
 
+function paneWorkspaceTabPath(snapshot: Snapshot | null, pane: PaneInfo | null) {
+  if (!pane) {
+    return "";
+  }
+  const workspace = snapshot?.workspaces.find((item) => item.workspace_id === pane.workspace_id);
+  const tab = snapshot?.tabs.find((item) => item.tab_id === pane.tab_id);
+  const tabLabel = tab && snapshot ? displayTabLabel(tab, snapshot.panes) : undefined;
+  return [workspace?.label, tabLabel].filter(Boolean).join("/") || paneTitle(pane);
+}
+
 async function fetchSnapshot(httpUrl: (path: string, query?: URLSearchParams) => string) {
   const response = await fetchWithTimeout(httpUrl("/api/snapshot"));
   if (!response.ok) {
@@ -7702,6 +8125,18 @@ function isAgentPinsChangedEvent(event: MessageEvent) {
   try {
     const parsed = JSON.parse(event.data) as { type?: unknown };
     return parsed.type === "herdr_web.agent_pins_changed";
+  } catch {
+    return false;
+  }
+}
+
+function isReloadEvent(event: MessageEvent) {
+  if (typeof event.data !== "string") {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(event.data) as { type?: unknown };
+    return parsed.type === "herdr_web.reload";
   } catch {
     return false;
   }

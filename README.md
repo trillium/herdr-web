@@ -18,12 +18,8 @@ navigation, multi-client viewing, mobile input controls, and synchronized pane s
 ## Highlights
 
 - Shared browser terminal viewing with synchronized pane selection across desktop and mobile.
-- Mobile-friendly text input with stage/send actions, configurable tap focus, extended terminal
-  key controls with a compact-controls toggle, and trailing voice-submit phrase detection for
-  hands-free dictation.
-- Single-pane mode for split panes on touch devices, with a toggle to see the full split grid.
-- A mobile-mode toggle button that flips a presence flag in herdr-web's own data dir, for an
-  external statusline script to check.
+- Mobile-friendly text input with stage/send actions, configurable tap focus, and extended
+  terminal key controls.
 - Agent-focused sidebar with styled icons for detected Codex/OpenAI, Claude, Pi, Grok, and OpenCode panes.
 - Image and file uploads from the terminal toolbar, paste, or drag/drop, with uploaded paths inserted
   into the active terminal input.
@@ -296,17 +292,16 @@ Tailscale):
 scripts/run-bridge.sh --remote-bridge http://mini2:8787 --remote-bridge http://mini3:8787
 ```
 
-Each `--remote-bridge` value may be a full `http://host[:port]` URL or a bare `host[:port]`
-(the bridge adds `http://` automatically). `https://` is not accepted (Tailscale traffic is plain
-HTTP; the bridge's outbound client has no TLS backend). The bridge derives a stable id from each
-URL's hostname, disambiguating collisions and dropping exact duplicates, and lists the configured
-remote bridges (id, label, url) in `/api/snapshot`'s `bridges` array, and standalone at
-`GET /api/bridges` (a lighter-weight read-only mirror of the same `--remote-bridge` config, without
-the session-snapshot round trip). `/api/remote/{bridge_id}/...` and
-`/ws/remote/{bridge_id}/terminal` then proxy REST requests (to an explicit allow-list of endpoints)
-and terminal WebSocket sessions through to that remote bridge. Only bridges the process was actually
-started with are reachable this way; the web app does not yet have UI to add or manage remote
-bridges.
+Each `--remote-bridge` URL must use `http://` (Tailscale traffic is plain HTTP; the bridge's outbound
+client has no TLS backend). The bridge derives a stable id from each URL's hostname, disambiguating
+collisions and dropping exact duplicates, and lists the configured remote bridges (id, label, url) in
+`/api/snapshot`'s `bridges` array, and standalone at `GET /api/bridges` (a lighter-weight read-only
+mirror of the same `--remote-bridge` config, without the session-snapshot round trip). `/api/remote/
+{bridge_id}/...` and `/ws/remote/{bridge_id}/terminal|events|activity|ui-events` then proxy REST reads
+and WebSocket sessions through to that remote bridge. Only bridges the process was actually started
+with are reachable this way. The web app itself needs no configuration to use them: on load it fetches
+`GET /api/bridges` and automatically adds each one to the sidebar bridge switcher, proxied through the
+local bridge — there is no settings screen for remote bridges, and none is needed.
 
 ## Keyboard Shortcuts
 
@@ -338,8 +333,6 @@ The bridge exposes:
 - `GET /api/notes` and `POST /api/notes...`: bridge-owned pane notes
 - `GET /api/agent-activity`: bridge-tracked agent status transition activity
 - `GET /api/agent-pins` and `POST /api/agent-pins/{pane_id}/pin|unpin`: bridge-owned agent pins
-- `GET /api/mobile-mode` and `POST /api/mobile-mode`: read/toggle a `mobile-mode` presence flag
-  file in herdr-web's own data dir, for an external statusline script to check
 - `POST /api/uploads`: save uploaded files into the configured upload directory
 - `GET /api/bridges`: read-only list of `--remote-bridge`-configured remote bridges (`id`, `url`)
 - `GET|POST /api/remote/{bridge_id}/{*rest}`: proxies REST reads to a `--remote-bridge`-configured

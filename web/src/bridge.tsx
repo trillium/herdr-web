@@ -32,7 +32,12 @@ export type BridgeBackendStore = {
   backends: BridgeBackendProfile[];
 };
 
-export type BridgeMode = "same-origin" | "configured";
+export type BridgeMode = "same-origin" | "configured" | "remote-proxy";
+
+export type RemoteProxyBridge = {
+  id: string;
+  url: string;
+};
 
 export type BridgeCapabilities = {
   commands: string[];
@@ -109,6 +114,8 @@ const LEGACY_STORE_KEY = "herdrWeb.bridgeBackends.v1";
 const NOTE_DRAFT_STORAGE_PREFIX = "herdr-web:note-draft:v1:";
 const STORE_VERSION = 2;
 const APP_MIN_WEB_COMPAT = 1;
+const REMOTE_PROXY_REFRESH_INTERVAL_MS = 30_000;
+const REMOTE_PROXY_ID_PREFIX = "remote-proxy:";
 export const SAME_ORIGIN_BRIDGE_COLOR = "#b4befe";
 const BACKEND_COLOR_PALETTE = [
   "#89b4fa",
@@ -129,9 +136,41 @@ export function BridgeProvider({ children }: { children: ReactNode }) {
   const [probeStates, setProbeStates] = useState<Record<string, BridgeProbeState>>({});
   const [probeRetryTokens, setProbeRetryTokens] = useState<Record<string, number>>({});
   const [resumeToken, setResumeToken] = useState(0);
+  const [remoteProxyBridges, setRemoteProxyBridges] = useState<RemoteProxyBridge[]>([]);
+  const [remoteProxyRefreshToken, setRemoteProxyRefreshToken] = useState(0);
   const storeEditedRef = useRef(false);
 
   const sameOriginAvailable = defaultBridgeMode() === "same-origin";
+
+  useEffect(() => {
+    if (!sameOriginAvailable) {
+      setRemoteProxyBridges([]);
+      return;
+    }
+    let cancelled = false;
+    void fetchRemoteProxyBridges((path, query) => buildHttpUrl(null, path, query))
+      .then((bridges) => {
+        if (!cancelled) {
+          setRemoteProxyBridges(bridges);
+        }
+      })
+      .catch(() => {
+        // Keep the last-known list on a transient local fetch failure.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sameOriginAvailable, resumeToken, remoteProxyRefreshToken]);
+
+  useEffect(() => {
+    if (!sameOriginAvailable) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setRemoteProxyRefreshToken((token) => token + 1);
+    }, REMOTE_PROXY_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [sameOriginAvailable]);
 
   useEffect(() => {
     let cancelled = false;
@@ -165,8 +204,9 @@ export function BridgeProvider({ children }: { children: ReactNode }) {
         probeStates,
         resumeToken,
         sameOriginAvailable,
+        remoteProxyBridges,
       }),
-    [probeStates, resumeToken, sameOriginAvailable, store.backends],
+    [probeStates, resumeToken, sameOriginAvailable, store.backends, remoteProxyBridges],
   );
 
   const availableRuntimeIds = useMemo(
@@ -174,10 +214,24 @@ export function BridgeProvider({ children }: { children: ReactNode }) {
     [availableRuntimes],
   );
 
-  const enabledBridgeIds = useMemo(
-    () => store.enabledBridgeIds.filter((bridgeId) => availableRuntimeIds.has(bridgeId)),
-    [availableRuntimeIds, store.enabledBridgeIds],
+  const autoEnabledBridgeIds = useMemo(
+    () => availableRuntimes.filter((runtime) => runtime.mode === "remote-proxy").map((runtime) => runtime.id),
+    [availableRuntimes],
   );
+
+  const enabledBridgeIds = useMemo(() => {
+    const manual = store.enabledBridgeIds.filter((bridgeId) => availableRuntimeIds.has(bridgeId));
+    if (autoEnabledBridgeIds.length === 0) {
+      return manual;
+    }
+    const merged = [...manual];
+    for (const bridgeId of autoEnabledBridgeIds) {
+      if (!merged.includes(bridgeId)) {
+        merged.push(bridgeId);
+      }
+    }
+    return merged;
+  }, [autoEnabledBridgeIds, availableRuntimeIds, store.enabledBridgeIds]);
 
   const enabledRuntimes = useMemo(
     () => availableRuntimes.filter((runtime) => enabledBridgeIds.includes(runtime.id)),
@@ -532,11 +586,13 @@ function buildAvailableRuntimes({
   probeStates,
   resumeToken,
   sameOriginAvailable,
+  remoteProxyBridges,
 }: {
   backends: BridgeBackendProfile[];
   probeStates: Record<string, BridgeProbeState>;
   resumeToken: number;
   sameOriginAvailable: boolean;
+  remoteProxyBridges: RemoteProxyBridge[];
 }) {
   const runtimes: BridgeRuntime[] = [];
   if (sameOriginAvailable) {
@@ -551,6 +607,21 @@ function buildAvailableRuntimes({
         resumeToken,
       }),
     );
+    for (const remote of remoteProxyBridges) {
+      const id = remoteProxyBridgeId(remote.id);
+      runtimes.push(
+        createBridgeRuntime({
+          id,
+          mode: "remote-proxy",
+          label: remoteProxyBridgeLabel(remote.id, remote.url),
+          backend: null,
+          baseUrl: null,
+          probeState: probeStates[id],
+          resumeToken,
+          remoteId: remote.id,
+        }),
+      );
+    }
   }
   for (const backend of backends) {
     runtimes.push(
@@ -576,6 +647,7 @@ function createBridgeRuntime({
   baseUrl,
   probeState,
   resumeToken,
+  remoteId,
 }: {
   id: BridgeId;
   mode: BridgeMode;
@@ -584,16 +656,26 @@ function createBridgeRuntime({
   baseUrl: string | null;
   probeState: BridgeProbeState | undefined;
   resumeToken: number;
+  remoteId?: string;
 }): BridgeRuntime {
   const connectionKey =
     mode === "same-origin"
       ? SAME_ORIGIN_BRIDGE_ID
-      : configuredBridgeConnectionKey(id, baseUrl ?? "");
+      : mode === "remote-proxy"
+        ? remoteProxyBridgeConnectionKey(remoteId ?? id)
+        : configuredBridgeConnectionKey(id, baseUrl ?? "");
   const currentProbeState = probeState?.connectionKey === connectionKey ? probeState : undefined;
-  const httpUrl = (path: string, query?: URLSearchParams) => buildHttpUrl(baseUrl, path, query);
-  const wsUrl = (path: string, query?: URLSearchParams) => buildWsUrl(baseUrl, path, query);
+  const httpUrl =
+    mode === "remote-proxy"
+      ? (path: string, query?: URLSearchParams) => buildRemoteProxyHttpUrl(remoteId ?? id, path, query)
+      : (path: string, query?: URLSearchParams) => buildHttpUrl(baseUrl, path, query);
+  const wsUrl =
+    mode === "remote-proxy"
+      ? (path: string, query?: URLSearchParams) => buildRemoteProxyWsUrl(remoteId ?? id, path, query)
+      : (path: string, query?: URLSearchParams) => buildWsUrl(baseUrl, path, query);
   const color =
-    backend?.color ?? (mode === "same-origin" ? SAME_ORIGIN_BRIDGE_COLOR : fallbackBackendColor(id));
+    backend?.color ??
+    (mode === "same-origin" ? SAME_ORIGIN_BRIDGE_COLOR : fallbackBackendColor(id));
   return {
     id,
     mode,
@@ -961,6 +1043,69 @@ export function buildWsUrl(
 
 export function configuredBridgeConnectionKey(id: BridgeId, baseUrl: string) {
   return `configured:${id}:${baseUrl}`;
+}
+
+function remoteProxyBridgeId(rawId: string): BridgeId {
+  return `${REMOTE_PROXY_ID_PREFIX}${rawId}`;
+}
+
+function remoteProxyBridgeConnectionKey(rawId: string) {
+  return `remote-proxy:${rawId}`;
+}
+
+function remoteProxyBridgeLabel(rawId: string, url: string): string {
+  try {
+    const hostname = new URL(url).hostname;
+    if (hostname) {
+      return hostname;
+    }
+  } catch {
+    // Fall through to the raw id below.
+  }
+  return rawId;
+}
+
+function buildRemoteProxyHttpUrl(rawId: string, path: string, query?: URLSearchParams): string {
+  return buildHttpUrl(null, `/api/remote/${encodeURIComponent(rawId)}${stripPrefix(path, "/api")}`, query);
+}
+
+function buildRemoteProxyWsUrl(rawId: string, path: string, query?: URLSearchParams): string {
+  return buildWsUrl(null, `/ws/remote/${encodeURIComponent(rawId)}${stripPrefix(path, "/ws")}`, query);
+}
+
+function stripPrefix(path: string, prefix: "/api" | "/ws"): string {
+  const normalized = normalizeEndpointPath(path);
+  if (normalized !== prefix && !normalized.startsWith(`${prefix}/`)) {
+    throw new Error(`Remote proxy path must start with ${prefix}`);
+  }
+  return normalized.slice(prefix.length);
+}
+
+export async function fetchRemoteProxyBridges(
+  httpUrl: (path: string, query?: URLSearchParams) => string,
+): Promise<RemoteProxyBridge[]> {
+  const response = await fetchWithTimeout(httpUrl("/api/bridges"));
+  if (!response.ok) {
+    throw new Error(`bridges failed: ${response.status}`);
+  }
+  return parseRemoteProxyBridges(await response.json());
+}
+
+function parseRemoteProxyBridges(value: unknown): RemoteProxyBridge[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const result: RemoteProxyBridge[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const { id, url } = entry;
+    if (typeof id === "string" && id.length > 0 && typeof url === "string" && url.length > 0) {
+      result.push({ id, url });
+    }
+  }
+  return result;
 }
 
 export function removeNoteDraftsForBridgeConnection(bridgeId: BridgeId, connectionKey: string) {

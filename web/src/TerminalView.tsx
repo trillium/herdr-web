@@ -1,28 +1,21 @@
 import {
+  ChevronsDown,
   Copy,
   ExternalLink,
   Keyboard,
   Link,
   Paperclip,
   Send,
+  SkipForward,
   Smartphone,
   SquareTerminal,
   TextCursorInput,
   X,
 } from "lucide-react";
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, DragEvent, KeyboardEvent, RefObject } from "react";
 import { autosizeMobileCommandTextarea } from "./mobileCommandTextarea";
-import { ConfirmDialog } from "./overlays";
+import { ConfirmDialog, useLongPress } from "./overlays";
 import { addNativeResumeHandler } from "./native";
 import { shellQuote } from "./shell";
 import {
@@ -35,7 +28,7 @@ import {
 } from "./terminalConnectionStatus";
 import type { TerminalConnectionState } from "./terminalConnectionStatus";
 import { findFirstUrlInSelection, openableHttpUrl } from "./terminalSelection";
-import { GhosttyRenderer } from "./terminalRenderer";
+import { CTRL_ENTER_KITTY_SEQUENCE, GhosttyRenderer } from "./terminalRenderer";
 import type { MobileTerminalTouchEvent, TerminalRenderer, TerminalSize } from "./terminalRenderer";
 import {
   appendTerminalInputBatch,
@@ -62,11 +55,22 @@ import type {
   MobileTerminalTapTarget,
   MobileTouchSelectionEndpointTimeoutMs,
 } from "./mobileTerminalPrefs";
+import {
+  advanceTerminalScrollOffset,
+  isTerminalScrolledAwayFromPresent,
+} from "./terminalScrollPresence";
+import { readTerminalUsage, terminalUsageLevel } from "./terminalUsage";
+import type { Theme } from "./theme";
 import type { PaneInfo } from "./types";
-
-const ParlayMobileInput = lazy(() =>
-  import("./ParlayMobileInput").then((mod) => ({ default: mod.ParlayMobileInput })),
-);
+import {
+  matchTrailingVoiceClearPhrase,
+  matchTrailingVoicePinPhrase,
+  matchTrailingVoiceSubmitPhrase,
+  matchTrailingVoiceThemePhrase,
+  stripVoiceSubmitPhrase,
+  voiceTailStillMatches,
+  VOICE_SUBMIT_TIMER_MS,
+} from "./voiceSubmitPhrase";
 
 type Props = {
   pane: PaneInfo | null;
@@ -108,6 +112,22 @@ type Props = {
   refitToken?: number;
   /** Incrementing token from the parent that requests focus on the preferred terminal input. */
   focusToken?: number;
+  /** Called when the captain dictates "pin next"/"pin previous" into the mobile command input. Always pin-only, regardless of the pane-cycle button's current mode. */
+  onVoicePinCycle?: (direction: "next" | "prev") => void;
+  /** Called when the pane-cycle button is tapped; cycles through whichever pool paneCycleMode selects. */
+  onPaneCycle?: (direction: "next" | "prev") => void;
+  /** Called when the pane-cycle button is held down; toggles paneCycleMode between "pin" and "all". */
+  onPaneCycleModeToggle?: () => void;
+  /** Which pool the pane-cycle button cycles through; also the button's own color signal. */
+  paneCycleMode?: "pin" | "all";
+  /** Whether this pane is currently pinned; tints the mobile keyboard area as a hands-free cue. */
+  pinned?: boolean;
+  /** Current app color theme, mirrored onto a mobile theme-toggle button and voice phrases. */
+  theme?: Theme;
+  /** Called when the mobile theme-toggle button is pressed or the captain dictates a theme phrase. */
+  onThemeChange?: (theme: Theme) => void;
+  /** Placeholder shown in the empty mobile command input, e.g. "workspace/tab". */
+  placeholder?: string;
 };
 
 type UploadCandidate = {
@@ -147,6 +167,13 @@ type TerminalRendererReady = {
 };
 const MAX_UPLOAD_FILES = 8;
 const DEBUG_TERMINAL_RECONNECT = false;
+// Mount, the ResizeObserver's initial callback, and document.fonts.ready all
+// fire within a few ms of each other on a fresh pane and each would otherwise
+// send its own "resize" over the socket — one full reflow/redraw round trip
+// per send. Harmless on a local bridge; visibly slow and chunky over a
+// remote-proxied (double-hop) connection. Coalescing to the last one in this
+// window cuts that to at most one corrective resize after the first connect.
+const TERMINAL_RESIZE_SETTLE_MS = 120;
 
 export function TerminalView({
   pane,
@@ -171,7 +198,16 @@ export function TerminalView({
   terminalOutputCoalesceMs = DEFAULT_TERMINAL_OUTPUT_COALESCE_MS,
   refitToken = 0,
   focusToken = 0,
+  onVoicePinCycle = () => {},
+  onPaneCycle = () => {},
+  onPaneCycleModeToggle = () => {},
+  paneCycleMode = "pin",
+  pinned = false,
+  theme = "dark",
+  onThemeChange = () => {},
+  placeholder = "",
 }: Props) {
+  const terminalUsage = readTerminalUsage(pane?.tokens);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -196,6 +232,7 @@ export function TerminalView({
   const terminalIdRef = useRef(pane?.terminal_id ?? null);
   const overlayTerminalIdRef = useRef(pane?.terminal_id ?? null);
   const delayConnectingOverlayRef = useRef(false);
+  const terminalScrollOffsetRef = useRef(0);
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>("idle");
   const [closeReason, setCloseReason] = useState<string | null>(null);
   const [rendererReady, setRendererReady] = useState<TerminalRendererReady | null>(null);
@@ -207,6 +244,7 @@ export function TerminalView({
   const [mobileSelectionAction, setMobileSelectionAction] =
     useState<MobileSelectionAction | null>(null);
   const [mobileModeActive, setMobileModeActive] = useState(false);
+  const [scrolledAwayFromPresent, setScrolledAwayFromPresent] = useState(false);
   // Read at attach time without re-running the effect (which would re-attach the socket).
   const autoFocusRef = useRef(autoFocus);
   autoFocusRef.current = autoFocus;
@@ -216,6 +254,8 @@ export function TerminalView({
   mobileControlsRef.current = mobileControls;
   const terminalFontSizePxRef = useRef(terminalFontSizePx);
   terminalFontSizePxRef.current = terminalFontSizePx;
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   const mobileTapTargetRef = useRef(mobileTapTarget);
   mobileTapTargetRef.current = mobileTapTarget;
   const mobileLongPressBehaviorRef = useRef(mobileLongPressBehavior);
@@ -450,6 +490,21 @@ export function TerminalView({
     [flushBatchedTerminalInput, scheduleBatchedTerminalInputFlush, sendTerminalInputFrame],
   );
 
+  const jumpToTerminalPresent = useCallback(() => {
+    // All output is written to the local terminal buffer regardless of scroll position
+    // (see writeTerminalData), so returning to present is a local viewport reset — no
+    // server round trip needed, and nothing to undershoot if output kept streaming in.
+    terminalScrollOffsetRef.current = 0;
+    setScrolledAwayFromPresent(false);
+    rendererRef.current?.scrollToBottom();
+    // Also nudge the remote pane itself: apps like Claude Code's CLI track their own
+    // scrolled-up state and only clear it on a literal ctrl+enter keystroke (sent as the
+    // Kitty keyboard protocol's CSI-u sequence, since plain ctrl+enter is indistinguishable
+    // from Enter over a legacy PTY).
+    sendTerminalInputData(CTRL_ENTER_KITTY_SEQUENCE);
+    focusPreferredInput();
+  }, [focusPreferredInput, sendTerminalInputData]);
+
   useEffect(() => {
     if (terminalInputBatchDelayMs <= 0) {
       flushBatchedTerminalInput();
@@ -477,6 +532,19 @@ export function TerminalView({
     };
   }, [focusPreferredInput, focusToken]);
 
+  // The mobile command input is disabled until the newly-selected pane's
+  // socket attaches, so a focus request (e.g. voice pin-cycle switching to a
+  // pane that hasn't attached yet) can outlive the retries above. Catch that
+  // by refocusing right when the connection actually finishes attaching.
+  const wasAttachedRef = useRef(connectionState === "attached");
+  useEffect(() => {
+    const isAttached = connectionState === "attached";
+    if (!wasAttachedRef.current && isAttached && focusToken > 0) {
+      focusPreferredInput();
+    }
+    wasAttachedRef.current = isAttached;
+  }, [connectionState, focusToken, focusPreferredInput]);
+
   useEffect(() => {
     const host = hostRef.current;
     const terminalId = pane?.terminal_id ?? null;
@@ -491,6 +559,8 @@ export function TerminalView({
     setShowConnectionOverlay(false);
     setCloseReason(null);
     terminalInputBlockedRef.current = false;
+    terminalScrollOffsetRef.current = 0;
+    setScrolledAwayFromPresent(false);
     if (!host || !terminalId) {
       setConnectionState("idle");
       host?.replaceChildren();
@@ -504,7 +574,10 @@ export function TerminalView({
     let resizeObserver: ResizeObserver | null = null;
     const generation = rendererGenerationRef.current + 1;
     rendererGenerationRef.current = generation;
-    const renderer: TerminalRenderer = new GhosttyRenderer(terminalFontSizePxRef.current);
+    const renderer: TerminalRenderer = new GhosttyRenderer(
+      terminalFontSizePxRef.current,
+      themeRef.current,
+    );
     rendererRef.current = renderer;
     setConnectionState("connecting");
 
@@ -523,6 +596,20 @@ export function TerminalView({
         setRendererReady(ready);
       }
       sendResizeRef.current(size);
+    };
+    let settleTimer: number | null = null;
+    let pendingSettleMode: "fit" | "refresh" = "fit";
+    const scheduleSettledPublish = (mode: "fit" | "refresh") => {
+      pendingSettleMode = pendingSettleMode === "refresh" ? "refresh" : mode;
+      if (settleTimer !== null) {
+        window.clearTimeout(settleTimer);
+      }
+      settleTimer = window.setTimeout(() => {
+        settleTimer = null;
+        const flushMode = pendingSettleMode;
+        pendingSettleMode = "fit";
+        publishReady(flushMode);
+      }, TERMINAL_RESIZE_SETTLE_MS);
     };
 
     void renderer
@@ -561,10 +648,21 @@ export function TerminalView({
               lines: Math.min(Math.abs(lines), 200),
             }),
           );
+          const wasScrolledAway = isTerminalScrolledAwayFromPresent(
+            terminalScrollOffsetRef.current,
+          );
+          terminalScrollOffsetRef.current = advanceTerminalScrollOffset(
+            terminalScrollOffsetRef.current,
+            lines,
+          );
+          const isScrolledAway = isTerminalScrolledAwayFromPresent(terminalScrollOffsetRef.current);
+          if (isScrolledAway !== wasScrolledAway) {
+            setScrolledAwayFromPresent(isScrolledAway);
+          }
         });
 
         resizeObserver = new ResizeObserver(() => {
-          publishReady();
+          scheduleSettledPublish("fit");
           if (socketRef.current?.readyState !== WebSocket.OPEN) {
             requestReconnectRef.current("resize");
           }
@@ -575,7 +673,7 @@ export function TerminalView({
         if (fontReady) {
           void fontReady.then(() => {
             if (!disposed) {
-              publishReady("refresh");
+              scheduleSettledPublish("refresh");
             }
           });
         }
@@ -592,6 +690,9 @@ export function TerminalView({
 
     return () => {
       disposed = true;
+      if (settleTimer !== null) {
+        window.clearTimeout(settleTimer);
+      }
       flushBatchedTerminalInput();
       batchedInputRef.current = emptyTerminalInputBatch();
       clearQueuedTerminalInput();
@@ -1095,6 +1196,10 @@ export function TerminalView({
   }, [terminalFontSizePx]);
 
   useEffect(() => {
+    rendererRef.current?.setTheme(theme);
+  }, [theme]);
+
+  useEffect(() => {
     setMobileSelectionAction(null);
     rendererRef.current?.clearSelection();
   }, [connectionKey, pane?.terminal_id]);
@@ -1137,16 +1242,8 @@ export function TerminalView({
     if (!mobileControls) {
       return;
     }
-    // httpUrl() throws while the bridge runtime hasn't connected yet, which
-    // happens routinely on first mount — don't let that escape the effect.
-    let url: string;
-    try {
-      url = httpUrl("/api/mobile-mode");
-    } catch {
-      return;
-    }
     let cancelled = false;
-    fetch(url)
+    fetch(httpUrl("/api/mobile-mode"))
       .then((response) => (response.ok ? (response.json() as Promise<{ active?: boolean }>) : null))
       .then((payload) => {
         if (!cancelled && payload && typeof payload.active === "boolean") {
@@ -1160,13 +1257,7 @@ export function TerminalView({
   }, [mobileControls, httpUrl]);
 
   const toggleMobileMode = useCallback(() => {
-    let url: string;
-    try {
-      url = httpUrl("/api/mobile-mode");
-    } catch {
-      return;
-    }
-    fetch(url, { method: "POST" })
+    fetch(httpUrl("/api/mobile-mode"), { method: "POST" })
       .then((response) => (response.ok ? (response.json() as Promise<{ active?: boolean }>) : null))
       .then((payload) => {
         if (payload && typeof payload.active === "boolean") {
@@ -1360,6 +1451,16 @@ export function TerminalView({
           {terminalConnectionCopy(connectionState, closeReason, hasAttachedForTerminal)}
         </div>
       ) : null}
+      {scrolledAwayFromPresent ? (
+        <button
+          className="terminal-jump-to-present"
+          type="button"
+          onClick={jumpToTerminalPresent}
+        >
+          <ChevronsDown size={14} />
+          Jump to present
+        </button>
+      ) : null}
       {uploadStatus ? (
         <div className="terminal-upload-status" role="status" aria-live="polite">
           {uploadStatus}
@@ -1395,6 +1496,15 @@ export function TerminalView({
           onUpload={openFilePicker}
           onStageCommand={(command) => enqueueTerminalInput([command])}
           onSubmitCommand={(command) => enqueueTerminalInput([command, "\r"])}
+          onVoicePinCycle={onVoicePinCycle}
+          onPaneCycle={onPaneCycle}
+          onPaneCycleModeToggle={onPaneCycleModeToggle}
+          paneCycleMode={paneCycleMode}
+          pinned={pinned}
+          onThemeChange={onThemeChange}
+          placeholder={placeholder}
+          usageHourlyPct={terminalUsage.hourlyPct}
+          usageWeeklyPct={terminalUsage.weeklyPct}
         />
       ) : null}
       {mobileSelectionAction ? (
@@ -1490,6 +1600,15 @@ function MobileTerminalControls({
   onUpload,
   onStageCommand,
   onSubmitCommand,
+  onVoicePinCycle,
+  onPaneCycle,
+  onPaneCycleModeToggle,
+  paneCycleMode,
+  pinned,
+  onThemeChange,
+  placeholder,
+  usageHourlyPct,
+  usageWeeklyPct,
 }: {
   commandInputRef: RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
   disabled: boolean;
@@ -1507,11 +1626,35 @@ function MobileTerminalControls({
   onUpload: () => void;
   onStageCommand: (command: string) => void;
   onSubmitCommand: (command: string) => void;
+  onVoicePinCycle: (direction: "next" | "prev") => void;
+  onPaneCycle: (direction: "next" | "prev") => void;
+  onPaneCycleModeToggle: () => void;
+  paneCycleMode: "pin" | "all";
+  pinned: boolean;
+  onThemeChange: (theme: Theme) => void;
+  placeholder: string;
+  /** Percent (0-100) of the account's rolling hourly usage window consumed, if reported. */
+  usageHourlyPct?: number;
+  /** Percent (0-100) of the account's rolling weekly usage window consumed, if reported. */
+  usageWeeklyPct?: number;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [value, setValue] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [ctrlLatch, setCtrlLatch] = useState(false);
+  const voiceSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // onSubmitCommand/onVoicePinCycle/onThemeChange are inline closures re-created on every parent
+  // render, which can happen more often than the 1s voice-submit arm window (e.g. any pane
+  // activity update across any bridge). Reading them from refs at fire time — instead of putting
+  // them in the effect's dependency array — keeps the debounce timer from being reset by
+  // unrelated parent re-renders, which previously could prevent it from ever firing.
+  const onSubmitCommandRef = useRef(onSubmitCommand);
+  onSubmitCommandRef.current = onSubmitCommand;
+  const onVoicePinCycleRef = useRef(onVoicePinCycle);
+  onVoicePinCycleRef.current = onVoicePinCycle;
+  const onThemeChangeRef = useRef(onThemeChange);
+  onThemeChangeRef.current = onThemeChange;
+  const paneCyclePress = useLongPress(onPaneCycleModeToggle, () => onPaneCycle("next"));
   const setCommandInputNode = (node: HTMLInputElement | HTMLTextAreaElement | null) => {
     commandInputRef.current = node;
   };
@@ -1532,6 +1675,54 @@ function MobileTerminalControls({
       setCtrlLatch(false);
     }
   };
+
+  useEffect(() => {
+    const submitTail = disabled ? null : matchTrailingVoiceSubmitPhrase(value);
+    const clearTail = disabled || submitTail ? null : matchTrailingVoiceClearPhrase(value);
+    const pinMatch =
+      disabled || submitTail || clearTail ? null : matchTrailingVoicePinPhrase(value);
+    const themeMatch =
+      disabled || submitTail || clearTail || pinMatch ? null : matchTrailingVoiceThemePhrase(value);
+    const matchedTail = submitTail ?? clearTail ?? pinMatch?.tail ?? themeMatch?.tail ?? null;
+    if (!matchedTail) {
+      if (voiceSubmitTimerRef.current) {
+        clearTimeout(voiceSubmitTimerRef.current);
+        voiceSubmitTimerRef.current = null;
+      }
+      return;
+    }
+    if (voiceSubmitTimerRef.current) {
+      clearTimeout(voiceSubmitTimerRef.current);
+    }
+    voiceSubmitTimerRef.current = setTimeout(() => {
+      voiceSubmitTimerRef.current = null;
+      // Re-verify the buffer still ends with what we matched before firing —
+      // dictation may have kept correcting the tail during the arm window.
+      if (!voiceTailStillMatches(value, matchedTail)) {
+        return;
+      }
+      if (submitTail) {
+        const stripped = stripVoiceSubmitPhrase(value, matchedTail);
+        if (!stripped) {
+          return;
+        }
+        onSubmitCommandRef.current(stripped);
+      } else if (pinMatch) {
+        onVoicePinCycleRef.current(pinMatch.direction);
+      } else if (themeMatch) {
+        onThemeChangeRef.current(themeMatch.theme);
+      }
+      setValue("");
+    }, VOICE_SUBMIT_TIMER_MS);
+  }, [value, disabled]);
+
+  useEffect(() => {
+    return () => {
+      if (voiceSubmitTimerRef.current) {
+        clearTimeout(voiceSubmitTimerRef.current);
+      }
+    };
+  }, []);
 
   useLayoutEffect(() => {
     if (expandingInput) {
@@ -1583,7 +1774,36 @@ function MobileTerminalControls({
   };
 
   return (
-    <div ref={rootRef} className="terminal-mobile-controls" data-expanded={expanded ? "true" : "false"}>
+    <div
+      ref={rootRef}
+      className="terminal-mobile-controls"
+      data-expanded={expanded ? "true" : "false"}
+      data-pinned={pinned ? "true" : "false"}
+    >
+      {usageHourlyPct !== undefined || usageWeeklyPct !== undefined ? (
+        <div className="terminal-usage-bars" aria-hidden="true">
+          {usageHourlyPct !== undefined ? (
+            <div
+              className="terminal-usage-bar"
+              data-kind="hourly"
+              data-level={terminalUsageLevel(usageHourlyPct)}
+              title={`Hourly usage: ${Math.round(usageHourlyPct)}%`}
+            >
+              <div className="terminal-usage-bar-fill" style={{ width: `${usageHourlyPct}%` }} />
+            </div>
+          ) : null}
+          {usageWeeklyPct !== undefined ? (
+            <div
+              className="terminal-usage-bar"
+              data-kind="weekly"
+              data-level={terminalUsageLevel(usageWeeklyPct)}
+              title={`Weekly usage: ${Math.round(usageWeeklyPct)}%`}
+            >
+              <div className="terminal-usage-bar-fill" style={{ width: `${usageWeeklyPct}%` }} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {!compactControls ? (
         <>
           <div className="term-key-strip" aria-label="Common terminal keys">
@@ -1716,22 +1936,49 @@ function MobileTerminalControls({
         >
           <Smartphone size={15} />
         </button>
-        <Suspense fallback={null}>
-          <ParlayMobileInput
-            value={value}
-            onValueChange={setValue}
-            onVoiceSubmit={(text) => {
-              onSubmitCommand(text);
-              setValue("");
-            }}
+        <button
+          className="term-key term-key-icon term-pin-cycle"
+          type="button"
+          aria-label="Next pane (hold to switch between pinned-only and all panes)"
+          title={paneCycleMode === "pin" ? "Next pinned agent (hold to switch mode)" : "Next agent (hold to switch mode)"}
+          data-cycle-mode={paneCycleMode}
+          {...paneCyclePress}
+        >
+          <SkipForward size={15} />
+        </button>
+        {expandingInput ? (
+          <textarea
+            ref={setCommandInputNode}
+            className="term-native-input mono"
+            rows={1}
+            data-expanding="true"
+            autoCapitalize="none"
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+            enterKeyHint={enterNewline ? "enter" : "send"}
             disabled={disabled}
-            expandingInput={expandingInput}
-            enterNewline={enterNewline}
-            controlsScalePercent={controlsScalePercent}
+            value={value}
+            placeholder={placeholder}
+            onChange={(event) => setValue(event.target.value)}
             onKeyDown={onCommandTextareaKeyDown}
-            inputRef={setCommandInputNode}
           />
-        </Suspense>
+        ) : (
+          <input
+            ref={setCommandInputNode}
+            className="term-native-input mono"
+            type="text"
+            autoCapitalize="none"
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+            enterKeyHint="send"
+            disabled={disabled}
+            value={value}
+            placeholder={placeholder}
+            onChange={(event) => setValue(event.target.value)}
+          />
+        )}
         <button
           className="term-send term-stage-command"
           type="button"
