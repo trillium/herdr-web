@@ -75,14 +75,14 @@ afterEach(async () => {
 });
 
 async function mountInput() {
-  const { ParlayMobileInput } = await import("./ParlayMobileInput");
+  const { ParlayInput } = await import("./ParlayInput");
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   roots.push(root);
   await act(async () => {
     root.render(
-      <ParlayMobileInput
+      <ParlayInput
         value=""
         onValueChange={() => {}}
         onVoiceSubmit={() => {}}

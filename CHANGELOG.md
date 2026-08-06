@@ -97,6 +97,12 @@ Files: CHANGELOG.md, AGENTS.md, web/src/App.tsx, web/src/paneSearch.ts, bridge/s
   falls back to `crypto.getRandomValues` (not secure-context gated, so the ids stay
   collision-resistant and unguessable across tabs) and then to a clock/`Math.random` last resort.
   `bridge.tsx`'s backend id generation was already guarded and now shares the same helper.
+  [PR #17](https://github.com/trillium/herdr-web/pull/17)
+- Fixed `npm run check` failing in `web/` with 7 ESLint errors in `ParlayMobileInput.tsx`
+  (four `react-hooks/rules-of-hooks` from hooks called below the no-parlay early return, three
+  `no-explicit-any`). Hooks are now unconditional and the parlay client is properly typed; the
+  no-parlay path still renders a plain input, now with test coverage.
+  [PR #17](https://github.com/trillium/herdr-web/pull/17)
 - Fixed herdr-web rejecting the herdr `v0.8.0` daemon at startup with "protocol 19 is newer than
   this herdr-web bridge supports": the vendored protocol constant is now `19`, so the bridge's
   terminal-attach accept range (`16..=PROTOCOL_VERSION`) admits protocol `19` daemons while still
