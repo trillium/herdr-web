@@ -121,6 +121,26 @@ describe("ParlayMobileInput session ids", () => {
     expect(deviceIdsFromEventSources()[0]).toMatch(/^herdr-web-mobile-.+/u);
   });
 
+  it("still degrades to a plain input when @parlay/client is unavailable", async () => {
+    // #14's fallback path. Covered here because this branch was restructured to
+    // hoist the hooks above it (they were being called conditionally); the
+    // no-parlay behaviour must be unchanged — a working controlled input, no
+    // EventSource, and no voice-submit eval scheduling.
+    vi.resetModules();
+    vi.doMock("@parlay/client", () => {
+      throw new Error("Cannot find module '@parlay/client'");
+    });
+
+    const host = await mountInput();
+
+    const input = host.querySelector<HTMLInputElement>("input.term-native-input");
+    expect(input).not.toBeNull();
+    expect(FakeEventSource.instances).toHaveLength(0);
+
+    vi.doUnmock("@parlay/client");
+    vi.resetModules();
+  });
+
   it("gives every mount distinct ids when randomUUID is missing", async () => {
     // The point of be704dc: two tabs must not share a device id, or one tab
     // replays the other's SSE-broadcast actions into its terminal.
