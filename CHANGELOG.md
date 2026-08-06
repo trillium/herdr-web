@@ -44,6 +44,7 @@ Files: CHANGELOG.md, AGENTS.md, web/src/App.tsx, web/src/paneSearch.ts, bridge/s
   back to a plain text input at runtime when the module is absent. Removed the dead `vite.config.ts`
   stub module and the duplicate `web/src/@parlay-client.d.ts` type shim (the canonical ambient
   declaration is `web/types/parlay-client.d.ts`).
+  [PR #18](https://github.com/trillium/herdr-web/pull/18)
 - Refreshed the vendored `herdr-compat` crate to the herdr `v0.8.0` baseline (wire protocol `19`,
   up from `v0.7.2`/protocol `16`): copied the exact-compared API schema surface and the
   `protocol::wire` body, added minimal `input`/`raw_input`/`popup_size` supporting shims for the
