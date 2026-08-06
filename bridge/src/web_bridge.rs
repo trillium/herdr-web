@@ -1399,14 +1399,41 @@ fn finalize_upload_file_name(name: String) -> Option<String> {
     }
 }
 
-fn generated_upload_name(mime: Option<&str>) -> String {
-    let extension = upload_extension_for_mime(mime).unwrap_or("bin");
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or(0);
-    let suffix = UPLOAD_TEMP_COUNTER.fetch_add(1, Ordering::AcqRel);
-    format!("pasted-file-{millis}-{suffix}.{extension}")
+fn unique_upload_file_name(base_name: Option<&str>, mime: Option<&str>) -> String {
+    // If a base filename was provided and sanitized successfully, make it unique by hashing.
+    if let Some(name) = base_name {
+        // Compute a hash that changes when the same filename is uploaded multiple times.
+        // Users uploading "image.png" multiple times expect distinct files, not overwrites.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let suffix = UPLOAD_TEMP_COUNTER.fetch_add(1, Ordering::AcqRel);
+        let seed = format!("{:x}{:x}", now, suffix);
+        let hash = seed
+            .bytes()
+            .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+        let hash_str = format!("{:08x}", hash);
+        if let Some((base, ext)) = name.rsplit_once('.') {
+            format!("{}-{}.{}", base, hash_str, ext)
+        } else {
+            format!("{}-{}", name, hash_str)
+        }
+    } else {
+        // Fallback: no original filename, generate one from MIME type.
+        let extension = upload_extension_for_mime(mime).unwrap_or("bin");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let suffix = UPLOAD_TEMP_COUNTER.fetch_add(1, Ordering::AcqRel);
+        let seed = format!("{:x}{:x}", now, suffix);
+        let hash = seed
+            .bytes()
+            .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+        let hash_str = format!("{:08x}", hash);
+        format!("upload-{}.{}", hash_str, extension)
+    }
 }
 
 fn upload_extension_for_mime(mime: Option<&str>) -> Option<&'static str> {
@@ -2550,7 +2577,7 @@ async fn upload_handler(
     );
     let name = match query.name.as_deref().and_then(sanitize_upload_file_name) {
         Some(name) => name,
-        None => generated_upload_name(mime.as_deref()),
+        None => unique_upload_file_name(query.name.as_deref(), mime.as_deref()),
     };
     let destination = state.upload_dir.join(&name);
     if !is_direct_child(&state.upload_dir, &destination) {
@@ -6562,6 +6589,21 @@ mod tests {
             upload_extension_for_mime(Some("application/octet-stream")),
             None
         );
+    }
+
+    #[test]
+    fn unique_upload_file_name_hashes_repeat_names_differently() {
+        let first = unique_upload_file_name(Some("image.png"), Some("image/png"));
+        let second = unique_upload_file_name(Some("image.png"), Some("image/png"));
+        assert_ne!(first, second);
+        assert!(first.starts_with("image-") && first.ends_with(".png"));
+        assert!(second.starts_with("image-") && second.ends_with(".png"));
+    }
+
+    #[test]
+    fn unique_upload_file_name_falls_back_to_mime_extension_without_name() {
+        let name = unique_upload_file_name(None, Some("image/jpeg"));
+        assert!(name.starts_with("upload-") && name.ends_with(".jpg"));
     }
 
     #[test]
