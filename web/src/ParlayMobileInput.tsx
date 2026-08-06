@@ -52,6 +52,13 @@ export function ParlayMobileInput({
     inputRef(node);
   };
 
+  // Autosize textarea when expanding input is enabled (works with or without parlay).
+  useEffect(() => {
+    if (expandingInput) {
+      autosizeMobileCommandTextarea(nodeRef.current);
+    }
+  }, [expandingInput, controlsScalePercent, value]);
+
   // If parlay is not available, render a plain input.
   if (!parlayAvailable) {
     if (expandingInput) {
@@ -209,12 +216,6 @@ export function ParlayMobileInput({
       "input",
     );
   };
-
-  useEffect(() => {
-    if (expandingInput) {
-      autosizeMobileCommandTextarea(nodeRef.current);
-    }
-  }, [expandingInput, controlsScalePercent, value]);
 
   if (expandingInput) {
     return (

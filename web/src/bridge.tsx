@@ -211,14 +211,21 @@ export function BridgeProvider({ children }: { children: ReactNode }) {
         return current;
       }
       const enabledIds = new Set(current.enabledBridgeIds);
+      let backends = current.backends;
       if (enabled) {
         enabledIds.add(bridgeId);
+        // Persist discovered bridges when enabled to prevent loss on reload.
+        const discoveredProfile = backends.find((b) => b.id === bridgeId && b.discovered);
+        if (discoveredProfile) {
+          const persistedProfile = { ...discoveredProfile, discovered: undefined };
+          backends = [...current.backends.filter((b) => b.id !== bridgeId), persistedProfile];
+        }
       } else {
         enabledIds.delete(bridgeId);
       }
       const enabledBridgeIds = normalizeEnabledBridgeIds(
         [...enabledIds],
-        current.backends,
+        backends,
         defaultBridgeMode() === "same-origin",
       );
       const lastSelectedBridgeId =
@@ -229,7 +236,7 @@ export function BridgeProvider({ children }: { children: ReactNode }) {
         ...current,
         enabledBridgeIds,
         lastSelectedBridgeId,
-        backends: current.backends,
+        backends,
       };
     });
   }, []);
@@ -635,7 +642,7 @@ export async function fetchDiscoveredBridges(): Promise<BridgeBackendProfile[]> 
       try {
         const baseUrl = normalizeBridgeBaseUrl(entry.url);
         profiles.push({
-          id: createBackendId(),
+          id: entry.id as BridgeId,
           name: displayNameFromUrl(baseUrl),
           baseUrl,
           discovered: true,
@@ -660,6 +667,7 @@ export function mergeBridges(
   for (const discovered_backend of discovered) {
     if (!storedUrls.has(discovered_backend.baseUrl)) {
       result.push(discovered_backend);
+      storedUrls.add(discovered_backend.baseUrl);
     }
   }
 
