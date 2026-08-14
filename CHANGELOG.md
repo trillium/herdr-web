@@ -43,6 +43,7 @@ Files: CHANGELOG.md, AGENTS.md, web/src/App.tsx, web/src/paneSearch.ts, bridge/s
   bar, layout, styling, and key handling — parlay owns input everywhere. Renamed `ParlayMobileInput`
   → `ParlayInput` to reflect that it is no longer mobile-specific. Terminal focus-on-attach
   (`autoFocus`) and wheel scroll speed remain tuned per pointer device.
+  [PR #22](https://github.com/trillium/herdr-web/pull/22)
 - Made `@parlay/client` a permanently optional, local-only, never-published dependency so fresh
   worktrees and CI build cleanly when the local `web/local-deps/parlay-client` symlink is absent.
   It is no longer referenced in `web/package.json`/`web/package-lock.json` (so `npm ci` never
