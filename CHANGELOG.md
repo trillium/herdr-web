@@ -52,6 +52,7 @@ Files: CHANGELOG.md, AGENTS.md, web/src/App.tsx, web/src/paneSearch.ts, bridge/s
   reports it in `GET /api/capabilities` as `tailnet_name`, resolving it at most once and caching
   the result. When Tailscale is absent, stopped, or the machine is not on a tailnet, the field is
   omitted and the UI falls back to the previous "Same origin" behavior.
+  [PR #23](https://github.com/trillium/herdr-web/pull/23)
 - Made `@parlay/client` a permanently optional, local-only, never-published dependency so fresh
   worktrees and CI build cleanly when the local `web/local-deps/parlay-client` symlink is absent.
   It is no longer referenced in `web/package.json`/`web/package-lock.json` (so `npm ci` never
