@@ -10,7 +10,10 @@ import {
   TextCursorInput,
   X,
 } from "lucide-react";
+import ConnectionConflictCard from "./ConnectionConflictCard";
 import {
+
+
   useCallback,
   useEffect,
   useId,
@@ -119,6 +122,12 @@ type Props = {
   onNextAgentPane?: () => void;
   /** Return to the previous agent pane (mobile "previous agent" command). */
   onPrevAgentPane?: () => void;
+  /** Whether to maintain a hidden plain-text mirror of the visible terminal viewport. */
+  terminalScreenReaderText?: boolean;
+  /** Pane-specific accessible name for the terminal and its screen mirror. */
+  accessibilityLabel?: string;
+  /** Whether this is the currently selected terminal in a split. */
+  selected?: boolean;
 };
 
 type UploadCandidate = {
@@ -185,6 +194,9 @@ export function TerminalView({
   focusToken = 0,
   onNextAgentPane = () => {},
   onPrevAgentPane = () => {},
+  terminalScreenReaderText = false,
+  accessibilityLabel = "Terminal",
+  selected = false,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLElement | null>(null);
@@ -213,6 +225,7 @@ export function TerminalView({
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>("idle");
   const [closeReason, setCloseReason] = useState<string | null>(null);
   const [rendererReady, setRendererReady] = useState<TerminalRendererReady | null>(null);
+  const [accessibleScreen, setAccessibleScreen] = useState("");
   const [hasAttachedForTerminal, setHasAttachedForTerminal] = useState(false);
   const [showConnectionOverlay, setShowConnectionOverlay] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
@@ -503,6 +516,7 @@ export function TerminalView({
     overlayTerminalIdRef.current = terminalId;
     rendererReadyRef.current = null;
     setRendererReady(null);
+    setAccessibleScreen("");
     setHasAttachedForTerminal(false);
     setShowConnectionOverlay(false);
     setCloseReason(null);
@@ -639,6 +653,27 @@ export function TerminalView({
     pane?.terminal_id,
     sendTerminalInputData,
   ]);
+
+  useEffect(() => {
+    setAccessibleScreen("");
+    const ready = rendererReady;
+    if (!terminalScreenReaderText || !ready) {
+      ready?.renderer.setAccessibleScreenListener(null);
+      return;
+    }
+
+    const { renderer, generation, terminalId } = ready;
+    renderer.setAccessibleScreenListener((text) => {
+      if (
+        rendererRef.current === renderer &&
+        rendererGenerationRef.current === generation &&
+        terminalIdRef.current === terminalId
+      ) {
+        setAccessibleScreen(text);
+      }
+    });
+    return () => renderer.setAccessibleScreenListener(null);
+  }, [rendererReady, terminalScreenReaderText]);
 
   useEffect(() => {
     const terminalId = pane?.terminal_id ?? null;
@@ -1374,7 +1409,8 @@ export function TerminalView({
     <section
       ref={stageRef}
       className="terminal-stage"
-      aria-label="Selected pane terminal"
+      aria-label={accessibilityLabel}
+      aria-current={selected ? "true" : undefined}
       onDragOverCapture={(event) => {
         if (event.dataTransfer.types.includes("Files")) {
           event.preventDefault();
@@ -1384,6 +1420,17 @@ export function TerminalView({
       onPasteCapture={handlePaste}
     >
       <div ref={hostRef} className="terminal-host" />
+      {pane && terminalScreenReaderText ? (
+        <div
+          className="terminal-accessible-screen sr-only"
+          role="region"
+          tabIndex={-1}
+          aria-label={`${accessibilityLabel} screen contents`}
+          aria-live="off"
+        >
+          {accessibleScreen}
+        </div>
+      ) : null}
       <input
         ref={fileInputRef}
         className="terminal-file-input"
@@ -1399,6 +1446,11 @@ export function TerminalView({
           {terminalConnectionCopy(connectionState, closeReason, hasAttachedForTerminal)}
         </div>
       ) : null}
+      {pane && (
+        <div className="terminal-connection-panel">
+          <ConnectionConflictCard terminalId={pane.terminal_id} httpUrl={httpUrl} />
+        </div>
+      )}
       {uploadStatus ? (
         <div className="terminal-upload-status" role="status" aria-live="polite">
           {uploadStatus}
@@ -1514,7 +1566,7 @@ function MobileSelectionActions({
   );
 }
 
-function MobileTerminalControls({
+export function MobileTerminalControls({
   commandInputRef,
   disabled,
   uploadDisabled,
@@ -1561,18 +1613,27 @@ function MobileTerminalControls({
   const setCommandInputNode = (node: HTMLInputElement | HTMLTextAreaElement | null) => {
     commandInputRef.current = node;
   };
-  const submit = () => {
-    onSubmitCommand(value);
+  const clearCommandInput = () => {
     setValue("");
-    setFieldKey((k) => k + 1);
+    const node = commandInputRef.current;
+    if (node) {
+      node.value = "";
+      node.defaultValue = "";
+    }
+    setFieldKey((key) => key + 1);
+  };
+  const submit = () => {
+    const command = value;
+    clearCommandInput();
+    onSubmitCommand(command);
   };
   const stage = () => {
     if (value.length === 0) {
       return;
     }
-    onStageCommand(value);
-    setValue("");
-    setFieldKey((k) => k + 1);
+    const command = value;
+    clearCommandInput();
+    onStageCommand(command);
   };
   const sendKey = (key: TerminalKey) => {
     onInput(ctrlLatch && key.ctrlData ? key.ctrlData : key.data);
@@ -1582,10 +1643,18 @@ function MobileTerminalControls({
   };
 
   useLayoutEffect(() => {
+    const node = commandInputRef.current;
+    if (fieldKey > 0 && node) {
+      node.value = "";
+      node.defaultValue = "";
+    }
+  }, [commandInputRef, fieldKey]);
+
+  useLayoutEffect(() => {
     if (expandingInput) {
       autosizeMobileCommandTextarea(commandInputRef.current);
     }
-  }, [commandInputRef, controlsScalePercent, expandingInput, value]);
+  }, [commandInputRef, controlsScalePercent, expandingInput, fieldKey, value]);
 
   useLayoutEffect(() => {
     const root = rootRef.current;
@@ -1861,12 +1930,40 @@ function terminalSocketUrl(
   coalesceMs: number,
   requestGzipOutput: boolean,
 ) {
+  // Detect device/client type
+  const ua = navigator.userAgent.toLowerCase();
+  let deviceType = "browser";
+  let deviceName = "web";
+
+  if (ua.includes("ipad")) {
+    deviceType = "tablet";
+    deviceName = "ipad";
+  } else if (ua.includes("iphone")) {
+    deviceType = "mobile";
+    deviceName = "iphone";
+  } else if (ua.includes("android")) {
+    deviceType = ua.includes("tablet") ? "tablet" : "mobile";
+    deviceName = "android";
+  } else if (ua.includes("macintosh")) {
+    deviceType = "desktop";
+    deviceName = "mac";
+  } else if (ua.includes("windows")) {
+    deviceType = "desktop";
+    deviceName = "windows";
+  } else if (ua.includes("linux")) {
+    deviceType = "desktop";
+    deviceName = "linux";
+  }
+
   const params = new URLSearchParams({
     terminal_id: terminalId,
     cols: String(size.cols),
     rows: String(size.rows),
     takeover: "false",
     coalesce_ms: String(coalesceMs),
+    device_name: deviceName,
+    device_type: deviceType,
+    app_id: "herdr-web",
   });
   if (requestGzipOutput) {
     params.set("output_encoding", "gzip");
