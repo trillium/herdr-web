@@ -11,8 +11,6 @@ import {
   X,
 } from "lucide-react";
 import {
-  lazy,
-  Suspense,
   useCallback,
   useEffect,
   useId,
@@ -73,9 +71,7 @@ import type {
 } from "./mobileTerminalPrefs";
 import type { PaneInfo } from "./types";
 
-const ParlayInput = lazy(() =>
-  import("./ParlayInput").then((mod) => ({ default: mod.ParlayInput })),
-);
+import { ParlayInput } from "./ParlayInput";
 
 type Props = {
   pane: PaneInfo | null;
@@ -1559,6 +1555,7 @@ function MobileTerminalControls({
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [value, setValue] = useState("");
+  const [fieldKey, setFieldKey] = useState(0);
   const [expanded, setExpanded] = useState(false);
   const [ctrlLatch, setCtrlLatch] = useState(false);
   const setCommandInputNode = (node: HTMLInputElement | HTMLTextAreaElement | null) => {
@@ -1567,6 +1564,7 @@ function MobileTerminalControls({
   const submit = () => {
     onSubmitCommand(value);
     setValue("");
+    setFieldKey((k) => k + 1);
   };
   const stage = () => {
     if (value.length === 0) {
@@ -1574,6 +1572,7 @@ function MobileTerminalControls({
     }
     onStageCommand(value);
     setValue("");
+    setFieldKey((k) => k + 1);
   };
   const sendKey = (key: TerminalKey) => {
     onInput(ctrlLatch && key.ctrlData ? key.ctrlData : key.data);
@@ -1765,13 +1764,14 @@ function MobileTerminalControls({
         >
           <Smartphone size={15} />
         </button>
-        <Suspense fallback={null}>
-          <ParlayInput
+        <ParlayInput
+            key={fieldKey}
             value={value}
             onValueChange={setValue}
             onVoiceSubmit={(text) => {
               onSubmitCommand(text);
               setValue("");
+              setFieldKey((k) => k + 1);
             }}
             onNextAgent={onNextAgentPane}
             onPrevAgent={onPrevAgentPane}
@@ -1782,7 +1782,6 @@ function MobileTerminalControls({
             onKeyDown={onCommandTextareaKeyDown}
             inputRef={setCommandInputNode}
           />
-        </Suspense>
         <button
           className="term-send term-stage-command"
           type="button"
