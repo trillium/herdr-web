@@ -5221,7 +5221,6 @@ fn open_terminal_attach(
                 | ServerMessage::WindowTitle { .. }
                 | ServerMessage::ReloadSoundConfig
                 | ServerMessage::MouseCapture { .. }
-                | ServerMessage::KittyKeyboardReportAll { .. }
                 | ServerMessage::PrefixInputSource { .. }
                 | ServerMessage::Frame(_)
                 | ServerMessage::Graphics { .. } => {}
@@ -6117,7 +6116,8 @@ mod tests {
 
     #[test]
     fn web_snapshot_adapter_uses_focused_pane_before_shared_selection_exists() {
-        let snapshot = web_snapshot_from_session_snapshot(test_session_snapshot(), None);
+        let snapshot =
+            web_snapshot_from_session_snapshot(test_session_snapshot(), None, Vec::new());
 
         assert_eq!(snapshot.selected_pane_id.as_deref(), Some("pane-1"));
     }
@@ -7125,39 +7125,12 @@ mod tests {
     }
 
     #[test]
-    fn terminal_attach_protocol_requires_current_snapshot_protocol() {
-        assert!(supported_terminal_attach_protocol(PROTOCOL_VERSION));
-        assert!(supported_terminal_attach_protocol(
-            MIN_TERMINAL_ATTACH_PROTOCOL
-        ));
-        assert!(!supported_terminal_attach_protocol(
-            MIN_TERMINAL_ATTACH_PROTOCOL - 1
-        ));
-        assert!(!supported_terminal_attach_protocol(PROTOCOL_VERSION + 1));
-    }
-
-    #[test]
-    fn terminal_attach_accepts_daemon_protocol_19() {
-        assert_eq!(PROTOCOL_VERSION, 19);
-        assert_eq!(MIN_TERMINAL_ATTACH_PROTOCOL, 16);
-
-        assert!(supported_terminal_attach_protocol(19));
-        assert!(supported_terminal_attach_protocol(16));
-        assert!(supported_terminal_attach_protocol(17));
-
-        assert_eq!(daemon_protocol_from_status(runtime_status(19)).unwrap(), 19);
-
-        assert!(!supported_terminal_attach_protocol(15));
-        assert_eq!(
-            unsupported_daemon_protocol_message(15),
-            "Herdr daemon protocol 15 is too old for herdr-web; need protocol 16 or newer"
-        );
-
-        assert!(!supported_terminal_attach_protocol(20));
-        assert_eq!(
-            unsupported_daemon_protocol_message(20),
-            "Herdr daemon protocol 20 is newer than this herdr-web bridge supports; need protocol 19 or older"
-        );
+    fn terminal_attach_protocol_requires_exact_protocol_version() {
+        assert_eq!(PROTOCOL_VERSION, 20);
+        // Only the exact protocol version is accepted.
+        assert!(validated_daemon_protocol(runtime_status("0.8.0", PROTOCOL_VERSION)).is_ok());
+        assert!(validated_daemon_protocol(runtime_status("0.8.0", PROTOCOL_VERSION - 1)).is_err());
+        assert!(validated_daemon_protocol(runtime_status("0.8.0", PROTOCOL_VERSION + 1)).is_err());
     }
 
     #[test]

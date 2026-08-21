@@ -1,7 +1,7 @@
 import react from "@vitejs/plugin-react";
 import { configDefaults, defineConfig } from "vitest/config";
 import type { Plugin } from "vite";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
 
 const bridgeTarget = process.env.HERDR_WEB_BRIDGE ?? "http://127.0.0.1:8787";
@@ -25,14 +25,28 @@ const allowedHosts = parseAllowedHosts(process.env.HERDR_WEB_ALLOWED_HOSTS);
 // then falls back to a plain input when the module cannot be resolved at runtime. This resolver
 // only serves the symlink-present dev/test path — do not add a registry version.
 function parlayClientResolver(): Plugin {
-  const parlayPath = resolve(__dirname, "local-deps/parlay-client");
-  const hasLocalParlay = existsSync(parlayPath);
+  const parlayDir = resolve(process.cwd(), "local-deps/parlay-client");
+  let parlayEntry: string | null = null;
+  if (existsSync(parlayDir)) {
+    try {
+      const pkg = JSON.parse(readFileSync(resolve(parlayDir, "package.json"), "utf-8")) as {
+        main?: string;
+      };
+      const main = pkg.main ?? "index.js";
+      const entry = resolve(parlayDir, main);
+      if (existsSync(entry)) {
+        parlayEntry = entry;
+      }
+    } catch {
+      // parlay-client package.json unreadable; leave parlayEntry null
+    }
+  }
 
   return {
     name: "parlay-client-resolver",
     resolveId(id) {
-      if (id === "@parlay/client" && hasLocalParlay) {
-        return parlayPath;
+      if (id === "@parlay/client" && parlayEntry) {
+        return parlayEntry;
       }
     },
   };

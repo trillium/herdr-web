@@ -108,12 +108,18 @@ async function renderControls(expandingInput: boolean) {
         expandingInput={expandingInput}
         enterNewline={false}
         controlsScalePercent={100}
+        compactControls={false}
+        onCompactControlsChange={vi.fn()}
+        mobileModeActive={false}
+        onToggleMobileMode={vi.fn()}
         onControlsHeightChange={vi.fn()}
         onInput={vi.fn()}
         onTerminalFocus={vi.fn()}
         onUpload={vi.fn()}
         onStageCommand={onStageCommand}
         onSubmitCommand={onSubmitCommand}
+        onNextAgentPane={vi.fn()}
+        onPrevAgentPane={vi.fn()}
       />,
     );
   });
