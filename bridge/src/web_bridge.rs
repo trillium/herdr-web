@@ -3292,15 +3292,31 @@ async fn tailnet_name_cached() -> Option<String> {
 /// not something the captain asked to connect to by name). Tailscale being absent, stopped, or
 /// this machine not being on a tailnet are all normal states that yield `None`, never an error.
 fn resolve_tailnet_name() -> Option<String> {
-    let output = std::process::Command::new("tailscale")
-        .args(["status", "--json"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+    // Absolute candidates first: under launchd the GUI-app CLI and the
+    // Homebrew wrapper are frequently invisible despite PATH fixes.
+    let candidates = [
+        "/usr/local/bin/tailscale",
+        "/opt/homebrew/bin/tailscale",
+        "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+        "tailscale",
+    ];
+    for candidate in candidates {
+        let Ok(output) = std::process::Command::new(candidate)
+            .args(["status", "--json"])
+            .output()
+        else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        if let Ok(stdout) = String::from_utf8(output.stdout) {
+            if let Some(name) = parse_tailnet_name_from_status(&stdout) {
+                return Some(name);
+            }
+        }
     }
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    parse_tailnet_name_from_status(&stdout)
+    None
 }
 
 /// Parses the tailnet DNS name out of `tailscale status --json` output.
