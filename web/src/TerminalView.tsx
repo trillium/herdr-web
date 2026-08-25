@@ -124,6 +124,8 @@ type Props = {
   onPrevAgentPane?: () => void;
   /** Whether to maintain a hidden plain-text mirror of the visible terminal viewport. */
   terminalScreenReaderText?: boolean;
+  /** Talk Back: receives screen-reader-safe plain text after terminal writes (project-jzd). */
+  onAccessibleTextChange?: (text: string) => void;
   /** Pane-specific accessible name for the terminal and its screen mirror. */
   accessibilityLabel?: string;
   /** Whether this is the currently selected terminal in a split. */
@@ -195,6 +197,7 @@ export function TerminalView({
   onNextAgentPane = () => {},
   onPrevAgentPane = () => {},
   terminalScreenReaderText = false,
+  onAccessibleTextChange,
   accessibilityLabel = "Terminal",
   selected = false,
 }: Props) {
@@ -657,7 +660,8 @@ export function TerminalView({
   useEffect(() => {
     setAccessibleScreen("");
     const ready = rendererReady;
-    if (!terminalScreenReaderText || !ready) {
+    const talkBackActive = typeof onAccessibleTextChange === "function";
+    if ((!terminalScreenReaderText && !talkBackActive) || !ready) {
       ready?.renderer.setAccessibleScreenListener(null);
       return;
     }
@@ -669,11 +673,14 @@ export function TerminalView({
         rendererGenerationRef.current === generation &&
         terminalIdRef.current === terminalId
       ) {
-        setAccessibleScreen(text);
+        if (terminalScreenReaderText) {
+          setAccessibleScreen(text);
+        }
+        onAccessibleTextChange?.(text);
       }
     });
     return () => renderer.setAccessibleScreenListener(null);
-  }, [rendererReady, terminalScreenReaderText]);
+  }, [rendererReady, terminalScreenReaderText, onAccessibleTextChange]);
 
   useEffect(() => {
     const terminalId = pane?.terminal_id ?? null;
