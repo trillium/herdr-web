@@ -3292,6 +3292,15 @@ async fn tailnet_name_cached() -> Option<String> {
 /// not something the captain asked to connect to by name). Tailscale being absent, stopped, or
 /// this machine not being on a tailnet are all normal states that yield `None`, never an error.
 fn resolve_tailnet_name() -> Option<String> {
+    // Explicit override wins: lets a supervisor pin the label when the
+    // Tailscale CLI belongs to a different local user than this bridge
+    // (e.g. launchd agents on shared Mac minis).
+    if let Ok(name) = std::env::var("TAILNET_NAME") {
+        let name = name.trim().to_string();
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
     // Absolute candidates first: under launchd the GUI-app CLI and the
     // Homebrew wrapper are frequently invisible despite PATH fixes.
     let candidates = [
@@ -3312,7 +3321,11 @@ fn resolve_tailnet_name() -> Option<String> {
         }
         if let Ok(stdout) = String::from_utf8(output.stdout) {
             if let Some(name) = parse_tailnet_name_from_status(&stdout) {
-                return Some(name);
+                // Captain preference (project-4ba): the SHORT host label
+                // ("macbook", "mini1") — DNSName arrives as an FQDN with a
+                // trailing root dot; keep just the first label.
+                let short = name.trim_end_matches('.').split('.').next().unwrap_or(&name);
+                return Some(short.to_string());
             }
         }
     }
