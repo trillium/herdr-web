@@ -23,12 +23,14 @@ MIN_WEB_COMPAT=1
 hosts=()
 if [ $# -gt 0 ]; then
   hosts=("$@")
-elif command -v tailscale >/dev/null 2>&1; then
+elif command -v tailscale >/dev/null 2>&1 || [ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]; then
+  TS=$(command -v tailscale || echo "/Applications/Tailscale.app/Contents/MacOS/Tailscale")
   while IFS= read -r line; do
-    # `tailscale status` lines: <hostname>\t<ip> ...
-    h=${line%%$'\t'*}
+    # `tailscale status` rows vary (tab/space separated); pick the DNS-name
+    # column: first field that is not an IP/user/OS/status token.
+    h=$(printf '%s' "$line" | awk '{for(i=1;i<=NF;i++) if ($i ~ /\./ && $i !~ /^[0-9]+\./ && $i !~ /offline|active|idle/) {print $i; exit}}')
     [ -n "$h" ] && hosts+=("$h")
-  done < <(tailscale status 2>/dev/null)
+  done < <("$TS" status 2>/dev/null)
 fi
 
 if [ ${#hosts[@]} -eq 0 ]; then
