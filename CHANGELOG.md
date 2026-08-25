@@ -19,6 +19,12 @@ Files: CHANGELOG.md, AGENTS.md, web/src/App.tsx, web/src/paneSearch.ts, bridge/s
 
 ### Added
 
+- Added Playwright-based visual-space geometry harness (`npm run test:vspace` in `web/`) that
+  asserts layout contracts for the mobile input panel at iPhone Pro Max (430×932) viewport:
+  panel height ≤ 50% of viewport, terminal area ≥ 200 px under keyboard inset, textarea width
+  dominates the input row, send button always inside viewport, special-keys strip absent when
+  compact, and expanding textarea bounded by CSS max-height — no screenshots or vision models.
+
 - Added real-time agent search/filter to the sidebar agents view: a compact text input appears
   above the agent list when any agents are present. Typing filters by agent title, meta (agent
   name + directory), workspace label, and tab label. Pressing Escape clears the filter; switching
