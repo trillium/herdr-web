@@ -55,7 +55,7 @@ function parlayClientResolver(): Plugin {
 export default defineConfig({
   plugins: [react(), parlayClientResolver()],
   test: {
-    exclude: [...configDefaults.exclude, "local-deps/**"],
+    exclude: [...configDefaults.exclude, "local-deps/**", "tests/**"],
     setupFiles: ["./src/testSetup.ts"],
   },
   server: {
