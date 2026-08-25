@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-25 — session ox-alpha
+
+Added:
+- Talk Back v1: gesture-primed speechSynthesis of the focused pane (ANSI-stripped,
+  settle-debounced), header mute toggle, device-local prefs. [project-jzd]
+- Bridge capabilities now report bridge_version / web_compat / tailnet_name;
+  sidebar same-origin entry leads with the tailnet DNS name. [project-4ba/xyq]
+- scripts/tailnet-bridge-check.sh: tailnet-wide reachability + compatibility
+  matrix, runnable from any host. Fleet deployed: macbook + mini1-3 all green.
+- vspace visual-space harness: Playwright geometry contracts for the mobile
+  input panel at 430x932 (`npm run test:vspace`), 13 specs. [project-9q9]
+
+Fixed:
+- herdr-rpc / parlay-spawn bare-sleep breakage under the sleep-guard shim;
+  worker argv hardened (--strict-mcp-config, posthog plugin disabled) so fresh
+  worktree starts no longer wedge on the MCP approval form. [robots-i07d]
 ## 2026-08-22 — session dee11f14
 
 Files: web/src/App.tsx, web/src/styles.css, CHANGELOG.md, web/src/ParlayInput.tsx, web/src/ParlayMobileInput.test.tsx, bridge/src/agent_activity.rs, bridge/src/agent_pins.rs, bridge/src/notes.rs, bridge/src/web_bridge.rs, docs/release.md
