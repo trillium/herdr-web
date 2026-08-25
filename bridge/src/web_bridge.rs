@@ -195,6 +195,11 @@ struct SnapshotTabInfo {
 
 #[derive(Debug, Serialize)]
 struct Capabilities {
+    /// Bridge crate version — surfaced in the web UI's backend entry (project-xyq).
+    bridge_version: &'static str,
+    /// Web-app compatibility floor of THIS bridge. The client (web/src/bridge.tsx
+    /// APP_MIN_WEB_COMPAT) refuses bridges reporting a lower value.
+    web_compat: u32,
     commands: &'static [&'static str],
     agent_activity: AgentActivityCapability,
     agent_pins: AgentPinsCapability,
@@ -3247,6 +3252,8 @@ async fn capabilities_handler(
 ) -> Result<Json<Capabilities>, BridgeError> {
     ensure_allowed_request(&headers, &state.request_policy)?;
     Ok(Json(Capabilities {
+        bridge_version: env!("CARGO_PKG_VERSION"),
+        web_compat: 1,
         commands: ALLOWED_COMMANDS,
         agent_activity: AgentActivityCapability { version: 1 },
         agent_pins: AgentPinsCapability { version: 1 },
