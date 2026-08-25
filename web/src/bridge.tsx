@@ -624,7 +624,10 @@ function buildAvailableRuntimes({
       createBridgeRuntime({
         id: SAME_ORIGIN_BRIDGE_ID,
         mode: "same-origin",
-        label: "Same origin",
+        // Lead with the machine's tailnet DNS name once the capability probe
+        // reports it — a name other devices on the tailnet can actually reach.
+        // Falls back to "Same origin" when Tailscale is absent or still probing.
+        label: probeStates[SAME_ORIGIN_BRIDGE_ID]?.capabilities?.tailnet_name ?? "Same origin",
         backend: null,
         baseUrl: null,
         probeState: probeStates[SAME_ORIGIN_BRIDGE_ID],
