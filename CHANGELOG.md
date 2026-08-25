@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-08-22 — session dee11f14
+
+Files: web/src/App.tsx, web/src/styles.css, CHANGELOG.md, web/src/ParlayInput.tsx, web/src/ParlayMobileInput.test.tsx, bridge/src/agent_activity.rs, bridge/src/agent_pins.rs, bridge/src/notes.rs, bridge/src/web_bridge.rs, docs/release.md
 ## 2026-08-20 — session dee11f14
 
 Files: web/src/App.tsx, web/src/styles.css, CHANGELOG.md, web/src/ParlayInput.tsx, web/src/ParlayMobileInput.test.tsx, bridge/src/agent_activity.rs, bridge/src/agent_pins.rs, bridge/src/notes.rs, bridge/src/web_bridge.rs, docs/release.md
