@@ -4239,7 +4239,7 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
         format!("web-client-{}", short_id)
     };
 
-    let session = match acquire_terminal_session(
+    let mut session = match acquire_terminal_session(
         state.clone(),
         terminal_id.clone(),
         cols,
@@ -4265,7 +4265,7 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
         debug!("Failed to register connection: {}", e);
     }
 
-    let write_tx = session.write_tx.clone();
+    let mut write_tx = session.write_tx.clone();
     let mut terminal_rx = session.output_tx.subscribe();
     if output_encoding == TerminalOutputWireEncoding::Gzip {
         let ack = Message::Text(TERMINAL_OUTPUT_GZIP_ACKNOWLEDGEMENT.into());
@@ -4276,6 +4276,7 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
     }
 
     let mut output_coalescer = TerminalOutputCoalescer::new(coalesce_window);
+    let mut resync_pending = false;
     let _ = write_tx.send(ClientMessage::Resize {
         cols,
         rows,
@@ -4309,10 +4310,32 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
                         &mut ws_sender,
                         &mut output_coalescer,
                         output_encoding,
+                        &mut resync_pending,
                     )
                     .await
                     {
                         break;
+                    }
+                    if resync_pending {
+                        resync_pending = false;
+                        match try_terminal_resync(
+                            &state,
+                            &terminal_id,
+                            cols,
+                            rows,
+                            &mut session,
+                        )
+                        .await
+                        {
+                            Some(fresh) => {
+                                write_tx = fresh.write_tx.clone();
+                                terminal_rx = fresh.output_tx.subscribe();
+                                session = fresh;
+                                output_coalescer =
+                                    TerminalOutputCoalescer::new(coalesce_window);
+                            }
+                            None => break,
+                        }
                     }
                 }
                 else => break,
@@ -4325,10 +4348,32 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
                         &mut ws_sender,
                         &mut output_coalescer,
                         output_encoding,
+                        &mut resync_pending,
                     )
                     .await
                     {
                         break;
+                    }
+                    if resync_pending {
+                        resync_pending = false;
+                        match try_terminal_resync(
+                            &state,
+                            &terminal_id,
+                            cols,
+                            rows,
+                            &mut session,
+                        )
+                        .await
+                        {
+                            Some(fresh) => {
+                                write_tx = fresh.write_tx.clone();
+                                terminal_rx = fresh.output_tx.subscribe();
+                                session = fresh;
+                                output_coalescer =
+                                    TerminalOutputCoalescer::new(coalesce_window);
+                            }
+                            None => break,
+                        }
                     }
                 }
                 Some(message) = ws_receiver.next() => {
@@ -4350,6 +4395,32 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
     }
 
     release_terminal_session(&state.terminal_sessions, &terminal_id, &session);
+}
+
+/// Performs an in-place resync for a lagged terminal stream: releases the
+/// current daemon session and attaches a fresh one so the next frames carry
+/// a clean full-screen baseline. Returns None when a fresh attach could not
+/// be established; the caller must then close the browser socket.
+async fn try_terminal_resync(
+    state: &BridgeState,
+    terminal_id: &str,
+    cols: u16,
+    rows: u16,
+    old_session: &mut SharedTerminalSession,
+) -> Option<SharedTerminalSession> {
+    release_terminal_session(&state.terminal_sessions, terminal_id, old_session);
+    match acquire_terminal_session(state.clone(), terminal_id.to_string(), cols, rows, false).await
+    {
+        Ok(fresh) => Some(fresh),
+        Err(err) => {
+            warn!(
+                terminal_id = %terminal_id,
+                err = %err,
+                "terminal resync reattach failed"
+            );
+            None
+        }
+    }
 }
 
 async fn handle_terminal_output_deadline(
@@ -4385,6 +4456,7 @@ async fn handle_terminal_output_message(
     ws_sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     output_coalescer: &mut TerminalOutputCoalescer,
     output_encoding: TerminalOutputWireEncoding,
+    resync_requested: &mut bool,
 ) -> bool {
     match output {
         Ok(TerminalOutput::Bytes(bytes)) => {
@@ -4422,11 +4494,14 @@ async fn handle_terminal_output_message(
         }
         Err(tokio::sync::broadcast::error::RecvError::Lagged(frames)) => {
             // Dropped frames would silently corrupt the stateful ANSI stream.
-            // Close the socket without a "closed" frame so the client
-            // reconnects and gets a clean repaint from a fresh attach.
+            // Flag for an in-place session resync (fresh daemon attach with a
+            // clean baseline) instead of tearing down the browser socket, so
+            // busy panes catch up without a reconnect storm. The caller
+            // performs the swap and falls back to closing on failure.
             output_coalescer.record_lagged(frames);
-            warn!(frames, "terminal output lagged; closing socket for resync");
-            false
+            warn!(frames, "terminal output lagged; resyncing in place");
+            *resync_requested = true;
+            true
         }
         Err(tokio::sync::broadcast::error::RecvError::Closed) => false,
     }
@@ -4569,7 +4644,7 @@ async fn acquire_terminal_session(
             // join the published session once it opens.
             let handshake = || -> Result<SharedTerminalSession, BridgeError> {
                 let protocol_version = terminal_attach_protocol(&state.api)?;
-                let (output_tx, _) = tokio::sync::broadcast::channel(256);
+                let (output_tx, _) = tokio::sync::broadcast::channel(4096);
                 let attach = open_terminal_attach(
                     state.client_socket_path.clone(),
                     terminal_id.clone(),
@@ -5278,6 +5353,10 @@ fn open_terminal_attach(
                 | ServerMessage::MouseCapture { .. }
                 | ServerMessage::PrefixInputSource { .. }
                 | ServerMessage::Frame(_)
+                | ServerMessage::KittyKeyboardReportAll { .. }
+                | ServerMessage::TerminalBell { .. }
+                | ServerMessage::GraphicsFile { .. }
+                | ServerMessage::GraphicsTransmissionRetired { .. }
                 | ServerMessage::Graphics { .. } => {}
             }
         }

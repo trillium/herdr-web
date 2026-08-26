@@ -659,7 +659,7 @@ function buildAvailableRuntimes({
       createBridgeRuntime({
         id,
         mode: "configured",
-        label: remote.label,
+        label: configuredBridgeLabel(remote.label),
         backend: null,
         baseUrl: null,
         proxyServerId: remote.id,
@@ -1242,9 +1242,20 @@ export async function fetchRemoteBridges(): Promise<RemoteBridgeSummary[]> {
 
 function remoteBridgeLabel(id: string, url: string): string {
   try {
-    return new URL(url).host || id;
+    return new URL(url).hostname || id;
   } catch {
     return id;
+  }
+}
+
+/// Strips an explicit port suffix from a configured bridge label so tabs
+/// read `mini1`, not `mini1:8787`.
+function configuredBridgeLabel(label: string): string {
+  const withoutScheme = label.includes("://") ? label : `http://${label}`;
+  try {
+    return new URL(withoutScheme).hostname || label.replace(/:\d+$/u, "");
+  } catch {
+    return label.replace(/:\d+$/u, "");
   }
 }
 

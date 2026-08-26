@@ -26,7 +26,7 @@ mod bridge_fixture_tests {
         let mut frame = Vec::new();
         write_message(&mut frame, &msg).unwrap();
 
-        assert_eq!(frame, vec![9, 0, 0, 0, 0, 20, 80, 24, 8, 16, 0, 0, 1]);
+        assert_eq!(frame, vec![9, 0, 0, 0, 0, 20, 80, 24, 8, 16, 0, 0, 2]);
         let decoded: ClientMessage = read_message(&mut frame.as_slice(), MAX_FRAME_SIZE).unwrap();
         assert_eq!(decoded, msg);
     }
