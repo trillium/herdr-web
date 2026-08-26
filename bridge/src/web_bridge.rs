@@ -4476,6 +4476,25 @@ async fn acquire_terminal_session(
                     BridgeError::Protocol("terminal session lock poisoned".to_string())
                 })?;
                 if let Some(session) = sessions.active.get(&terminal_id) {
+                    if session.connection_closed.is_closed() {
+                        // The daemon connection died (ServerShutdown or I/O error)
+                        // while this session was still in the active map.  A new
+                        // viewer must not inherit this dead connection — it would
+                        // subscribe to the broadcast channel after the Close event
+                        // was already sent, receive nothing, and be stuck forever.
+                        // Evict the stale session and fall through to open a fresh
+                        // daemon attach below.
+                        let dead = session.clone();
+                        sessions.active.remove(&terminal_id);
+                        drop(sessions);
+                        // Best-effort Detach so the writer thread drains and exits.
+                        let _ = dead.write_tx.send(ClientMessage::Detach);
+                        warn!(
+                            terminal_id = %terminal_id,
+                            "evicting dead terminal session before fresh attach"
+                        );
+                        continue 'attach;
+                    }
                     session.client_count.fetch_add(1, Ordering::AcqRel);
                     return Ok(session.clone());
                 }
@@ -5881,6 +5900,98 @@ mod tests {
         assert!(sessions.lock().unwrap().attaching.is_empty());
     }
 
+    /// Simulate the eviction half of the double-viewer fix: if the active
+    /// session for a terminal has a closed daemon connection, a new viewer
+    /// must not inherit it.  The session should be removed from active so the
+    /// next acquire falls through to a fresh daemon attach.
+    #[test]
+    fn dead_active_session_is_detected_and_must_be_evicted() {
+        let (session, _rx) = test_shared_terminal_session();
+        // Mark the daemon connection as closed (simulates ServerShutdown from
+        // the daemon or an I/O error on the attach socket).
+        session.connection_closed.mark_closed();
+
+        let sessions_map = Mutex::new(TerminalSessions::default());
+        sessions_map
+            .lock()
+            .unwrap()
+            .active
+            .insert("term-1".to_string(), session.clone());
+
+        // A new viewer would check is_closed() before joining.  Exercise that
+        // check directly, the same way acquire_terminal_session does.
+        let is_dead = sessions_map
+            .lock()
+            .unwrap()
+            .active
+            .get("term-1")
+            .is_some_and(|s| s.connection_closed.is_closed());
+        assert!(is_dead, "dead session must be detected before a second viewer joins");
+
+        // Evict just like the fixed acquire_terminal_session does.
+        sessions_map.lock().unwrap().active.remove("term-1");
+        assert!(
+            sessions_map.lock().unwrap().active.is_empty(),
+            "active map must be empty after eviction so next acquire gets a fresh session"
+        );
+    }
+
+    /// The full double-viewer scenario at the building-block level:
+    ///
+    /// 1. First viewer holds a live session (connection_closed = false).
+    /// 2. Daemon closes the connection → connection_closed becomes true.
+    /// 3. Second viewer arrives before the first viewer's release cleans up.
+    ///
+    /// Before the fix the second viewer was handed the same dead session,
+    /// subscribed to output_tx *after* the Close event was broadcast, and
+    /// received nothing — getting stuck forever.  After the fix the second
+    /// viewer evicts the dead session from active and opens a fresh attach.
+    ///
+    /// This test verifies the critical property: a subscriber that joins
+    /// *after* TerminalOutput::Close has been sent gets no close event
+    /// (broadcast channels don't replay), so the eviction is essential.
+    #[test]
+    fn late_subscriber_misses_close_event_without_eviction() {
+        let (output_tx, _) = tokio::sync::broadcast::channel::<TerminalOutput>(8);
+
+        // Simulate daemon sending ServerShutdown: broadcast the close event.
+        let _ = output_tx.send(TerminalOutput::Close("not pending terminal attach".to_string()));
+
+        // A "second viewer" subscribes AFTER the close was sent.
+        let mut late_rx = output_tx.subscribe();
+
+        // Without eviction the late subscriber gets no event from a non-empty
+        // channel that has already sent its only message — it would block.
+        // try_recv() returns Err::Empty (not a Close), proving the subscriber
+        // is stuck and will never unblock naturally.
+        use tokio::sync::broadcast::error::TryRecvError;
+        assert!(
+            matches!(late_rx.try_recv(), Err(TryRecvError::Empty)),
+            "late subscriber misses the already-sent Close; eviction is required to unblock it"
+        );
+    }
+
+    /// Complement to the above: a subscriber that joins *before* the close
+    /// event receives it correctly and can exit cleanly without eviction.
+    #[test]
+    fn early_subscriber_receives_close_event() {
+        let (output_tx, _) = tokio::sync::broadcast::channel::<TerminalOutput>(8);
+
+        // "First viewer" subscribes before the daemon closes.
+        let mut early_rx = output_tx.subscribe();
+
+        // Daemon sends ServerShutdown.
+        let _ = output_tx.send(TerminalOutput::Close("not pending terminal attach".to_string()));
+
+        // First viewer receives the close event.
+        use tokio::sync::broadcast::error::TryRecvError;
+        let event = early_rx.try_recv();
+        assert!(
+            matches!(event, Ok(TerminalOutput::Close(_))),
+            "early subscriber must receive the Close event and exit cleanly"
+        );
+    }
+
     #[test]
     fn connection_closed_wait_times_out_while_open() {
         let connection = ConnectionClosed::default();
@@ -5958,6 +6069,112 @@ mod tests {
         // quickly; before the fix this only resolved by drain timeout.
         assert!(attach.connection_closed.wait_closed(Duration::from_secs(2)));
         assert!(daemon_rx.recv_timeout(Duration::from_secs(2)).unwrap());
+        daemon.join().unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+    }
+
+    /// Simulates the "not pending terminal attach" double-viewer failure at the
+    /// socket level:
+    ///
+    /// 1. The bridge opens an attach connection; the daemon immediately sends
+    ///    ServerShutdown (the "not pending" rejection).
+    /// 2. The reader thread receives the ServerShutdown, broadcasts
+    ///    TerminalOutput::Close, and marks connection_closed.
+    /// 3. An early subscriber (first viewer) receives the Close event.
+    /// 4. A late subscriber (second viewer) that joins after the Close was sent
+    ///    misses it — demonstrating why the eviction in acquire_terminal_session
+    ///    is required: without it the second viewer would be stuck permanently.
+    #[cfg(unix)]
+    #[test]
+    fn daemon_shutdown_after_attach_propagates_close_to_first_viewer_only() {
+        let dir = std::env::temp_dir();
+        let dir = if dir.as_os_str().len() <= 40 {
+            dir
+        } else {
+            PathBuf::from("/tmp")
+        };
+        let socket_path = dir.join(format!(
+            "herdr-web-shutdown-test-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+
+        // Fake daemon: accept Hello/Welcome/AttachTerminal, then immediately
+        // send ServerShutdown as the real daemon does for "not pending" terminals.
+        let daemon = thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let _hello: ClientMessage = protocol::read_message(&mut sock, MAX_FRAME_SIZE).unwrap();
+            protocol::write_message(
+                &mut sock,
+                &ServerMessage::Welcome {
+                    version: PROTOCOL_VERSION,
+                    encoding: RenderEncoding::TerminalAnsi,
+                    error: None,
+                },
+            )
+            .unwrap();
+            let _attach: ClientMessage =
+                protocol::read_message(&mut sock, MAX_FRAME_SIZE).unwrap();
+            // Immediate rejection — same as daemon saying "not pending".
+            protocol::write_message(
+                &mut sock,
+                &ServerMessage::ServerShutdown {
+                    reason: Some("not pending terminal attach".to_string()),
+                },
+            )
+            .unwrap();
+            // Daemon keeps socket open (real daemon behavior); bridge must close it.
+            let _ = protocol::read_message::<_, ClientMessage>(&mut sock, MAX_FRAME_SIZE);
+        });
+
+        let (output_tx, _) = tokio::sync::broadcast::channel(8);
+        // First viewer subscribes before open_terminal_attach is called.
+        let mut first_viewer_rx = output_tx.subscribe();
+
+        let attach = open_terminal_attach(
+            socket_path.clone(),
+            "term-test".to_string(),
+            80,
+            24,
+            false,
+            PROTOCOL_VERSION,
+            output_tx.clone(),
+        )
+        .unwrap();
+
+        // Wait for the daemon to have sent ServerShutdown and the reader thread
+        // to have processed it.
+        assert!(
+            attach
+                .connection_closed
+                .wait_closed(Duration::from_secs(2)),
+            "connection_closed must fire after daemon sends ServerShutdown"
+        );
+
+        // First viewer receives the Close event.
+        use tokio::sync::broadcast::error::TryRecvError;
+        assert!(
+            matches!(
+                first_viewer_rx.try_recv(),
+                Ok(TerminalOutput::Close(ref r)) if r.contains("not pending")
+            ),
+            "first viewer must receive TerminalOutput::Close with the daemon's rejection reason"
+        );
+
+        // Second viewer subscribes AFTER the close was already sent.
+        let mut second_viewer_rx = output_tx.subscribe();
+        // The second viewer misses the already-sent Close event because
+        // tokio broadcast channels do not replay past messages.
+        // This is the stuck-forever case that requires eviction in
+        // acquire_terminal_session.
+        assert!(
+            matches!(second_viewer_rx.try_recv(), Err(TryRecvError::Empty)),
+            "second viewer (late subscriber) must miss the already-sent Close; \
+             eviction in acquire_terminal_session is required to handle this"
+        );
+
         daemon.join().unwrap();
         let _ = std::fs::remove_file(&socket_path);
     }

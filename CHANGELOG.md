@@ -146,6 +146,13 @@ Files: CHANGELOG.md, AGENTS.md, web/src/App.tsx, web/src/paneSearch.ts, bridge/s
   itself with an `--allow-origin` flag for the serving hostname.
 - Join canvas-wrapped HTTP(S) URLs when copying from a mobile terminal.
   [PR #61](https://github.com/kcosr/herdr-web/pull/61)
+- Fixed multi-viewer terminal attach getting stuck when the underlying daemon
+  connection died (e.g. after a daemon restart): the bridge now evicts a dead
+  shared session before a new browser viewer joins it, rather than handing the
+  new viewer a permanently-silent broadcast channel that never delivers a close
+  event. Viewers that connected before the daemon close still receive it
+  correctly; viewers that arrive after now get a fresh daemon attach instead of
+  being wedged. [robots-v841]
 
 ### Removed
 
