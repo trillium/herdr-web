@@ -1,45 +1,36 @@
 # Changelog
 
-## 2026-08-25 — session ox-alpha
-
-Added:
-- Talk Back v1: gesture-primed speechSynthesis of the focused pane (ANSI-stripped,
-  settle-debounced), header mute toggle, device-local prefs. [project-jzd]
-- Bridge capabilities now report bridge_version / web_compat / tailnet_name;
-  sidebar same-origin entry leads with the tailnet DNS name. [project-4ba/xyq]
-- scripts/tailnet-bridge-check.sh: tailnet-wide reachability + compatibility
-  matrix, runnable from any host. Fleet deployed: macbook + mini1-3 all green.
-- vspace visual-space harness: Playwright geometry contracts for the mobile
-  input panel at 430x932 (`npm run test:vspace`), 13 specs. [project-9q9]
-
-Fixed:
-- herdr-rpc / parlay-spawn bare-sleep breakage under the sleep-guard shim;
-  worker argv hardened (--strict-mcp-config, posthog plugin disabled) so fresh
-  worktree starts no longer wedge on the MCP approval form. [robots-i07d]
-## 2026-08-22 — session dee11f14
-
-Files: web/src/App.tsx, web/src/styles.css, CHANGELOG.md, web/src/ParlayInput.tsx, web/src/ParlayMobileInput.test.tsx, bridge/src/agent_activity.rs, bridge/src/agent_pins.rs, bridge/src/notes.rs, bridge/src/web_bridge.rs, docs/release.md
-## 2026-08-20 — session dee11f14
-
-Files: web/src/App.tsx, web/src/styles.css, CHANGELOG.md, web/src/ParlayInput.tsx, web/src/ParlayMobileInput.test.tsx, bridge/src/agent_activity.rs, bridge/src/agent_pins.rs, bridge/src/notes.rs, bridge/src/web_bridge.rs, docs/release.md
-
-## 2026-08-17 — session feb0abf4
-
-Files: bridge/src/web_bridge.rs
-## 2026-08-04 — session 573726b5
-
-Files: CHANGELOG.md, AGENTS.md, web/src/App.tsx, web/src/paneSearch.ts, bridge/src/web_bridge.rs
 ## [Unreleased]
 
 ### Breaking Changes
 
+- Reconciled this fork's `main` with upstream `kcosr/herdr-web` `v0.5.0`. The bridge now requires
+  Herdr `v0.8.2` or newer reporting terminal protocol `20`; the fork's previous `v0.8.0`/protocol
+  `19` baseline (and its wider `16..=19` accept range) is gone, so Herdr `v0.8.0`/`v0.8.1` daemons
+  are rejected at startup. Upgrade Herdr before upgrading the bridge.
+
 ### Added
+
+- Added Talk Back v1: gesture-primed `speechSynthesis` narration of the focused pane. Output is
+  ANSI-stripped and settle-debounced so it speaks finished lines rather than every redraw, with a
+  mute toggle in the header and device-local persisted preferences.
+
+- Added `scripts/tailnet-bridge-check.sh`, a tailnet-wide bridge reachability and version
+  compatibility matrix runnable from any host, plus `scripts/doctor.sh` for local environment
+  checks.
 
 - Added Playwright-based visual-space geometry harness (`npm run test:vspace` in `web/`) that
   asserts layout contracts for the mobile input panel at iPhone Pro Max (430×932) viewport:
   panel height ≤ 50% of viewport, terminal area ≥ 200 px under keyboard inset, textarea width
   dominates the input row, send button always inside viewport, special-keys strip absent when
   compact, and expanding textarea bounded by CSS max-height — no screenshots or vision models.
+
+- Added a light/dark theme toggle (Sun/Moon button in the switcher header, next to
+  Settings/Refresh). Light mode uses the Catppuccin Latte palette; the choice persists with the
+  other display preferences and is applied on load. The app UI switches immediately; a terminal
+  pane keeps the palette it was created with and adopts the new theme the next time it is created
+  (new tab, reconnect, or reload), because the terminal's colors are fixed when it starts. Live
+  terminal color-sync is tracked as a follow-up.
 
 - Added real-time agent search/filter to the sidebar agents view: a compact text input appears
   above the agent list when any agents are present. Typing filters by agent title, meta (agent
@@ -71,6 +62,10 @@ Files: CHANGELOG.md, AGENTS.md, web/src/App.tsx, web/src/paneSearch.ts, bridge/s
   forwarded. [PR #11](https://github.com/trillium/herdr-web/pull/11)
 - The mobile command input is now backed by a locally running parlay server for phrase-triggered
   voice submit, replacing the previous native text input.
+- Added a bundled JetBrainsMono Nerd Font Mono fallback for special terminal and LLM output glyphs
+  on devices without an accessible Nerd Font.
+  [PR #74](https://github.com/kcosr/herdr-web/pull/74), contributed by
+  [Craig P. Motlin (@motlin)](https://github.com/motlin).
 
 ### Changed
 
@@ -94,9 +89,10 @@ Files: CHANGELOG.md, AGENTS.md, web/src/App.tsx, web/src/paneSearch.ts, bridge/s
 - Made `@parlay/client` a permanently optional, local-only, never-published dependency so fresh
   worktrees and CI build cleanly when the local `web/local-deps/parlay-client` symlink is absent.
   It is no longer referenced in `web/package.json`/`web/package-lock.json` (so `npm ci` never
-  resolves it from a registry); the Vite resolver picks up the symlink for `vite dev`/tests when
-  present, production builds externalize it, and `ParlayInput`'s guarded dynamic import falls
-  back to a plain text input at runtime when the module is absent. Removed the dead `vite.config.ts`
+  resolves it from a registry); the Vite resolver picks up the symlink for `vite dev`, tests, and
+  production builds when present, builds without the symlink externalize it, and `ParlayInput`'s
+  guarded dynamic import falls back to a plain text input at runtime when the module is absent.
+  Removed the dead `vite.config.ts`
   stub module and the duplicate `web/src/@parlay-client.d.ts` type shim (the canonical ambient
   declaration is `web/types/parlay-client.d.ts`).
   [PR #18](https://github.com/trillium/herdr-web/pull/18)
@@ -113,6 +109,21 @@ Files: CHANGELOG.md, AGENTS.md, web/src/App.tsx, web/src/paneSearch.ts, bridge/s
   [PR #60](https://github.com/kcosr/herdr-web/pull/60)
 
 ### Fixed
+
+- Fixed a typing hitch on desktop while an agent was actively producing output. Snapshot updates
+  (the 10s poll, agent-status activity bursts, and shared selection events) reconciled the whole
+  app tree synchronously and blocked terminal keystroke handling on the main thread. Those updates
+  are now applied as low-priority React transitions, so keystrokes stay responsive and panel
+  updates remain interruptible.
+
+- Fixed parlay voice-submit never working in built apps. Production builds externalized
+  `@parlay/client` unconditionally, emitting a stub the browser could never load, so every
+  deployed build silently fell back to the plain input and trailing phrases such as "bravely" did
+  not send. Builds made on a machine with the local `web/local-deps/parlay-client` symlink now
+  bundle the real client, and the entry is resolved from that package's own `exports`/`main`
+  instead of a hardcoded `dist/index.js`. Builds without the symlink are unchanged: the specifier
+  is still externalized and the input degrades to a plain text field. Note that this makes
+  `web/dist` (and therefore release tarballs) depend on whether the build host had the symlink.
 
 - Fixed the mobile "next agent" / "previous agent" command doing nothing: the parlay command
   context's `tabs.next`/`tabs.prev` hooks were no-op stubs, so typing or speaking "next agent"
@@ -148,6 +159,39 @@ Files: CHANGELOG.md, AGENTS.md, web/src/App.tsx, web/src/paneSearch.ts, bridge/s
   [PR #61](https://github.com/kcosr/herdr-web/pull/61)
 
 ### Removed
+
+## [0.5.0] - 2026-08-21
+
+### Breaking Changes
+
+- The bridge now requires Herdr `v0.8.2` or newer reporting terminal protocol `20`. Herdr
+  `v0.8.0` and `v0.8.1` daemons (protocol `19`) are rejected at startup.
+  [PR #69](https://github.com/kcosr/herdr-web/pull/69)
+
+### Changed
+
+- Refreshed the vendored Herdr compatibility sources to the `v0.8.2`/protocol `20` baseline.
+  The new protocol `20` server message variants (`TerminalBell`, `GraphicsFile`,
+  `GraphicsTransmissionRetired`) decode but are ignored by the bridge, adding no new behavior.
+  [PR #69](https://github.com/kcosr/herdr-web/pull/69)
+- Compress terminal output with gzip when the client and bridge both support it.
+  [PR #59](https://github.com/kcosr/herdr-web/pull/59), contributed by
+  [Will Hampson (@Whamp)](https://github.com/Whamp).
+- Changed the Attention agent sort to break ties within an attention band by the most recent agent
+  status change, matching Herdr's Priority agent panel, and kept the existing bridge, Space, and tab
+  order as the fallback for agents with no recorded transition.
+  [PR #68](https://github.com/kcosr/herdr-web/pull/68), contributed by
+  [Craig P. Motlin (@motlin)](https://github.com/motlin).
+- Stop blinking the terminal cursor on touch devices so idle terminals do not keep redrawing.
+  Desktop cursors still blink.
+  [PR #60](https://github.com/kcosr/herdr-web/pull/60), contributed by
+  [Will Hampson (@Whamp)](https://github.com/Whamp).
+
+### Fixed
+
+- Join canvas-wrapped HTTP(S) URLs when copying from a mobile terminal.
+  [PR #61](https://github.com/kcosr/herdr-web/pull/61), contributed by
+  [Will Hampson (@Whamp)](https://github.com/Whamp).
 
 ## [0.4.3] - 2026-08-17
 

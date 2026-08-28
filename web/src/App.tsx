@@ -7,6 +7,7 @@ import {
   Link2,
   ListCollapse,
   ListRestart,
+  Moon,
   MoreVertical,
   PanelLeft,
   Pin,
@@ -19,6 +20,7 @@ import {
   SplitSquareVertical,
   SquareTerminal,
   StickyNote,
+  Sun,
   Trash2,
   Unlink,
   Volume2,
@@ -29,6 +31,7 @@ import {
   Fragment,
   Suspense,
   lazy,
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -169,6 +172,8 @@ import {
   DEFAULT_TERMINAL_FONT_SIZE_PX,
   parseTerminalFontSizePx,
 } from "./terminalPrefs";
+import { applyTheme, DEFAULT_THEME, nextTheme, parseTheme } from "./theme";
+import type { Theme } from "./theme";
 import {
   aggregateStatus,
   basename,
@@ -181,7 +186,6 @@ import {
   chooseSelectedPaneForActiveWorkspace,
   countAttention,
   displayTabLabel,
-  isAttention,
   isLoud,
   paneMeta,
   paneListSubtitle,
@@ -434,6 +438,7 @@ type DisplayPrefs = {
   mobileCommandExpandingInput: boolean;
   mobileCommandEnterNewline: boolean;
   mobileCompactControls: boolean;
+  theme: Theme;
 };
 type SharedNavigationPrefs = {
   selectedBridgeId: BridgeId | null;
@@ -507,6 +512,7 @@ function readDisplayPrefs(): DisplayPrefs {
     mobileCommandExpandingInput: DEFAULT_MOBILE_COMMAND_EXPANDING_INPUT,
     mobileCommandEnterNewline: DEFAULT_MOBILE_COMMAND_ENTER_NEWLINE,
     mobileCompactControls: DEFAULT_MOBILE_COMPACT_CONTROLS,
+    theme: DEFAULT_THEME,
   };
   try {
     const raw = window.localStorage.getItem(DISPLAY_PREFS_KEY);
@@ -717,6 +723,7 @@ function parseDisplayPrefsValue(
       parsed.mobileCommandEnterNewline,
     ),
     mobileCompactControls: parseMobileCompactControls(parsed.mobileCompactControls),
+    theme: parseTheme(parsed.theme),
   };
 }
 
@@ -1112,6 +1119,7 @@ export function App() {
   const [mobileCompactControls, setMobileCompactControls] = useState(
     initialPrefs.mobileCompactControls,
   );
+  const [theme, setTheme] = useState(initialPrefs.theme);
   const [launchTarget, setLaunchTarget] = useState<ScopedLaunchTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1218,6 +1226,7 @@ export function App() {
       setMobileCommandExpandingInput(prefs.mobileCommandExpandingInput);
       setMobileCommandEnterNewline(prefs.mobileCommandEnterNewline);
       setMobileCompactControls(prefs.mobileCompactControls);
+      setTheme(prefs.theme);
       setDisplayPrefsLoaded(true);
       },
     );
@@ -1799,6 +1808,7 @@ export function App() {
       mobileCommandExpandingInput,
       mobileCommandEnterNewline,
       mobileCompactControls,
+      theme,
     });
   }, [
     displayPrefsLoaded,
@@ -1836,7 +1846,12 @@ export function App() {
     mobileCommandExpandingInput,
     mobileCommandEnterNewline,
     mobileCompactControls,
+    theme,
   ]);
+
+  useEffect(() => {
+    applyTheme(document, theme);
+  }, [theme]);
 
   useEffect(() => {
     if (!mobileKeyboardHideRefit || !showMobileKeyboardHideRefit) {
@@ -2521,23 +2536,33 @@ export function App() {
   // `nextVisibleAgentPaneEntry` + `focusPane` path as the keyboard so mobile stays
   // in lockstep with desktop wrap behavior. Returns whether a pane was focused.
   const focusAdjacentAgentPane = (step: -1 | 1): boolean => {
-    const agentEntries = buildVisibleAgentPaneEntries(
-      buildVisibleScopedWorkspaces(
+    const combineWorkspaceGroupsForShortcut =
+      combineMatchingWorkspaceNames && hostScope === "all" && agentGroup === "workspace";
+    const agentEntries = filterCollapsedAgentPaneEntries(
+      buildVisibleAgentPaneEntries(
+        buildVisibleScopedWorkspaces(
+          bridgeViews,
+          selectedRuntime?.id ?? null,
+          hostScope,
+          scope,
+          activeSpace,
+          activeWorkspacesByBridgeId,
+          multiHostSpaceSelection,
+        ),
         bridgeViews,
-        selectedRuntime?.id ?? null,
         hostScope,
-        scope,
-        activeSpace,
-        activeWorkspacesByBridgeId,
+        agentGroup,
+        agentSort,
+        pinnedAgentKeys,
+        effectiveAgentPinnedOnly,
+        agentActivityTransitions,
+        agentActiveOnly,
+        combineWorkspaceGroupsForShortcut,
       ),
-      bridgeViews,
-      hostScope,
       agentGroup,
-      agentSort,
-      pinnedAgentKeys,
-      effectiveAgentPinnedOnly,
-      agentActivityTransitions,
-      agentActiveOnly,
+      hostScope,
+      combineWorkspaceGroupsForShortcut,
+      collapsedSidebarGroupKeys,
     );
     if (agentEntries.length === 0) {
       return false;
@@ -3137,39 +3162,6 @@ export function App() {
       }
 
       if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-        const combineWorkspaceGroupsForShortcut =
-          combineMatchingWorkspaceNames && hostScope === "all" && agentGroup === "workspace";
-        const agentEntries = filterCollapsedAgentPaneEntries(
-          buildVisibleAgentPaneEntries(
-            buildVisibleScopedWorkspaces(
-              bridgeViews,
-              selectedRuntime?.id ?? null,
-              hostScope,
-              scope,
-              activeSpace,
-              activeWorkspacesByBridgeId,
-              multiHostSpaceSelection,
-            ),
-            bridgeViews,
-            hostScope,
-            agentGroup,
-            agentSort,
-            pinnedAgentKeys,
-            effectiveAgentPinnedOnly,
-            agentActivityTransitions,
-            agentActiveOnly,
-            combineWorkspaceGroupsForShortcut,
-          ),
-          agentGroup,
-          hostScope,
-          combineWorkspaceGroupsForShortcut,
-          collapsedSidebarGroupKeys,
-        );
-        if (agentEntries.length === 0) {
-          return;
-        }
-        event.preventDefault();
-        event.stopPropagation();
         const step = event.key === "ArrowDown" ? 1 : -1;
         if (focusAdjacentAgentPane(step)) {
           event.preventDefault();
@@ -3964,6 +3956,8 @@ export function App() {
             }
           }}
           onBackendSettings={() => setBackendSettingsOpen(true)}
+          theme={theme}
+          onToggleTheme={() => setTheme((current) => nextTheme(current))}
           onCreateSpace={() =>
             selectedRuntime && selectedCommands
               ? void exec(selectedRuntime, () => selectedCommands.createWorkspace(), true)
@@ -4213,6 +4207,7 @@ export function App() {
             refitToken={refitToken}
             focusToken={terminalFocusToken}
             touchInput={isTouchInput}
+            theme={theme}
             terminalFontSizePx={terminalFontSizePx}
             terminalScreenReaderText={terminalScreenReaderText}
             mobileControlsScalePercent={mobileControlsScalePercent}
@@ -4246,6 +4241,7 @@ export function App() {
             // viewport width and pointer type — no longer gated on touch input.
             mobileControls={true}
             cursorBlink={!isTouchInput}
+            theme={theme}
             terminalFontSizePx={terminalFontSizePx}
             terminalScreenReaderText={terminalScreenReaderText}
             mobileControlsScalePercent={mobileControlsScalePercent}
@@ -4682,14 +4678,19 @@ export function BridgeConnectionController({
         }
         const patched = applySnapshotOverlays(next, currentRef, refreshGeneration);
         currentRef.snapshot = patched;
-        setConnectionStates((current) => ({
-          ...current,
-          [runtime.id]: {
-            connectionKey: requestConnectionKey,
-            snapshot: patched,
-            loadState: "ready",
-          },
-        }));
+        // Snapshot reconciliation touches the whole (un-memoized) pane/sidebar
+        // tree. Mark it a low-priority transition so it stays interruptible and
+        // never blocks keystroke handling on the main thread.
+        startTransition(() => {
+          setConnectionStates((current) => ({
+            ...current,
+            [runtime.id]: {
+              connectionKey: requestConnectionKey,
+              snapshot: patched,
+              loadState: "ready",
+            },
+          }));
+        });
       },
     });
     const refresh = () => refreshController.request();
@@ -4746,14 +4747,19 @@ export function BridgeConnectionController({
             { generation: currentRef.activityGeneration, message: parsed.message },
           ].slice(-100);
           currentRef.snapshot = result.snapshot;
-          setConnectionStates((current) => ({
-            ...current,
-            [runtime.id]: {
-              connectionKey: requestConnectionKey,
-              snapshot: result.snapshot,
-              loadState: "ready",
-            },
-          }));
+          // Agent-status activity bursts (idle→running→idle) are the most
+          // frequent snapshot updates while an agent is working. Defer their
+          // reconciliation so a chatty agent doesn't hitch typing.
+          startTransition(() => {
+            setConnectionStates((current) => ({
+              ...current,
+              [runtime.id]: {
+                connectionKey: requestConnectionKey,
+                snapshot: result.snapshot,
+                loadState: "ready",
+              },
+            }));
+          });
         } else if (result.status === "resync") {
           requestActivityResync();
         }
@@ -4782,27 +4788,31 @@ export function BridgeConnectionController({
             expiresAtMs: Date.now() + SHARED_SELECTION_SETTLE_TIMEOUT_MS,
           };
           const currentSnapshot = currentRef.snapshot;
-          if (currentSnapshot) {
-            const patched = {
-              ...currentSnapshot,
-              selected_pane_id: paneId,
-            };
+          const patched = currentSnapshot
+            ? { ...currentSnapshot, selected_pane_id: paneId }
+            : null;
+          if (patched) {
             currentRef.snapshot = patched;
-            setConnectionStates((current) => ({
-              ...current,
-              [runtime.id]: {
-                connectionKey: requestConnectionKey,
-                snapshot: patched,
-                loadState: "ready",
-              },
-            }));
           }
           const pane = currentSnapshot?.panes.find(
             (item) => item.pane_id === paneId,
           );
-          if (followSharedSelectionRef.current) {
-            onPaneSelection(runtime.id, paneId, pane?.workspace_id);
-          }
+          const shouldFollowSelection = followSharedSelectionRef.current;
+          startTransition(() => {
+            if (patched) {
+              setConnectionStates((current) => ({
+                ...current,
+                [runtime.id]: {
+                  connectionKey: requestConnectionKey,
+                  snapshot: patched,
+                  loadState: "ready",
+                },
+              }));
+            }
+            if (shouldFollowSelection) {
+              onPaneSelection(runtime.id, paneId, pane?.workspace_id);
+            }
+          });
           refresh();
           return;
         }
@@ -5974,6 +5984,7 @@ function SplitGrid({
   refitToken,
   focusToken,
   touchInput,
+  theme,
   terminalFontSizePx,
   terminalScreenReaderText,
   mobileControlsScalePercent,
@@ -6000,6 +6011,7 @@ function SplitGrid({
   refitToken: number;
   focusToken: number;
   touchInput: boolean;
+  theme: Theme;
   terminalFontSizePx: number;
   terminalScreenReaderText: boolean;
   mobileControlsScalePercent: number;
@@ -6070,6 +6082,7 @@ function SplitGrid({
               // pane gets the controls bar (pane selection, not pointer type).
               mobileControls={selected}
               cursorBlink={!touchInput}
+              theme={theme}
               terminalFontSizePx={terminalFontSizePx}
               terminalScreenReaderText={terminalScreenReaderText}
               mobileControlsScalePercent={mobileControlsScalePercent}
@@ -6236,6 +6249,8 @@ function Switcher({
   onRefresh,
   onRefreshBridge,
   onBackendSettings,
+  theme,
+  onToggleTheme,
   onCreateSpace,
   onCreateTab,
   onScopedMenu,
@@ -6299,6 +6314,8 @@ function Switcher({
   onRefresh: () => void;
   onRefreshBridge: (bridgeId: BridgeId) => void;
   onBackendSettings: () => void;
+  theme: Theme;
+  onToggleTheme: () => void;
   onCreateSpace: () => void;
   onCreateTab: (bridgeId: BridgeId, workspaceId: string) => void;
   onScopedMenu: (
@@ -7379,6 +7396,18 @@ function Switcher({
             <span className="brand-sub">{bridgeLabel}</span>
           ) : null}
         </div>
+        <button
+          className="icon-btn"
+          type="button"
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          onClick={(event) => {
+            focusOverlayTrigger(event.currentTarget);
+            onToggleTheme();
+          }}
+        >
+          {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+        </button>
         <button
           className="icon-btn"
           type="button"
@@ -9362,10 +9391,6 @@ function sortAgentPanes(panes: PaneInfo[], sort: AgentSort, snapshot: Snapshot) 
 
   return [...panes].sort((a, b) => {
     if (sort === "attention") {
-      const attention = Number(isAttention(b.agent_status)) - Number(isAttention(a.agent_status));
-      if (attention !== 0) {
-        return attention;
-      }
       const status = AGENT_ATTENTION_ORDER[a.agent_status] - AGENT_ATTENTION_ORDER[b.agent_status];
       if (status !== 0) {
         return status;
@@ -9396,15 +9421,14 @@ function sortAgentPanes(panes: PaneInfo[], sort: AgentSort, snapshot: Snapshot) 
 export function sortScopedAgentPanes(entries: ScopedAgentPane[], sort: AgentSort) {
   return [...entries].sort((a, b) => {
     if (sort === "attention") {
-      const attention =
-        Number(isAttention(b.pane.agent_status)) - Number(isAttention(a.pane.agent_status));
-      if (attention !== 0) {
-        return attention;
-      }
       const status =
         AGENT_ATTENTION_ORDER[a.pane.agent_status] - AGENT_ATTENTION_ORDER[b.pane.agent_status];
       if (status !== 0) {
         return status;
+      }
+      const activity = compareLastStatusTransition(a, b);
+      if (activity !== 0) {
+        return activity;
       }
     } else if (sort === "status") {
       const status =

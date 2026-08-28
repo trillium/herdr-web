@@ -14,6 +14,14 @@ import { fetchWithTimeout } from "./fetchWithTimeout";
 import { addNativeResumeHandler } from "./native";
 import { randomId } from "./randomId";
 
+function stripPort(label: string): string {
+  return label.replace(/:\d+$/, "");
+}
+
+function extractHostname(tailnetName: string): string {
+  return tailnetName.split(".")[0];
+}
+
 export const SAME_ORIGIN_BRIDGE_ID = "same-origin";
 
 export type BridgeId = string;
@@ -620,14 +628,15 @@ function buildAvailableRuntimes({
 }) {
   const runtimes: BridgeRuntime[] = [];
   if (sameOriginAvailable) {
+    const sameOriginLabel = (() => {
+      const tailnetName = probeStates[SAME_ORIGIN_BRIDGE_ID]?.capabilities?.tailnet_name;
+      return tailnetName ? extractHostname(tailnetName) : "Same origin";
+    })();
     runtimes.push(
       createBridgeRuntime({
         id: SAME_ORIGIN_BRIDGE_ID,
         mode: "same-origin",
-        // Lead with the machine's tailnet DNS name once the capability probe
-        // reports it — a name other devices on the tailnet can actually reach.
-        // Falls back to "Same origin" when Tailscale is absent or still probing.
-        label: probeStates[SAME_ORIGIN_BRIDGE_ID]?.capabilities?.tailnet_name ?? "Same origin",
+        label: sameOriginLabel,
         backend: null,
         baseUrl: null,
         probeState: probeStates[SAME_ORIGIN_BRIDGE_ID],
@@ -640,7 +649,7 @@ function buildAvailableRuntimes({
       createBridgeRuntime({
         id: backend.id,
         mode: "configured",
-        label: backend.name,
+        label: stripPort(backend.name),
         backend,
         baseUrl: backend.baseUrl,
         probeState: probeStates[backend.id],
@@ -659,7 +668,7 @@ function buildAvailableRuntimes({
       createBridgeRuntime({
         id,
         mode: "configured",
-        label: remote.label,
+        label: stripPort(remote.label),
         backend: null,
         baseUrl: null,
         proxyServerId: remote.id,
