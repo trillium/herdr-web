@@ -3324,7 +3324,11 @@ fn resolve_tailnet_name() -> Option<String> {
                 // Captain preference (project-4ba): the SHORT host label
                 // ("macbook", "mini1") — DNSName arrives as an FQDN with a
                 // trailing root dot; keep just the first label.
-                let short = name.trim_end_matches('.').split('.').next().unwrap_or(&name);
+                let short = name
+                    .trim_end_matches('.')
+                    .split('.')
+                    .next()
+                    .unwrap_or(&name);
                 return Some(short.to_string());
             }
         }
@@ -5257,6 +5261,7 @@ fn open_terminal_attach(
                 | ServerMessage::WindowTitle { .. }
                 | ServerMessage::ReloadSoundConfig
                 | ServerMessage::MouseCapture { .. }
+                | ServerMessage::KittyKeyboardReportAll { .. }
                 | ServerMessage::PrefixInputSource { .. }
                 | ServerMessage::Frame(_)
                 | ServerMessage::Graphics { .. }
