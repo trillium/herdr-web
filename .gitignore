@@ -7,6 +7,11 @@
 /bridge/target/
 /vendor/herdr-compat/target/
 /dist-packages/
+# Agent tooling scratch. Ignored here rather than relying on an untracked
+# .opencode/.gitignore or a machine-local .git/info/exclude, neither of which
+# exists in a fresh clone.
+.opencode/
+.claude/settings.local.json
 .specs/
 .scratch/
 *.log
