@@ -57,6 +57,12 @@ This is a lightweight internal onboarding note for agents working in this repo.
   externalized specifier never resolves). The type side is the single ambient shim
   `web/types/parlay-client.d.ts` — do not reintroduce a duplicate under `web/src/`.
 
+## Pull Requests
+
+- Always pass `--repo trillium/herdr-web` when creating a PR. This checkout has an `upstream`
+  remote (`kcosr/herdr-web`), so `gh`/`gh-axi` defaults the base to the parent repo and a PR opened
+  without the flag silently lands upstream instead of on the fork.
+
 ## Merging
 
 - After any merge that touches `web/package-lock.json`, regenerate it (`npm install --prefix web`)
