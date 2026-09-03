@@ -11,6 +11,13 @@
 
 ### Added
 
+- Added GitHub Actions CI (`.github/workflows/ci.yml`) covering both toolchains on every pull
+  request and every push to `main`. Blocking: the vendored-layout check, web lint/test/build, the
+  `scripts/dev.mjs` tests, `cargo fmt --check`, and release `cargo build`/`cargo test` for both
+  `bridge/` and `vendor/herdr-compat/`. Advisory for now: `cargo clippy`, which starts from a
+  10-warning baseline in `bridge/` and should be made blocking once that reaches zero. Playwright
+  (`npm run test:vspace`) is deliberately not wired in — it needs browser downloads.
+
 - Added a build/version stamp so a phone can report exactly which build it is running ([#41](https://github.com/trillium/herdr-web/pull/41)). The bridge
   serves `GET /api/version` with its crate version, the short git sha it was built from
   (`-dirty` suffixed for an unclean worktree, `unknown` outside a git checkout), the build time,
@@ -148,6 +155,15 @@
   [PR #60](https://github.com/kcosr/herdr-web/pull/60)
 
 ### Fixed
+
+- Fixed `npm run test` failing outright on a clean checkout without the optional
+  `web/local-deps/parlay-client` symlink. `vite build` externalizes `@parlay/client` when the
+  symlink is absent, but Vitest had no equivalent, so five test files failed to *transform* with
+  "Failed to resolve import" — a build-time resolution error that the guarded
+  `try { await import(...) }` in `ParlayInput.tsx` cannot catch. Vitest now resolves the missing
+  package to a virtual module that throws on evaluation, so the dynamic import rejects exactly as
+  an externalized specifier does in production and the parlay tests self-skip as they were written
+  to. Scoped to Vitest; `vite build` output is unchanged.
 
 - Fixed `--allow-host` rejecting an explicitly allow-listed hostname whenever the `Host` header's
   port differed from `--port` (or was absent). This broke reverse-proxy setups such as

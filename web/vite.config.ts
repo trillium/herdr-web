@@ -143,13 +143,31 @@ const webBuildTime = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 const parlayEntry = resolveParlayEntry();
 const hasLocalParlay = parlayEntry !== undefined;
 
+// Under Vitest there is no equivalent of `build.rolldownOptions.external`, so with the symlink
+// absent every module that even mentions `@parlay/client` failed to TRANSFORM ("Failed to resolve
+// import"), taking 5 unrelated test files down with it. That is a resolution error at build time,
+// which the guarded `try { await import(...) }` in ParlayInput.tsx cannot catch -- the tests were
+// already written to tolerate a missing package (ParlayMobileInput.test.tsx skips its cases when
+// the import rejects), they just never got the chance.
+//
+// Resolving to a virtual module whose evaluation throws restores the intended shape: the specifier
+// resolves, so transform succeeds, and the dynamic import then REJECTS exactly as an externalized
+// specifier does in a production build. This is deliberately scoped to Vitest so `vite build`
+// keeps using `external` and the built output is byte-for-byte unchanged.
+const PARLAY_MISSING_ID = "\0parlay-client-missing";
+const stubParlayForVitest = !hasLocalParlay && Boolean(process.env.VITEST);
+
 function parlayClientResolver(): Plugin {
   return {
     name: "parlay-client-resolver",
     resolveId(id) {
-      if (id === "@parlay/client" && parlayEntry) {
-        return parlayEntry;
-      }
+      if (id !== "@parlay/client") return;
+      if (parlayEntry) return parlayEntry;
+      if (stubParlayForVitest) return PARLAY_MISSING_ID;
+    },
+    load(id) {
+      if (id !== PARLAY_MISSING_ID) return;
+      return 'throw new Error("@parlay/client is not installed (optional local-only dependency)");';
     },
   };
 }
