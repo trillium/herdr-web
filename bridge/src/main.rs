@@ -5,6 +5,7 @@ mod launcher_presets;
 mod notes;
 mod session;
 mod store_util;
+mod terminal_multiplex;
 mod web_bridge;
 mod workspace;
 

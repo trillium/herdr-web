@@ -12,7 +12,7 @@ import {
   TextCursorInput,
   X,
 } from "lucide-react";
-import ConnectionConflictCard from "./ConnectionConflictCard";
+import TerminalViewersCard from "./TerminalViewersCard";
 import { useLongPress } from "./overlays";
 import {
 
@@ -1543,7 +1543,7 @@ export function TerminalView({
       ) : null}
       {pane && (
         <div className="terminal-connection-panel">
-          <ConnectionConflictCard terminalId={pane.terminal_id} httpUrl={httpUrl} />
+          <TerminalViewersCard terminalId={pane.terminal_id} httpUrl={httpUrl} />
         </div>
       )}
       {scrolledAwayFromPresent ? (
