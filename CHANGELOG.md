@@ -11,7 +11,7 @@
 
 ### Added
 
-- Added a build/version stamp so a phone can report exactly which build it is running. The bridge
+- Added a build/version stamp so a phone can report exactly which build it is running ([#41](https://github.com/trillium/herdr-web/pull/41)). The bridge
   serves `GET /api/version` with its crate version, the short git sha it was built from
   (`-dirty` suffixed for an unclean worktree, `unknown` outside a git checkout), the build time,
   and the Herdr `protocol_version`. Sha and build time are baked in by a build script, so there is
