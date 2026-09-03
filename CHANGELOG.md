@@ -186,6 +186,14 @@
   layout settles, or a backgrounded PWA — is ignored rather than counted, so it cannot pull the
   shared pty to nothing. The last client leaving no longer resizes.
 
+- Fixed Safari and iOS rendering a blank page. The optional parlay voice sidecar listens on a
+  separate origin (port 4242), which this page's `connect-src 'self' data:` CSP blocks. Chrome
+  reports that block as an async `error` event, but WebKit throws `SecurityError` out of the
+  `EventSource` constructor; the throw escaped the React effect and took the entire tree down with
+  it, so the terminal never rendered. The stream is now opened defensively and a construction
+  failure degrades to the plain input the component already falls back to. Parlay voice-submit
+  itself still cannot reach a cross-origin sidecar under this CSP; only the blank page is fixed.
+
 - Fixed the web client sending a zero terminal size. A pane measured mid-layout — iOS Safari during
   a dynamic-viewport transition, or a PWA restoring from the background — reports 0 columns or rows,
   and that measurement was forwarded as a real resize. It is now treated as no measurement at all:
