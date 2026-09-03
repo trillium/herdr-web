@@ -11,6 +11,14 @@
 
 ### Added
 
+- Added a build/version stamp so a phone can report exactly which build it is running ([#41](https://github.com/trillium/herdr-web/pull/41)). The bridge
+  serves `GET /api/version` with its crate version, the short git sha it was built from
+  (`-dirty` suffixed for an unclean worktree, `unknown` outside a git checkout), the build time,
+  and the Herdr `protocol_version`. Sha and build time are baked in by a build script, so there is
+  no runtime `git` dependency and no new runtime dependencies. Settings → Bridge now shows both
+  that bridge stamp and the web bundle's own sha/build time, since `web/dist` and the bridge binary
+  are deployed independently.
+
 - Added a "Jump to present" control to terminal panes. Scrolling up from the live tail reveals a
   floating pill over the pane; clicking it returns to the bottom. The return is a purely local
   viewport reset — everything the bridge has sent is already in the local terminal buffer — so it

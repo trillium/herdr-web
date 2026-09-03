@@ -2929,6 +2929,16 @@ button {
   font-size: 12.5px;
 }
 
+.settings-build-value {
+  min-width: 0;
+  color: var(--text);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+  text-align: right;
+  user-select: text;
+}
+
 .segmented-control {
   display: inline-flex;
   width: 100%;

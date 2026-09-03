@@ -33,6 +33,11 @@ This is a lightweight internal onboarding note for agents working in this repo.
   restore-on-load effect, and the save effect (object + dependency array). `isCompactLayout` (narrow
   viewport, `max-width: 820px`) and `isTouchInput`/`mobileControls` (coarse pointer, no hover) are
   separate signals gating different mobile behaviors — do not assume one implies the other.
+- The build stamp has two independent halves, because `web/dist` and the bridge binary are
+  deployed separately. The bridge half is baked in by `bridge/build.rs` (`HERDR_WEB_GIT_SHA`,
+  `HERDR_WEB_BUILD_TIME`) and served by `GET /api/version`; the web half is baked in by the
+  `define` block in `web/vite.config.ts` and read via `web/src/buildStamp.ts`. Both fall back to
+  `unknown` rather than failing the build. Settings -> Bridge renders both.
 - Remote bridges (`--remote-bridge <url>`, proxied under `/api/remote/{bridge_id}/...` and
   `/ws/remote/{bridge_id}/terminal`) are only reachable if the local bridge process was started with
   that URL — bridge ids are derived server-side from the URL hostname. Any client-side UI for adding

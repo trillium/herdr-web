@@ -14,7 +14,7 @@ use axum::body::Bytes;
 use axum::extract::ws::{
     CloseFrame, Message, Utf8Bytes as AxumUtf8Bytes, WebSocket, WebSocketUpgrade,
 };
-use axum::extract::{DefaultBodyLimit, Path as AxumPath, Query, RawQuery, State};
+use axum::extract::{DefaultBodyLimit, FromRef, Path as AxumPath, Query, RawQuery, State};
 use axum::http::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
     ACCESS_CONTROL_MAX_AGE, ACCESS_CONTROL_REQUEST_HEADERS, CACHE_CONTROL, CONTENT_TYPE, HOST,
@@ -156,6 +156,14 @@ struct RequestPolicy {
     allowed_connect_sources: Vec<String>,
 }
 
+/// Lets handlers that only need the request gate take `State<RequestPolicy>` instead of the
+/// whole `BridgeState`.
+impl FromRef<BridgeState> for RequestPolicy {
+    fn from_ref(state: &BridgeState) -> Self {
+        state.request_policy.clone()
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct Snapshot {
     workspaces: Vec<SnapshotWorkspaceInfo>,
@@ -211,6 +219,21 @@ struct Capabilities {
     /// the web client then falls back to displaying the served origin.
     #[serde(skip_serializing_if = "Option::is_none")]
     tailnet_name: Option<String>,
+}
+
+/// Build stamp reported by `GET /api/version`. Lets a phone say exactly which bridge build it
+/// is talking to after a redeploy, without reading content-hashed asset names.
+#[derive(Debug, Serialize)]
+struct BuildInfo {
+    /// Bridge crate version, same value `/api/capabilities` reports as `bridge_version`.
+    bridge_version: &'static str,
+    /// Short git sha of the commit this binary was built from, `-dirty` suffixed when the
+    /// worktree had uncommitted changes. `unknown` when built outside a git checkout.
+    git_sha: &'static str,
+    /// Build time as `YYYY-MM-DDTHH:MM:SSZ`, or `unknown` if the build clock was unusable.
+    build_time: &'static str,
+    /// Herdr wire protocol version this bridge speaks.
+    protocol_version: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -1298,6 +1321,10 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
         .route(
             "/api/capabilities",
             get(capabilities_handler).options(preflight_handler),
+        )
+        .route(
+            "/api/version",
+            get(version_handler).options(preflight_handler),
         )
         .route(
             "/api/bridges",
@@ -3328,6 +3355,26 @@ async fn capabilities_handler(
         notes: NotesCapability { version: 1 },
         tailnet_name: tailnet_name_cached().await,
     }))
+}
+
+/// `GET /api/version` — the build stamp. Gated by the same origin/host policy as every other
+/// `/api` route; it takes `State<RequestPolicy>` rather than the full `BridgeState` (via
+/// `FromRef`) so the route can be exercised in tests without standing up a bridge.
+async fn version_handler(
+    State(policy): State<RequestPolicy>,
+    headers: HeaderMap,
+) -> Result<Json<BuildInfo>, BridgeError> {
+    ensure_allowed_request(&headers, &policy)?;
+    Ok(Json(build_info()))
+}
+
+fn build_info() -> BuildInfo {
+    BuildInfo {
+        bridge_version: env!("CARGO_PKG_VERSION"),
+        git_sha: env!("HERDR_WEB_GIT_SHA"),
+        build_time: env!("HERDR_WEB_BUILD_TIME"),
+        protocol_version: PROTOCOL_VERSION,
+    }
 }
 
 /// Process-wide cache of this machine's tailnet name. The tailnet name does not change minute
@@ -8049,6 +8096,66 @@ mod tests {
             allowed_origins: Vec::new(),
             allowed_connect_sources: Vec::new(),
         }
+    }
+
+    async fn version_route_response() -> (StatusCode, serde_json::Value) {
+        let app = Router::new()
+            .route("/api/version", get(version_handler))
+            .with_state(test_policy("127.0.0.1", 8787));
+        let request = AxumRequest::builder()
+            .uri("/api/version")
+            .header(HOST, "127.0.0.1:8787")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = tower::ServiceExt::oneshot(app, request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn version_route_reports_every_build_stamp_field() {
+        let (status, body) = version_route_response().await;
+        assert_eq!(status, StatusCode::OK);
+        for field in ["bridge_version", "git_sha", "build_time"] {
+            let value = body
+                .get(field)
+                .unwrap_or_else(|| panic!("/api/version is missing {field}"))
+                .as_str()
+                .unwrap_or_else(|| panic!("/api/version {field} is not a string"));
+            assert!(!value.trim().is_empty(), "/api/version {field} is empty");
+        }
+        assert_eq!(
+            body.get("protocol_version").and_then(|v| v.as_u64()),
+            Some(u64::from(PROTOCOL_VERSION))
+        );
+    }
+
+    #[tokio::test]
+    async fn version_route_reports_the_current_crate_version() {
+        let (_, body) = version_route_response().await;
+        assert_eq!(
+            body.get("bridge_version").and_then(|v| v.as_str()),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(build_info().bridge_version, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[tokio::test]
+    async fn version_route_is_gated_by_the_request_policy() {
+        let app = Router::new()
+            .route("/api/version", get(version_handler))
+            .with_state(test_policy("127.0.0.1", 8787));
+        let request = AxumRequest::builder()
+            .uri("/api/version")
+            .header(HOST, "127.0.0.1:8787")
+            .header(ORIGIN, "https://example.com")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = tower::ServiceExt::oneshot(app, request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     #[test]
