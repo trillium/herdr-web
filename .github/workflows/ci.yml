@@ -1,0 +1,117 @@
+name: CI
+
+# Gates every PR and every push to main. Self-contained: no secrets, no external
+# services, no network beyond the package registries and the Actions cache.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push to the same branch supersedes the in-flight run. `main` pushes are
+# excluded from cancellation so post-merge history keeps a result per commit.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  vendor:
+    name: Vendor layout
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # check-vendor.sh hard-requires ripgrep and exits 1 without it. The hosted
+      # image currently ships rg, but that is an image detail, not a guarantee.
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      # Runs the shell script directly via npm; needs no node_modules.
+      - name: Check vendored Herdr layout
+        run: npm run vendor:check
+
+  web:
+    name: Web (lint, test, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # `@parlay/client` is an optional, local-only, never-published dependency that
+      # resolves solely through the gitignored `web/local-deps/parlay-client` symlink.
+      # CI deliberately has no symlink, so this exercises the degraded path: the web
+      # build externalizes the specifier and the parlay session-id tests self-skip.
+      - name: Install web dependencies
+        run: npm ci --prefix web
+
+      - name: Lint web
+        run: npm run lint --prefix web
+
+      - name: Test web
+        run: npm run test --prefix web
+
+      - name: Build web
+        run: npm run build --prefix web
+
+      # Root-level tests for scripts/dev.mjs. Node builtins only, so no root install.
+      - name: Test dev launcher
+        run: npm run test:dev
+
+  rust:
+    name: Rust (fmt, build, test, clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The hosted image ships a stable toolchain; add the two components the repo
+      # needs rather than pulling in a third-party toolchain action.
+      - name: Add rustfmt and clippy
+        run: rustup component add rustfmt clippy
+
+      # bridge/ and vendor/herdr-compat/ are two independent Cargo workspaces with
+      # separate lockfiles and separate target dirs; both are keyed into the cache.
+      - name: Cache cargo registry and targets
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            bridge/target
+            vendor/herdr-compat/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('bridge/Cargo.lock', 'vendor/herdr-compat/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: npm run bridge:fmt
+
+      - name: Build bridge (release)
+        run: cargo build --release --locked --manifest-path bridge/Cargo.toml --bin herdr-web-bridge
+
+      - name: Test herdr-compat (release)
+        run: cargo test --release --locked --manifest-path vendor/herdr-compat/Cargo.toml
+
+      - name: Test bridge (release)
+        run: cargo test --release --locked --manifest-path bridge/Cargo.toml --bin herdr-web-bridge
+
+      # ADVISORY, NOT BLOCKING. Baseline at the time this workflow was added:
+      # 10 warnings in bridge/, 0 in vendor/herdr-compat/. Turning on `-D warnings`
+      # now would fail the very first run, so the step reports and does not gate.
+      #
+      # This count should ratchet DOWN, never up. Once bridge/ reaches 0 warnings,
+      # drop `continue-on-error` and append `-- -D warnings` to make it blocking.
+      # Note the count is toolchain-dependent: a new stable clippy can add or retire
+      # lints, so treat a changed number as a prompt to re-check, not a regression.
+      - name: Clippy (advisory)
+        continue-on-error: true
+        run: |
+          cargo clippy --release --locked --manifest-path bridge/Cargo.toml --bin herdr-web-bridge
+          cargo clippy --release --locked --manifest-path vendor/herdr-compat/Cargo.toml
