@@ -6230,6 +6230,67 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_resize_frame_never_reaches_the_daemon() {
+        let (write_tx, rx) = test_terminal_writer();
+        let coalescer = Arc::new(Mutex::new(TerminalSizeCoalescer::new(
+            TerminalViewSize::new(120, 40),
+        )));
+        let desktop = TerminalClientSize::new(Arc::clone(&coalescer), next_terminal_client_key());
+        let phone = TerminalClientSize::new(Arc::clone(&coalescer), next_terminal_client_key());
+        desktop.apply(&write_tx, TerminalViewSize::new(120, 40));
+        phone.apply(&write_tx, TerminalViewSize::new(50, 20));
+        let _ = rx.try_recv();
+
+        // The phone is backgrounded and reports a collapsed viewport. Taking
+        // the minimum with it would blank every viewer at once.
+        handle_terminal_text_frame(&write_tx, &phone, r#"{"type":"resize","cols":0,"rows":0}"#)
+            .unwrap();
+        assert!(
+            rx.try_recv().is_err(),
+            "a zero size must not resize the pty"
+        );
+
+        // The phone comes back and its real geometry still applies.
+        handle_terminal_text_frame(
+            &write_tx,
+            &phone,
+            r#"{"type":"resize","cols":70,"rows":28}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            ClientMessage::Resize {
+                cols: 70,
+                rows: 28,
+                cell_width_px: 0,
+                cell_height_px: 0
+            }
+        );
+    }
+
+    #[test]
+    fn a_client_connecting_with_a_zero_size_does_not_resize_the_pty() {
+        let (write_tx, rx) = test_terminal_writer();
+        let coalescer = Arc::new(Mutex::new(TerminalSizeCoalescer::new(
+            TerminalViewSize::new(120, 40),
+        )));
+        let desktop = TerminalClientSize::new(Arc::clone(&coalescer), next_terminal_client_key());
+        let unmeasured =
+            TerminalClientSize::new(Arc::clone(&coalescer), next_terminal_client_key());
+        desktop.apply(&write_tx, TerminalViewSize::new(120, 40));
+
+        unmeasured.apply(&write_tx, TerminalViewSize::new(0, 0));
+        assert!(
+            rx.try_recv().is_err(),
+            "an unmeasured joiner resized the pty"
+        );
+
+        // And leaving again does not disturb the client that is still watching.
+        unmeasured.release(&write_tx);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
     fn input_frames_still_pass_through_with_size_coalescing_in_place() {
         let (write_tx, rx) = test_terminal_writer();
         let sizes = test_client_size(80, 24);

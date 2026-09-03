@@ -182,7 +182,14 @@
   its own `cols`/`rows` straight through to the shared pty, so a phone joining shrank the desktop
   and a desktop joining made the phone unreadable. The pty is now sized to the smallest connected
   client on each axis, recomputed on connect, disconnect and resize, and sent only when the
-  coalesced size actually changes. The last client leaving no longer resizes.
+  coalesced size actually changes. A client reporting a zero width or height — mobile Safari before
+  layout settles, or a backgrounded PWA — is ignored rather than counted, so it cannot pull the
+  shared pty to nothing. The last client leaving no longer resizes.
+
+- Fixed the web client sending a zero terminal size. A pane measured mid-layout — iOS Safari during
+  a dynamic-viewport transition, or a PWA restoring from the background — reports 0 columns or rows,
+  and that measurement was forwarded as a real resize. It is now treated as no measurement at all:
+  nothing is sent and the pane is re-measured on the next frame until it settles.
 
 - Fixed `--allow-host` rejecting an explicitly allow-listed hostname whenever the `Host` header's
   port differed from `--port` (or was absent). This broke reverse-proxy setups such as

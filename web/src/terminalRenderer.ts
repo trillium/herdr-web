@@ -162,6 +162,27 @@ export type TerminalSize = {
   cols: number;
   rows: number;
 };
+
+/**
+ * Whether a measurement describes a grid the bridge can actually size a pty to.
+ *
+ * `fit()` reports whatever Ghostty derived from the container, and a container
+ * mid-layout has no size: iOS Safari during a dynamic-viewport transition and a
+ * PWA restoring from the background both measure 0 before they settle. The
+ * bridge sizes the shared pty to the smallest connected client, so forwarding
+ * one of those would blank every viewer of that terminal, not just this one.
+ * A degenerate measurement is therefore not a small size — it is no measurement
+ * at all, and the caller should re-measure rather than send it.
+ */
+export function isUsableTerminalSize(size: TerminalSize | null): size is TerminalSize {
+  return (
+    size !== null &&
+    Number.isFinite(size.cols) &&
+    Number.isFinite(size.rows) &&
+    size.cols >= 1 &&
+    size.rows >= 1
+  );
+}
 type TerminalCellPosition = {
   col: number;
   row: number;

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { pageScrollLines, refreshTerminalFontRendering } from "./terminalRenderer";
+import {
+  isUsableTerminalSize,
+  pageScrollLines,
+  refreshTerminalFontRendering,
+} from "./terminalRenderer";
 
 describe("terminal renderer font refresh", () => {
   it("forces the current viewport to redraw when font settings are unchanged", () => {
@@ -55,5 +59,31 @@ describe("page scroll keys", () => {
   it("ignores every other key", () => {
     expect(pageScrollLines(key({ key: "Home" }), 24)).toBeNull();
     expect(pageScrollLines(key({ key: "a" }), 24)).toBeNull();
+  });
+});
+
+describe("isUsableTerminalSize", () => {
+  it("accepts a real measurement", () => {
+    expect(isUsableTerminalSize({ cols: 80, rows: 24 })).toBe(true);
+    expect(isUsableTerminalSize({ cols: 1, rows: 1 })).toBe(true);
+  });
+
+  it("rejects a zero measurement on either axis", () => {
+    // iOS Safari mid dynamic-viewport transition, or a PWA restoring from the
+    // background: the container has no layout yet. The bridge sizes the shared
+    // pty to the smallest client, so forwarding this blanks every viewer.
+    expect(isUsableTerminalSize({ cols: 0, rows: 0 })).toBe(false);
+    expect(isUsableTerminalSize({ cols: 80, rows: 0 })).toBe(false);
+    expect(isUsableTerminalSize({ cols: 0, rows: 24 })).toBe(false);
+  });
+
+  it("rejects a negative or non-finite measurement", () => {
+    expect(isUsableTerminalSize({ cols: -1, rows: 24 })).toBe(false);
+    expect(isUsableTerminalSize({ cols: Number.NaN, rows: 24 })).toBe(false);
+    expect(isUsableTerminalSize({ cols: 80, rows: Number.POSITIVE_INFINITY })).toBe(false);
+  });
+
+  it("rejects a missing measurement", () => {
+    expect(isUsableTerminalSize(null)).toBe(false);
   });
 });

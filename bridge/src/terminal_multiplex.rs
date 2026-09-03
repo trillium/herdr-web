@@ -106,6 +106,25 @@ impl TerminalViewSize {
         }
     }
 
+    /// Whether this size describes a grid that can actually hold a cell.
+    ///
+    /// Clients do report zero: mobile Safari measures a pane before layout has
+    /// settled, and a backgrounded PWA reports a collapsed viewport. Because
+    /// the coalesced size is a per-axis minimum, a single such report would
+    /// otherwise pull the shared pty to 0x0 and blank every viewer at once.
+    fn is_usable(self) -> bool {
+        self.cols > 0 && self.rows > 0
+    }
+
+    /// The smallest grid worth asking the daemon for.
+    fn floor(self) -> Self {
+        Self {
+            cols: self.cols.max(1),
+            rows: self.rows.max(1),
+            ..self
+        }
+    }
+
     fn min(self, other: Self) -> Self {
         Self {
             cols: self.cols.min(other.cols),
@@ -146,9 +165,17 @@ impl TerminalSizeCoalescer {
 
     /// Records a client's geometry on connect or resize.
     ///
+    /// A degenerate size is ignored outright rather than recorded: the client
+    /// stays connected and keeps whatever geometry it last reported, so a
+    /// transient 0 during layout leaves the shared pty alone instead of
+    /// collapsing it. See `TerminalViewSize::is_usable`.
+    ///
     /// Returns the size to send to the daemon, or `None` when the coalesced
     /// size is unchanged.
     pub fn set(&mut self, client: u64, size: TerminalViewSize) -> Option<TerminalViewSize> {
+        if !size.is_usable() {
+            return None;
+        }
         self.clients.insert(client, size);
         self.reconcile()
     }
@@ -178,7 +205,10 @@ impl TerminalSizeCoalescer {
     }
 
     fn reconcile(&mut self) -> Option<TerminalViewSize> {
-        let coalesced = self.coalesced()?;
+        // `set` already refuses degenerate sizes, so the floor is a backstop
+        // for the seeded `applied` value coming from an attach handshake this
+        // module did not perform: nothing below 1x1 ever reaches the daemon.
+        let coalesced = self.coalesced()?.floor();
         if coalesced == self.applied {
             return None;
         }
@@ -364,5 +394,61 @@ mod tests {
         coalescer.set(1, size(60, 25));
         assert_eq!(coalescer.remove(99), None);
         assert_eq!(coalescer.applied(), size(60, 25));
+    }
+
+    #[test]
+    fn a_zero_size_client_joining_does_not_collapse_the_pty() {
+        let mut coalescer = TerminalSizeCoalescer::new(size(120, 40));
+        coalescer.set(1, size(120, 40));
+        // Mobile Safari measuring a pane before layout settles.
+        assert_eq!(coalescer.set(2, size(0, 0)), None);
+        assert_eq!(coalescer.set(3, size(80, 0)), None);
+        assert_eq!(coalescer.set(4, size(0, 24)), None);
+        assert_eq!(coalescer.coalesced(), Some(size(120, 40)));
+        assert_eq!(coalescer.applied(), size(120, 40));
+    }
+
+    #[test]
+    fn a_client_set_holding_only_zero_sizes_never_resizes() {
+        let mut coalescer = TerminalSizeCoalescer::new(size(120, 40));
+        assert_eq!(coalescer.set(1, size(0, 0)), None);
+        assert_eq!(coalescer.set(2, size(0, 30)), None);
+        // Nothing was recorded, so there is no coalesced size to send at all.
+        assert_eq!(coalescer.coalesced(), None);
+        assert_eq!(coalescer.applied(), size(120, 40));
+        // The first real report still lands.
+        assert_eq!(coalescer.set(1, size(90, 30)), Some(size(90, 30)));
+    }
+
+    #[test]
+    fn a_zero_resize_from_a_connected_client_keeps_its_last_good_size() {
+        let mut coalescer = TerminalSizeCoalescer::new(size(120, 40));
+        coalescer.set(1, size(120, 40));
+        assert_eq!(coalescer.set(2, size(60, 25)), Some(size(60, 25)));
+        // The phone is backgrounded and reports a collapsed viewport.
+        assert_eq!(coalescer.set(2, size(0, 0)), None);
+        assert_eq!(coalescer.coalesced(), Some(size(60, 25)));
+        assert_eq!(coalescer.applied(), size(60, 25));
+        // It comes back to the foreground and reports real geometry again.
+        assert_eq!(coalescer.set(2, size(70, 30)), Some(size(70, 30)));
+    }
+
+    #[test]
+    fn a_zero_size_client_still_releases_cleanly() {
+        let mut coalescer = TerminalSizeCoalescer::new(size(120, 40));
+        coalescer.set(1, size(60, 25));
+        coalescer.set(2, size(0, 0));
+        // Client 2 was never recorded, so its disconnect changes nothing.
+        assert_eq!(coalescer.remove(2), None);
+        assert_eq!(coalescer.coalesced(), Some(size(60, 25)));
+    }
+
+    #[test]
+    fn a_degenerate_attach_size_is_floored_rather_than_sent_back() {
+        // The attach handshake seeds `applied`; if it seeded a zero the floor
+        // keeps anything below 1x1 from reaching the daemon.
+        let mut coalescer = TerminalSizeCoalescer::new(size(0, 0));
+        assert_eq!(coalescer.set(1, size(80, 24)), Some(size(80, 24)));
+        assert!(coalescer.applied().cols >= 1 && coalescer.applied().rows >= 1);
     }
 }
