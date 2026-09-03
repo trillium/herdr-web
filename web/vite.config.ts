@@ -1,6 +1,7 @@
 import react from "@vitejs/plugin-react";
 import { configDefaults, defineConfig } from "vitest/config";
 import type { Plugin } from "vite";
+import { execFileSync } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
 
@@ -117,6 +118,28 @@ function resolveParlayEntry(): string | undefined {
   return undefined;
 }
 
+// Build stamp baked into the bundle so a phone can report which web build it is running
+// (the bridge reports its own stamp at /api/version; the two are deployed independently).
+// Neither value may fail the build: a source tarball has no `.git` and CI images may lack git.
+function gitStdout(args: string[]): string | undefined {
+  try {
+    const value = execFileSync("git", ["-C", __dirname, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return value === "" ? undefined : value;
+  } catch {
+    return undefined;
+  }
+}
+
+const webBuildSha = (() => {
+  const sha = gitStdout(["rev-parse", "--short", "HEAD"]);
+  if (!sha) return "unknown";
+  return gitStdout(["status", "--porcelain"]) ? `${sha}-dirty` : sha;
+})();
+const webBuildTime = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+
 const parlayEntry = resolveParlayEntry();
 const hasLocalParlay = parlayEntry !== undefined;
 
@@ -133,6 +156,10 @@ function parlayClientResolver(): Plugin {
 
 export default defineConfig({
   plugins: [react(), parlayClientResolver()],
+  define: {
+    __WEB_BUILD_SHA__: JSON.stringify(webBuildSha),
+    __WEB_BUILD_TIME__: JSON.stringify(webBuildTime),
+  },
   test: {
     exclude: [...configDefaults.exclude, "local-deps/**", "tests/**"],
     setupFiles: ["./src/testSetup.ts"],

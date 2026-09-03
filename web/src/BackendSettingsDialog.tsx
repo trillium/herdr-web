@@ -25,6 +25,7 @@ import {
   useBridge,
 } from "./bridge";
 import type { BridgeBackendProfile } from "./bridge";
+import { BuildStampSection } from "./BuildStampSection";
 import { sameOriginDisplay } from "./sameOrigin";
 import {
   DEFAULT_CONTENT_INSET_BOTTOM_PX,
@@ -550,6 +551,7 @@ export function BackendSettingsDialog({
                     </button>
                   </div>
                 ) : null}
+                <BuildStampSection />
               </>
             ) : null}
 

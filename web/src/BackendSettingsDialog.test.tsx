@@ -75,6 +75,47 @@ describe("BackendSettingsDialog terminal accessibility", () => {
   });
 });
 
+describe("BackendSettingsDialog build stamp", () => {
+  it("shows the web and bridge build stamps in the Bridge area", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bridge_version: "0.1.0",
+        git_sha: "66c5eb6d",
+        build_time: "2026-09-03T08:20:55Z",
+        protocol_version: 20,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const { container } = await render(<SettingsHarness onChange={vi.fn()} />);
+      // The Bridge area is the tab the dialog opens on, so the stamp needs no extra taps.
+      const values = Array.from(
+        container.querySelectorAll<HTMLElement>(".settings-build-value"),
+      ).map((node) => node.textContent);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/version");
+      expect(values).toHaveLength(2);
+      expect(values[0]?.trim()).not.toBe("");
+      expect(values[1]).toBe("v0.1.0 · 66c5eb6d · 2026-09-03T08:20:55Z · protocol 20");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("says the bridge stamp is unavailable when /api/version fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    try {
+      const { container } = await render(<SettingsHarness onChange={vi.fn()} />);
+      const values = Array.from(
+        container.querySelectorAll<HTMLElement>(".settings-build-value"),
+      ).map((node) => node.textContent);
+      expect(values[1]).toBe("unavailable");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 function SettingsHarness({ onChange }: { onChange: (enabled: boolean) => void }) {
   const [terminalScreenReaderText, setTerminalScreenReaderText] = useState(false);
   return (
