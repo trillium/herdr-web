@@ -38,6 +38,14 @@ This is a lightweight internal onboarding note for agents working in this repo.
   `HERDR_WEB_BUILD_TIME`) and served by `GET /api/version`; the web half is baked in by the
   `define` block in `web/vite.config.ts` and read via `web/src/buildStamp.ts`. Both fall back to
   `unknown` rather than failing the build. Settings -> Bridge renders both.
+- One terminal is watched by many clients at once. A `terminal_id` has exactly ONE daemon attach
+  (`SharedTerminalSession`), fanned out to every websocket client; there is no priority gate in the
+  websocket path, so `connection_manager`'s priorities/nicknames are advisory metadata for the API
+  only. Two consequences live in `bridge/src/terminal_multiplex.rs` and must not be bypassed: a
+  joining client is repainted from a bounded replay buffer (the daemon only repaints on a *fresh*
+  attach, and a `broadcast::Receiver` never sees earlier frames), and per-client `cols`/`rows` are
+  coalesced to the per-axis minimum before any `Resize` reaches the daemon. Never send a client's
+  own size straight through — that clobbers every other viewer.
 - Remote bridges (`--remote-bridge <url>`, proxied under `/api/remote/{bridge_id}/...` and
   `/ws/remote/{bridge_id}/terminal`) are only reachable if the local bridge process was started with
   that URL — bridge ids are derived server-side from the URL hostname. Any client-side UI for adding
