@@ -4,7 +4,7 @@ use std::fmt;
 use std::io::{self, ErrorKind, Write};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -68,6 +68,9 @@ use crate::notes::{
 };
 use crate::store_util::{
     default_store_dir, ensure_private_dir, set_private_file_permissions, LockFile,
+};
+use crate::terminal_multiplex::{
+    TerminalReplayBuffer, TerminalSizeCoalescer, TerminalViewSize, MAX_TERMINAL_REPLAY_BYTES,
 };
 
 const DEFAULT_HOST: &str = "127.0.0.1";
@@ -736,9 +739,129 @@ impl ConnectionClosed {
 #[derive(Clone)]
 struct SharedTerminalSession {
     write_tx: TerminalWriter,
-    output_tx: tokio::sync::broadcast::Sender<TerminalOutput>,
+    output: Arc<TerminalOutputFanout>,
+    /// Every client on this terminal shares one pty, so their view sizes are
+    /// reconciled to a single size before any of them reaches the daemon.
+    sizes: Arc<Mutex<TerminalSizeCoalescer>>,
     client_count: Arc<AtomicUsize>,
     connection_closed: Arc<ConnectionClosed>,
+}
+
+/// One websocket client's slot in its terminal's size coalescer.
+///
+/// Holds the shared coalescer plus this client's key so connect, resize and
+/// disconnect all go through the same place, and a `Resize` only reaches the
+/// daemon when the coalesced size actually moved.
+#[derive(Clone)]
+struct TerminalClientSize {
+    coalescer: Arc<Mutex<TerminalSizeCoalescer>>,
+    client_key: u64,
+}
+
+impl TerminalClientSize {
+    fn new(coalescer: Arc<Mutex<TerminalSizeCoalescer>>, client_key: u64) -> Self {
+        Self {
+            coalescer,
+            client_key,
+        }
+    }
+
+    /// Records this client's geometry and resizes the pty if the coalesced
+    /// size changed.
+    fn apply(&self, write_tx: &TerminalWriter, size: TerminalViewSize) {
+        let next = match self.coalescer.lock() {
+            Ok(mut coalescer) => coalescer.set(self.client_key, size),
+            Err(_) => None,
+        };
+        Self::send(write_tx, next);
+    }
+
+    /// Drops this client from the coalescer, growing the pty back if it was
+    /// the constraining one.
+    fn release(&self, write_tx: &TerminalWriter) {
+        let next = match self.coalescer.lock() {
+            Ok(mut coalescer) => coalescer.remove(self.client_key),
+            Err(_) => None,
+        };
+        Self::send(write_tx, next);
+    }
+
+    fn send(write_tx: &TerminalWriter, size: Option<TerminalViewSize>) {
+        let Some(size) = size else {
+            return;
+        };
+        let _ = write_tx.send(ClientMessage::Resize {
+            cols: size.cols,
+            rows: size.rows,
+            cell_width_px: size.cell_width_px,
+            cell_height_px: size.cell_height_px,
+        });
+    }
+}
+
+/// Distinguishes concurrent viewers of one terminal for size coalescing.
+static NEXT_TERMINAL_CLIENT_KEY: AtomicU64 = AtomicU64::new(0);
+
+fn next_terminal_client_key() -> u64 {
+    NEXT_TERMINAL_CLIENT_KEY.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Fans daemon output out to every websocket client on a terminal and keeps the
+/// most recent bytes so a client joining a live attach is repainted at once.
+///
+/// Publishing and subscribing both take the same lock: a publisher appends to
+/// the replay window and broadcasts while holding it, and a subscriber takes
+/// its snapshot and its `Receiver` while holding it. A frame therefore cannot
+/// land between a joiner's snapshot and its subscription — no gap — and cannot
+/// be in both — no duplication. `broadcast::Sender::send` never blocks or
+/// awaits, so holding a `std` mutex across it is safe.
+struct TerminalOutputFanout {
+    inner: Mutex<TerminalOutputFanoutInner>,
+}
+
+struct TerminalOutputFanoutInner {
+    tx: tokio::sync::broadcast::Sender<TerminalOutput>,
+    replay: TerminalReplayBuffer,
+}
+
+impl TerminalOutputFanout {
+    fn new(tx: tokio::sync::broadcast::Sender<TerminalOutput>, replay_capacity: usize) -> Self {
+        Self {
+            inner: Mutex::new(TerminalOutputFanoutInner {
+                tx,
+                replay: TerminalReplayBuffer::new(replay_capacity),
+            }),
+        }
+    }
+
+    fn publish(&self, output: TerminalOutput) {
+        let Ok(mut inner) = self.inner.lock() else {
+            return;
+        };
+        if let TerminalOutput::Bytes(bytes) = &output {
+            inner.replay.push(bytes.clone());
+        }
+        let _ = inner.tx.send(output);
+    }
+
+    /// Subscribes to live output, returning the buffered output that preceded
+    /// the subscription so the caller can repaint before draining the receiver.
+    fn subscribe(
+        &self,
+    ) -> (
+        Option<Bytes>,
+        tokio::sync::broadcast::Receiver<TerminalOutput>,
+    ) {
+        let Ok(inner) = self.inner.lock() else {
+            // A poisoned fanout means a publisher panicked mid-broadcast; the
+            // session is already doomed, so hand back a receiver that will see
+            // the close rather than taking the whole connection down here.
+            let (tx, rx) = tokio::sync::broadcast::channel(1);
+            drop(tx);
+            return (None, rx);
+        };
+        (inner.replay.snapshot(), inner.tx.subscribe())
+    }
 }
 
 /// Sender for daemon-bound terminal messages that bounds how many input
@@ -4384,7 +4507,10 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
     }
 
     let write_tx = session.write_tx.clone();
-    let mut terminal_rx = session.output_tx.subscribe();
+    // Snapshot the buffered output and subscribe atomically, so this client
+    // repaints from the replay and then continues from the first frame the
+    // snapshot does not already contain.
+    let (replay, mut terminal_rx) = session.output.subscribe();
     if output_encoding == TerminalOutputWireEncoding::Gzip {
         let ack = Message::Text(TERMINAL_OUTPUT_GZIP_ACKNOWLEDGEMENT.into());
         if ws_sender.send(ack).await.is_err() {
@@ -4393,13 +4519,20 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
         }
     }
 
+    // A joiner never triggers a daemon attach, and the daemon only repaints on
+    // a fresh one, so the replay is the only thing that fills a second viewer's
+    // screen. It goes out before anything is drained from the receiver.
+    if let Some(replay) = replay {
+        if !send_terminal_output_frame(&mut ws_sender, replay, output_encoding).await {
+            release_terminal_session(&state.terminal_sessions, &terminal_id, &session);
+            return;
+        }
+    }
+
     let mut output_coalescer = TerminalOutputCoalescer::new(coalesce_window);
-    let _ = write_tx.send(ClientMessage::Resize {
-        cols,
-        rows,
-        cell_width_px: 0,
-        cell_height_px: 0,
-    });
+    let client_key = next_terminal_client_key();
+    let sizes = TerminalClientSize::new(Arc::clone(&session.sizes), client_key);
+    sizes.apply(&write_tx, TerminalViewSize::new(cols, rows));
 
     loop {
         if let Some(deadline) = output_coalescer.deadline() {
@@ -4417,7 +4550,7 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
                     }
                 }
                 Some(message) = ws_receiver.next() => {
-                    if !handle_terminal_client_message(&write_tx, message) {
+                    if !handle_terminal_client_message(&write_tx, &sizes, message) {
                         break;
                     }
                 }
@@ -4450,7 +4583,7 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
                     }
                 }
                 Some(message) = ws_receiver.next() => {
-                    if !handle_terminal_client_message(&write_tx, message) {
+                    if !handle_terminal_client_message(&write_tx, &sizes, message) {
                         break;
                     }
                 }
@@ -4466,6 +4599,11 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
     {
         debug!("Failed to unregister connection: {}", e);
     }
+
+    // Give back whatever constraint this client imposed on the shared pty, so
+    // a phone leaving lets the desktop grow again. No-op when it was the last
+    // client: `release_terminal_session` below tears the attach down anyway.
+    sizes.release(&write_tx);
 
     release_terminal_session(&state.terminal_sessions, &terminal_id, &session);
 }
@@ -4552,10 +4690,13 @@ async fn handle_terminal_output_message(
 
 fn handle_terminal_client_message(
     write_tx: &TerminalWriter,
+    sizes: &TerminalClientSize,
     message: Result<Message, axum::Error>,
 ) -> bool {
     match message {
-        Ok(Message::Text(text)) => handle_terminal_text_frame(write_tx, text.as_str()).is_ok(),
+        Ok(Message::Text(text)) => {
+            handle_terminal_text_frame(write_tx, sizes, text.as_str()).is_ok()
+        }
         Ok(Message::Binary(bytes)) => send_terminal_input_chunks(write_tx, &bytes).is_ok(),
         Ok(Message::Close(_)) => false,
         Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => true,
@@ -4669,6 +4810,10 @@ async fn acquire_terminal_session(
             let handshake = || -> Result<SharedTerminalSession, BridgeError> {
                 let protocol_version = terminal_attach_protocol(&state.api)?;
                 let (output_tx, _) = tokio::sync::broadcast::channel(256);
+                let output = Arc::new(TerminalOutputFanout::new(
+                    output_tx,
+                    MAX_TERMINAL_REPLAY_BYTES,
+                ));
                 let attach = open_terminal_attach(
                     state.client_socket_path.clone(),
                     terminal_id.clone(),
@@ -4676,11 +4821,17 @@ async fn acquire_terminal_session(
                     rows,
                     takeover,
                     protocol_version,
-                    output_tx.clone(),
+                    Arc::clone(&output),
                 )?;
                 Ok(SharedTerminalSession {
                     write_tx: attach.write_tx,
-                    output_tx,
+                    output,
+                    // The handshake above already established this size with
+                    // the daemon, so the attaching client re-sending it would
+                    // only cost a reflow.
+                    sizes: Arc::new(Mutex::new(TerminalSizeCoalescer::new(
+                        TerminalViewSize::new(cols, rows),
+                    ))),
                     client_count: Arc::new(AtomicUsize::new(0)),
                     connection_closed: attach.connection_closed,
                 })
@@ -4844,9 +4995,9 @@ fn close_terminal_session(
     session: &SharedTerminalSession,
     reason: &str,
 ) {
-    let _ = session
-        .output_tx
-        .send(TerminalOutput::Close(reason.to_string()));
+    session
+        .output
+        .publish(TerminalOutput::Close(reason.to_string()));
     let _ = session.write_tx.send(ClientMessage::Detach);
     let Ok(mut sessions) = sessions.lock() else {
         return;
@@ -5212,7 +5363,11 @@ fn send_terminal_input_chunks(
     Ok(stats)
 }
 
-fn handle_terminal_text_frame(write_tx: &TerminalWriter, text: &str) -> Result<(), String> {
+fn handle_terminal_text_frame(
+    write_tx: &TerminalWriter,
+    sizes: &TerminalClientSize,
+    text: &str,
+) -> Result<(), String> {
     let frame = parse_terminal_client_frame(text)?;
     match frame {
         TerminalClientFrame::Input { data } => {
@@ -5224,15 +5379,20 @@ fn handle_terminal_text_frame(write_tx: &TerminalWriter, text: &str) -> Result<(
             rows,
             cell_width_px,
             cell_height_px,
-        } => write_tx
-            .send(ClientMessage::Resize {
-                cols,
-                rows,
-                cell_width_px,
-                cell_height_px,
-            })
-            .map(|_| ())
-            .map_err(|_| "terminal writer closed".to_string()),
+        } => {
+            // One pty is shared by every viewer, so a client's own geometry is
+            // only an input to the coalesced size, never sent through as-is.
+            sizes.apply(
+                write_tx,
+                TerminalViewSize {
+                    cols,
+                    rows,
+                    cell_width_px,
+                    cell_height_px,
+                },
+            );
+            Ok(())
+        }
         TerminalClientFrame::Scroll { direction, lines } => write_tx
             .send(ClientMessage::AttachScroll {
                 source: AttachScrollSource::Wheel,
@@ -5266,7 +5426,7 @@ fn open_terminal_attach(
     rows: u16,
     takeover: bool,
     protocol_version: u32,
-    output_tx: tokio::sync::broadcast::Sender<TerminalOutput>,
+    output: Arc<TerminalOutputFanout>,
 ) -> Result<TerminalAttach, BridgeError> {
     let mut stream = herdr_compat::ipc::connect_local_stream(&client_socket_path)?;
     protocol::write_message(
@@ -5348,13 +5508,13 @@ fn open_terminal_attach(
                 match protocol::read_message(&mut read_stream, MAX_GRAPHICS_FRAME_SIZE) {
                     Ok(message) => message,
                     Err(err) => {
-                        let _ = output_tx.send(TerminalOutput::Close(err.to_string()));
+                        output.publish(TerminalOutput::Close(err.to_string()));
                         break;
                     }
                 };
             match message {
                 ServerMessage::Terminal(frame) => {
-                    let _ = output_tx.send(TerminalOutput::Bytes(Bytes::from(frame.bytes)));
+                    output.publish(TerminalOutput::Bytes(Bytes::from(frame.bytes)));
                 }
                 ServerMessage::ServerShutdown { reason } => {
                     let reason = reason.unwrap_or_else(|| "server shutdown".to_string());
@@ -5366,7 +5526,7 @@ fn open_terminal_attach(
                         reason = %reason,
                         "terminal attach connection closed by daemon"
                     );
-                    let _ = output_tx.send(TerminalOutput::Close(reason));
+                    output.publish(TerminalOutput::Close(reason));
                     break;
                 }
                 ServerMessage::Welcome { .. } => {}
@@ -5910,13 +6070,252 @@ mod tests {
         );
     }
 
+    fn replay_bytes(output: Option<Bytes>) -> Vec<u8> {
+        output.map(|bytes| bytes.to_vec()).unwrap_or_default()
+    }
+
+    fn recv_bytes(rx: &mut tokio::sync::broadcast::Receiver<TerminalOutput>) -> Vec<u8> {
+        match rx.try_recv() {
+            Ok(TerminalOutput::Bytes(bytes)) => bytes.to_vec(),
+            other => panic!("expected buffered output bytes, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn late_subscriber_receives_the_replay_buffer_before_live_output() {
+        let (tx, _keepalive) = tokio::sync::broadcast::channel(8);
+        let fanout = TerminalOutputFanout::new(tx, MAX_TERMINAL_REPLAY_BYTES);
+        fanout.publish(TerminalOutput::Bytes(Bytes::from_static(b"prompt$ ")));
+        fanout.publish(TerminalOutput::Bytes(Bytes::from_static(b"ls\r\n")));
+
+        // A client joining an already-live attach: everything the terminal has
+        // printed so far arrives as the replay, and only later output arrives
+        // over the subscription.
+        let (replay, mut rx) = fanout.subscribe();
+        assert_eq!(replay_bytes(replay), b"prompt$ ls\r\n".to_vec());
+        assert!(rx.try_recv().is_err());
+
+        fanout.publish(TerminalOutput::Bytes(Bytes::from_static(b"a.txt\r\n")));
+        assert_eq!(recv_bytes(&mut rx), b"a.txt\r\n".to_vec());
+    }
+
+    #[test]
+    fn first_subscriber_is_not_repainted_twice() {
+        let (tx, _keepalive) = tokio::sync::broadcast::channel(8);
+        let fanout = TerminalOutputFanout::new(tx, MAX_TERMINAL_REPLAY_BYTES);
+
+        // The client that opened the attach subscribes before the daemon's
+        // repaint arrives, so it must see that repaint exactly once: live, with
+        // nothing to replay.
+        let (replay, mut rx) = fanout.subscribe();
+        assert_eq!(replay, None);
+
+        fanout.publish(TerminalOutput::Bytes(Bytes::from_static(b"repaint")));
+        assert_eq!(recv_bytes(&mut rx), b"repaint".to_vec());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn output_published_before_a_subscription_is_never_delivered_twice() {
+        let (tx, _keepalive) = tokio::sync::broadcast::channel(8);
+        let fanout = TerminalOutputFanout::new(tx, MAX_TERMINAL_REPLAY_BYTES);
+        fanout.publish(TerminalOutput::Bytes(Bytes::from_static(b"before")));
+
+        let (replay, mut rx) = fanout.subscribe();
+        fanout.publish(TerminalOutput::Bytes(Bytes::from_static(b"after")));
+
+        // No gap: "before" is in the replay. No duplication: it is not also on
+        // the receiver.
+        assert_eq!(replay_bytes(replay), b"before".to_vec());
+        assert_eq!(recv_bytes(&mut rx), b"after".to_vec());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn close_notices_are_broadcast_but_never_replayed() {
+        let (tx, _keepalive) = tokio::sync::broadcast::channel(8);
+        let fanout = TerminalOutputFanout::new(tx, MAX_TERMINAL_REPLAY_BYTES);
+        fanout.publish(TerminalOutput::Bytes(Bytes::from_static(b"output")));
+        fanout.publish(TerminalOutput::Close(
+            "terminal closed by Herdr".to_string(),
+        ));
+
+        let (replay, _rx) = fanout.subscribe();
+        assert_eq!(replay_bytes(replay), b"output".to_vec());
+    }
+
+    fn test_client_size(cols: u16, rows: u16) -> TerminalClientSize {
+        TerminalClientSize::new(
+            Arc::new(Mutex::new(TerminalSizeCoalescer::new(
+                TerminalViewSize::new(cols, rows),
+            ))),
+            next_terminal_client_key(),
+        )
+    }
+
+    #[test]
+    fn resize_frame_sends_the_coalesced_size_not_the_clients_own() {
+        let (write_tx, rx) = test_terminal_writer();
+        let coalescer = Arc::new(Mutex::new(TerminalSizeCoalescer::new(
+            TerminalViewSize::new(120, 40),
+        )));
+        let desktop = TerminalClientSize::new(Arc::clone(&coalescer), next_terminal_client_key());
+        let phone = TerminalClientSize::new(Arc::clone(&coalescer), next_terminal_client_key());
+        desktop.apply(&write_tx, TerminalViewSize::new(120, 40));
+        phone.apply(&write_tx, TerminalViewSize::new(50, 20));
+        // Drain the connect-time resize the phone's arrival caused.
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            ClientMessage::Resize {
+                cols: 50,
+                rows: 20,
+                cell_width_px: 0,
+                cell_height_px: 0
+            }
+        );
+
+        // The desktop reflows; the pty must stay at the phone's width.
+        handle_terminal_text_frame(
+            &write_tx,
+            &desktop,
+            r#"{"type":"resize","cols":200,"rows":60}"#,
+        )
+        .unwrap();
+        assert!(rx.try_recv().is_err(), "coalesced size did not change");
+
+        // The phone rotates to landscape and stops being the row constraint.
+        handle_terminal_text_frame(
+            &write_tx,
+            &phone,
+            r#"{"type":"resize","cols":90,"rows":30}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            ClientMessage::Resize {
+                cols: 90,
+                rows: 30,
+                cell_width_px: 0,
+                cell_height_px: 0
+            }
+        );
+    }
+
+    #[test]
+    fn a_disconnecting_client_releases_its_size_constraint() {
+        let (write_tx, rx) = test_terminal_writer();
+        let coalescer = Arc::new(Mutex::new(TerminalSizeCoalescer::new(
+            TerminalViewSize::new(120, 40),
+        )));
+        let desktop = TerminalClientSize::new(Arc::clone(&coalescer), next_terminal_client_key());
+        let phone = TerminalClientSize::new(Arc::clone(&coalescer), next_terminal_client_key());
+        desktop.apply(&write_tx, TerminalViewSize::new(120, 40));
+        phone.apply(&write_tx, TerminalViewSize::new(50, 20));
+        let _ = rx.try_recv();
+
+        phone.release(&write_tx);
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            ClientMessage::Resize {
+                cols: 120,
+                rows: 40,
+                cell_width_px: 0,
+                cell_height_px: 0
+            }
+        );
+
+        // Last client out: nobody is watching, so the pty is left alone.
+        desktop.release(&write_tx);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_zero_resize_frame_never_reaches_the_daemon() {
+        let (write_tx, rx) = test_terminal_writer();
+        let coalescer = Arc::new(Mutex::new(TerminalSizeCoalescer::new(
+            TerminalViewSize::new(120, 40),
+        )));
+        let desktop = TerminalClientSize::new(Arc::clone(&coalescer), next_terminal_client_key());
+        let phone = TerminalClientSize::new(Arc::clone(&coalescer), next_terminal_client_key());
+        desktop.apply(&write_tx, TerminalViewSize::new(120, 40));
+        phone.apply(&write_tx, TerminalViewSize::new(50, 20));
+        let _ = rx.try_recv();
+
+        // The phone is backgrounded and reports a collapsed viewport. Taking
+        // the minimum with it would blank every viewer at once.
+        handle_terminal_text_frame(&write_tx, &phone, r#"{"type":"resize","cols":0,"rows":0}"#)
+            .unwrap();
+        assert!(
+            rx.try_recv().is_err(),
+            "a zero size must not resize the pty"
+        );
+
+        // The phone comes back and its real geometry still applies.
+        handle_terminal_text_frame(
+            &write_tx,
+            &phone,
+            r#"{"type":"resize","cols":70,"rows":28}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            ClientMessage::Resize {
+                cols: 70,
+                rows: 28,
+                cell_width_px: 0,
+                cell_height_px: 0
+            }
+        );
+    }
+
+    #[test]
+    fn a_client_connecting_with_a_zero_size_does_not_resize_the_pty() {
+        let (write_tx, rx) = test_terminal_writer();
+        let coalescer = Arc::new(Mutex::new(TerminalSizeCoalescer::new(
+            TerminalViewSize::new(120, 40),
+        )));
+        let desktop = TerminalClientSize::new(Arc::clone(&coalescer), next_terminal_client_key());
+        let unmeasured =
+            TerminalClientSize::new(Arc::clone(&coalescer), next_terminal_client_key());
+        desktop.apply(&write_tx, TerminalViewSize::new(120, 40));
+
+        unmeasured.apply(&write_tx, TerminalViewSize::new(0, 0));
+        assert!(
+            rx.try_recv().is_err(),
+            "an unmeasured joiner resized the pty"
+        );
+
+        // And leaving again does not disturb the client that is still watching.
+        unmeasured.release(&write_tx);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn input_frames_still_pass_through_with_size_coalescing_in_place() {
+        let (write_tx, rx) = test_terminal_writer();
+        let sizes = test_client_size(80, 24);
+        handle_terminal_text_frame(&write_tx, &sizes, r#"{"type":"input","data":"ls"}"#).unwrap();
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            ClientMessage::Input {
+                data: b"ls".to_vec()
+            }
+        );
+    }
+
     fn test_shared_terminal_session() -> (SharedTerminalSession, mpsc::Receiver<ClientMessage>) {
         let (write_tx, rx) = test_terminal_writer();
         let (output_tx, _) = tokio::sync::broadcast::channel(8);
         (
             SharedTerminalSession {
                 write_tx,
-                output_tx,
+                output: Arc::new(TerminalOutputFanout::new(
+                    output_tx,
+                    MAX_TERMINAL_REPLAY_BYTES,
+                )),
+                sizes: Arc::new(Mutex::new(TerminalSizeCoalescer::new(
+                    TerminalViewSize::new(80, 24),
+                ))),
                 client_count: Arc::new(AtomicUsize::new(1)),
                 connection_closed: Arc::new(ConnectionClosed::default()),
             },
@@ -6070,7 +6469,10 @@ mod tests {
             24,
             false,
             PROTOCOL_VERSION,
-            output_tx,
+            Arc::new(TerminalOutputFanout::new(
+                output_tx,
+                MAX_TERMINAL_REPLAY_BYTES,
+            )),
         )
         .unwrap();
 

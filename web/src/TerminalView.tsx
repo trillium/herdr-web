@@ -12,7 +12,7 @@ import {
   TextCursorInput,
   X,
 } from "lucide-react";
-import ConnectionConflictCard from "./ConnectionConflictCard";
+import TerminalViewersCard from "./TerminalViewersCard";
 import { useLongPress } from "./overlays";
 import {
 
@@ -43,7 +43,8 @@ import {
   normalizeMobileTerminalCopyText,
   openableHttpUrl,
 } from "./terminalSelection";
-import { GhosttyRenderer } from "./terminalRenderer";
+import { GhosttyRenderer, isUsableTerminalSize } from "./terminalRenderer";
+import { TerminalMeasurePump } from "./terminalMeasure";
 import type { Theme } from "./theme";
 import type { MobileTerminalTouchEvent, TerminalRenderer, TerminalSize } from "./terminalRenderer";
 import {
@@ -389,16 +390,26 @@ export function TerminalView({
     [copyText],
   );
 
+  const resizePumpRef = useRef<TerminalMeasurePump | null>(null);
+  if (resizePumpRef.current === null) {
+    resizePumpRef.current = new TerminalMeasurePump();
+  }
+
   const measureTerminal = useCallback(
     (renderer: TerminalRenderer, mode: "fit" | "refresh" = "fit") => {
+      let size: TerminalSize | null;
       try {
-        return mode === "refresh" ? renderer.refreshMetrics() : renderer.fit();
+        size = mode === "refresh" ? renderer.refreshMetrics() : renderer.fit();
       } catch (error) {
         if (rendererRef.current === renderer) {
           console.warn("terminal resize skipped", error);
         }
         return null;
       }
+      // The container has no layout yet, so this is not a small terminal, it is
+      // no measurement. Sending it would shrink the shared pty for every other
+      // viewer of this terminal.
+      return isUsableTerminalSize(size) ? size : null;
     },
     [],
   );
@@ -409,13 +420,20 @@ export function TerminalView({
       if (!renderer) {
         return;
       }
-      const size = measureTerminal(renderer, mode);
-      if (size) {
-        sendResizeRef.current(size);
-      }
+      // A degenerate measurement is dropped and re-measured on the next frame
+      // rather than sent; see TerminalMeasurePump.
+      resizePumpRef.current?.run(
+        () => (rendererRef.current === renderer ? measureTerminal(renderer, mode) : null),
+        (size) => sendResizeRef.current(size),
+      );
     },
     [measureTerminal],
   );
+
+  useEffect(() => {
+    const pump = resizePumpRef.current;
+    return () => pump?.cancel();
+  }, []);
 
   const sendTerminalInputFrame = useCallback(
     (socket: WebSocket, data: string) => {
@@ -594,20 +612,23 @@ export function TerminalView({
     setConnectionState("connecting");
 
     const measure = (mode: "fit" | "refresh" = "fit") => measureTerminal(renderer, mode);
+    // Publishing waits for a real measurement: a pane that has not been laid
+    // out yet has nothing to send and nothing to report as ready, and a
+    // dynamic-viewport transition is not guaranteed to emit a further resize
+    // event once it settles.
+    const readyPump = new TerminalMeasurePump();
     const publishReady = (mode: "fit" | "refresh" = "fit") => {
-      if (disposed || rendererRef.current !== renderer) {
-        return;
-      }
-      const size = measure(mode);
-      if (!size) {
-        return;
-      }
-      if (rendererReadyRef.current?.generation !== generation) {
-        const ready = { terminalId, generation, renderer, measure };
-        rendererReadyRef.current = ready;
-        setRendererReady(ready);
-      }
-      sendResizeRef.current(size);
+      readyPump.run(
+        () => (disposed || rendererRef.current !== renderer ? null : measure(mode)),
+        (size) => {
+          if (rendererReadyRef.current?.generation !== generation) {
+            const ready = { terminalId, generation, renderer, measure };
+            rendererReadyRef.current = ready;
+            setRendererReady(ready);
+          }
+          sendResizeRef.current(size);
+        },
+      );
     };
     let settleTimer: number | null = null;
     let pendingSettleMode: "fit" | "refresh" = "fit";
@@ -716,6 +737,7 @@ export function TerminalView({
       if (settleTimer !== null) {
         window.clearTimeout(settleTimer);
       }
+      readyPump.cancel();
       flushBatchedTerminalInput();
       batchedInputRef.current = emptyTerminalInputBatch();
       clearQueuedTerminalInput();
@@ -1543,7 +1565,7 @@ export function TerminalView({
       ) : null}
       {pane && (
         <div className="terminal-connection-panel">
-          <ConnectionConflictCard terminalId={pane.terminal_id} httpUrl={httpUrl} />
+          <TerminalViewersCard terminalId={pane.terminal_id} httpUrl={httpUrl} />
         </div>
       )}
       {scrolledAwayFromPresent ? (

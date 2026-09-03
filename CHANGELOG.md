@@ -98,6 +98,11 @@
 
 ### Changed
 
+- Replaced the terminal "⚠ Multiple Connections" conflict card with a passive "N devices viewing"
+  indicator. Nothing in the websocket path ever enforced the priority lockout that card implied —
+  every attached client has always received output — so the warning and its ↑/↓ priority controls
+  described a conflict that did not exist. The nickname and priority REST endpoints are unchanged.
+
 - Uploads now keep the original filename instead of failing on a name collision. Uploading
   `image.png` a second time saves it as `image-1.png` (then `image-2.png`, ...) alongside the first
   file rather than returning `409 file exists`; `?overwrite=true` remains the only way to replace
@@ -164,6 +169,35 @@
   package to a virtual module that throws on evaluation, so the dynamic import rejects exactly as
   an externalized specifier does in production and the parlay tests self-skip as they were written
   to. Scoped to Vitest; `vite build` output is unchanged.
+
+- Fixed a second client on the same terminal rendering a blank screen. The bridge multiplexes one
+  daemon attach out to every websocket client, but the daemon only repaints on a *fresh* attach and
+  a broadcast receiver only sees frames sent after it subscribes — so a client joining a live
+  terminal saw nothing until the pty next wrote, i.e. forever on an idle shell. Each shared session
+  now keeps a bounded window (1 MiB) of the most recent output and hands it to a joining client as
+  its first frame, taken under the same lock as the subscription so there is no gap and no
+  duplicate repaint.
+
+- Fixed one client's window size clobbering everyone else's. Every connecting client used to push
+  its own `cols`/`rows` straight through to the shared pty, so a phone joining shrank the desktop
+  and a desktop joining made the phone unreadable. The pty is now sized to the smallest connected
+  client on each axis, recomputed on connect, disconnect and resize, and sent only when the
+  coalesced size actually changes. A client reporting a zero width or height — mobile Safari before
+  layout settles, or a backgrounded PWA — is ignored rather than counted, so it cannot pull the
+  shared pty to nothing. The last client leaving no longer resizes.
+
+- Fixed Safari and iOS rendering a blank page. The optional parlay voice sidecar listens on a
+  separate origin (port 4242), which this page's `connect-src 'self' data:` CSP blocks. Chrome
+  reports that block as an async `error` event, but WebKit throws `SecurityError` out of the
+  `EventSource` constructor; the throw escaped the React effect and took the entire tree down with
+  it, so the terminal never rendered. The stream is now opened defensively and a construction
+  failure degrades to the plain input the component already falls back to. Parlay voice-submit
+  itself still cannot reach a cross-origin sidecar under this CSP; only the blank page is fixed.
+
+- Fixed the web client sending a zero terminal size. A pane measured mid-layout — iOS Safari during
+  a dynamic-viewport transition, or a PWA restoring from the background — reports 0 columns or rows,
+  and that measurement was forwarded as a real resize. It is now treated as no measurement at all:
+  nothing is sent and the pane is re-measured on the next frame until it settles.
 
 - Fixed `--allow-host` rejecting an explicitly allow-listed hostname whenever the `Host` header's
   port differed from `--port` (or was absent). This broke reverse-proxy setups such as

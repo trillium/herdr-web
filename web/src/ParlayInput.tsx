@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { ActionEnvelope, CommandContext } from "@parlay/client";
 import { autosizeMobileCommandTextarea } from "./mobileCommandTextarea";
@@ -50,6 +50,12 @@ export function ParlayInput({
   inputRef,
 }: ParlayInputProps) {
   const PARLAY_SERVER_URL = `${window.location.protocol}//${window.location.hostname}:4242`;
+
+  // Set when the browser refuses to open the parlay event stream at all. The
+  // parlay server is a separate origin (port 4242) and this page's CSP is
+  // `connect-src 'self' data:`, so every parlay round trip is blocked, not just
+  // the stream — the component has to fall back to a plain input.
+  const [parlayStreamBlocked, setParlayStreamBlocked] = useState(false);
 
   const nodeRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const valueRef = useRef(value);
@@ -111,9 +117,22 @@ export function ParlayInput({
       client.bumpInputVersion();
       client.scheduleEval(() => valueRef.current, evalCtx, true, reason);
     };
-    const es = new EventSource(
-      `${PARLAY_SERVER_URL}/api/chat/events?device=${encodeURIComponent(deviceId)}`,
-    );
+    // Chrome surfaces a CSP block as an async `error` event, but WebKit throws
+    // SecurityError straight out of the constructor. Unguarded, that throw
+    // escapes this effect, React tears down the whole tree, and Safari/iOS
+    // render a blank page — the browser cannot show a terminal because a voice
+    // input could not reach an optional sidecar. Treat it as parlay being
+    // unavailable, which is a state this component already renders.
+    let es: EventSource;
+    try {
+      es = new EventSource(
+        `${PARLAY_SERVER_URL}/api/chat/events?device=${encodeURIComponent(deviceId)}`,
+      );
+    } catch (error) {
+      console.debug("parlay event stream unavailable:", error);
+      setParlayStreamBlocked(true);
+      return;
+    }
     const onInputAction = (event: MessageEvent<string>) => {
       let env: ActionEnvelope;
       try {
@@ -135,7 +154,7 @@ export function ParlayInput({
     };
   }, []);
 
-  const client = parlay;
+  const client = parlayStreamBlocked ? null : parlay;
 
   // If parlay is not available, render a plain input.
   if (!client) {

@@ -3607,32 +3607,32 @@ button {
   pointer-events: auto;
 }
 
-.terminal-connection-panel :is(.connection-card) {
-  font-size: 13px;
-  background: var(--surface1);
-  border-color: var(--surface2);
+/* Several clients viewing one terminal is a supported mode, not a fault, so
+   this reads as a quiet status line rather than a warning. */
+.terminal-viewers {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: color-mix(in srgb, var(--surface1) 88%, transparent);
+  border: 1px solid var(--surface2);
+  color: var(--subtext0);
+  max-width: 100%;
+  overflow: hidden;
 }
 
-.terminal-connection-panel :is(.connection-card.conflict) {
-  border-left: 4px solid var(--red);
-  background: rgba(243, 139, 168, 0.08);
-  border-color: rgba(243, 139, 168, 0.3);
-}
-
-.terminal-connection-panel :is(.connection-item) {
-  border-left-color: var(--accent);
-  background: var(--surface0);
-}
-
-.terminal-connection-panel :is(.priority-btn) {
-  background: var(--surface1);
-  border-color: var(--surface2);
+.terminal-viewers-count {
   color: var(--text);
+  white-space: nowrap;
 }
 
-.terminal-connection-panel :is(.priority-btn:hover:not(:disabled)) {
-  background: var(--surface2);
-  border-color: var(--overlay0);
+.terminal-viewers-names {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Mobile pin-cycle: the control row picks up a muted green wash while the

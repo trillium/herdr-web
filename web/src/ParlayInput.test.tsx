@@ -88,6 +88,7 @@ async function renderInput(props: {
       />,
     );
   });
+  return container;
 }
 
 describe("ParlayInput next/prev agent wiring", () => {
@@ -123,5 +124,61 @@ describe("ParlayInput next/prev agent wiring", () => {
 
     expect(onPrevAgent).toHaveBeenCalledTimes(1);
     expect(onNextAgent).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Regression test for the blank page on Safari/iOS.
+ *
+ * The parlay server lives on a separate origin (port 4242) and this page's CSP
+ * is `connect-src 'self' data:`, so the event stream is blocked. Chrome reports
+ * that as an async `error` event, but WebKit throws SecurityError out of the
+ * `EventSource` constructor. That throw used to escape the effect, React tore
+ * down the whole tree, and the app rendered nothing at all — a blocked optional
+ * voice sidecar took the terminal down with it.
+ */
+describe("ParlayInput when the event stream is blocked", () => {
+  class ThrowingEventSource {
+    constructor() {
+      // What WebKit raises for a CSP-blocked EventSource URL.
+      throw new DOMException("The operation is insecure.", "SecurityError");
+    }
+  }
+
+  it("still renders when the EventSource constructor throws", async () => {
+    vi.stubGlobal("EventSource", ThrowingEventSource);
+
+    const container = await renderInput({ onNextAgent: vi.fn(), onPrevAgent: vi.fn() });
+
+    expect(container.innerHTML.length).toBeGreaterThan(0);
+    expect(container.querySelector("input")).not.toBeNull();
+  });
+
+  it("degrades to a usable plain input rather than losing the tree", async () => {
+    vi.stubGlobal("EventSource", ThrowingEventSource);
+    const onValueChange = vi.fn();
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    roots.push(root);
+    await act(async () => {
+      root.render(
+        <ParlayInput
+          value="hello"
+          onValueChange={onValueChange}
+          onVoiceSubmit={vi.fn()}
+          disabled={false}
+          expandingInput={false}
+          enterNewline={false}
+          controlsScalePercent={100}
+          inputRef={vi.fn()}
+        />,
+      );
+    });
+
+    const input = container.querySelector("input");
+    expect(input).not.toBeNull();
+    expect(input?.value).toBe("hello");
   });
 });
