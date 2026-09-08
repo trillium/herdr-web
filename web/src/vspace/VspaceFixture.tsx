@@ -8,7 +8,7 @@
  *   ?expanding=0    expandingInput=false  (plain single-line input)
  */
 import { createRef, useState } from "react";
-import { MobileTerminalControls } from "../TerminalView";
+import { TerminalCommandControls } from "../TerminalView";
 import "../styles.css";
 
 function parseFlag(param: string | null, defaultVal: boolean): boolean {
@@ -48,12 +48,15 @@ export function VspaceFixture() {
         }}
       />
       {/* Mobile input panel under test */}
-      <MobileTerminalControls
+      <TerminalCommandControls
+        bridgeId="vspace"
+        paneId="fixture"
         commandInputRef={commandInputRef}
         disabled={false}
         uploadDisabled={false}
         expandingInput={expandingInput}
         enterNewline={false}
+        mobileControls
         controlsScalePercent={100}
         compactControls={compact}
         onCompactControlsChange={setCompact}

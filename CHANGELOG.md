@@ -4,6 +4,13 @@
 
 ### Breaking Changes
 
+- Merged upstream `kcosr/herdr-web` through `v0.6.0`. The bridge now requires Herdr `v0.9.0`
+  or newer reporting terminal protocol `22` (was `v0.8.2`/protocol `20`); older daemons are
+  rejected at startup. Upgrade Herdr before upgrading the bridge. All fork features are
+  preserved: parlay composer at every viewport, compact controls, pin-cycle, mobile mode,
+  light/dark themes, smallest-viewer pty sizing, original-filename uploads, build stamp,
+  multibridge proxying, and tailnet tooling.
+
 - Reconciled this fork's `main` with upstream `kcosr/herdr-web` `v0.5.0`. The bridge now requires
   Herdr `v0.8.2` or newer reporting terminal protocol `20`; the fork's previous `v0.8.0`/protocol
   `19` baseline (and its wider `16..=19` accept range) is gone, so Herdr `v0.8.0`/`v0.8.1` daemons
@@ -91,6 +98,88 @@
   forwarded. [PR #11](https://github.com/trillium/herdr-web/pull/11)
 - The mobile command input is now backed by a locally running parlay server for phrase-triggered
   voice submit, replacing the previous native text input.
+### Changed
+
+### Fixed
+
+### Removed
+
+## [0.6.0] - 2026-09-07
+
+### Breaking Changes
+
+- Require Herdr v0.9.0 or newer with terminal protocol 22.
+  [PR #88](https://github.com/kcosr/herdr-web/pull/88).
+
+### Changed
+
+- Refresh the minimal Herdr compatibility code for v0.9.0 while retaining the existing
+  per-terminal ANSI rendering, browser input, and shared-view behavior.
+  [PR #88](https://github.com/kcosr/herdr-web/pull/88).
+
+### Fixed
+
+- Use the browser's active space as the source for new-space launch directories,
+  respecting Herdr's `terminal.new_cwd` policy instead of another client's focus.
+  [PR #88](https://github.com/kcosr/herdr-web/pull/88).
+- Require explicit confirmation before closing a primary workspace and its related workspaces.
+  [PR #88](https://github.com/kcosr/herdr-web/pull/88).
+- Subscribe to live agent activity before establishing the initial status snapshot.
+  [PR #88](https://github.com/kcosr/herdr-web/pull/88).
+
+## [0.5.2] - 2026-09-07
+
+### Added
+
+- Add an optional mobile “Focus command input after Send” setting, off by default,
+  to refocus the cleared command field for continued typing.
+  [PR #85](https://github.com/kcosr/herdr-web/pull/85).
+
+- Added an opt-in desktop command composer under Settings → Terminal for editing multiline input
+  before sending it, without changing desktop terminal selection, scrolling, or cursor
+  behavior. [PR #82](https://github.com/kcosr/herdr-web/pull/82), contributed by
+  [Andreas Ahrens (@AndreasAhrens)](https://github.com/AndreasAhrens).
+
+### Fixed
+
+- Redraw idle Windows terminal selections and scrolling with cursor blinking disabled,
+  and apply cursor-blink changes immediately to mounted terminals.
+  [PR #87](https://github.com/kcosr/herdr-web/pull/87).
+
+- Add a Terminal setting for cursor blinking and default it off on Windows. When it is
+  off, render only for terminal updates and interactions instead of repainting the
+  high-DPI canvas continuously, avoiding severe lag in large Windows browser windows.
+  [PR #86](https://github.com/kcosr/herdr-web/pull/86).
+
+- Discard late keyboard composition updates for 250 ms after command Send or Stage so
+  submitted dictation cannot immediately repopulate the replacement input. Preserve existing
+  field replacement and focus behavior; ordinary non-composing typing and paste remain accepted.
+  New composition started within this brief window can also be discarded.
+  [PR #85](https://github.com/kcosr/herdr-web/pull/85).
+
+- Update locked development dependencies to established security-patched releases for the
+  Capacitor, lint, test, and frontend build tools, preserving cross-platform optional packages.
+  [PR #85](https://github.com/kcosr/herdr-web/pull/85).
+
+- Focus the enabled desktop command composer on terminal attach and navigation focus requests,
+  after closing Settings, and after Send, including Ctrl+Enter and Cmd+Enter. Direct terminal
+  clicks retain focus through reconnects and immediately after a default focus request. Desktop
+  Stage focuses the terminal to edit or run the staged input; mobile keyboard behavior
+  remains unchanged. [PR #82](https://github.com/kcosr/herdr-web/pull/82).
+
+- Keep unsent desktop and mobile command drafts per bridge and pane while navigating, until
+  sent, staged, or the pane is confirmed closed. Drafts remain in memory for the current browser
+  tab only. [PR #82](https://github.com/kcosr/herdr-web/pull/82).
+
+- Fixed desktop terminal copy shortcuts so copying selected text no longer also sends Ctrl+C to
+  the PTY; Ctrl+C without a selection and Ctrl+C on macOS retain their normal interrupt behavior.
+  [PR #84](https://github.com/kcosr/herdr-web/pull/84), contributed by
+  [Andreas Ahrens (@AndreasAhrens)](https://github.com/AndreasAhrens).
+
+## [0.5.1] - 2026-09-04
+
+### Added
+
 - Added a bundled JetBrainsMono Nerd Font Mono fallback for special terminal and LLM output glyphs
   on devices without an accessible Nerd Font.
   [PR #74](https://github.com/kcosr/herdr-web/pull/74), contributed by
@@ -254,6 +343,13 @@
   itself with an `--allow-origin` flag for the serving hostname.
 - Join canvas-wrapped HTTP(S) URLs when copying from a mobile terminal.
   [PR #61](https://github.com/kcosr/herdr-web/pull/61)
+
+- Upload conflicts are now atomically de-duplicated by default: re-uploading `image.png` lands as
+  `image-1.png` instead of prompting to replace the original, including when uploads race. Turn off
+  automatic conflict renaming under Settings → Terminal → Uploads to keep the Replace or Cancel
+  prompt. Existing files are replaced only after explicit confirmation.
+  [PR #77](https://github.com/kcosr/herdr-web/pull/77), contributed by
+  [Trillium Smith (@trillium)](https://github.com/trillium).
 
 ### Removed
 

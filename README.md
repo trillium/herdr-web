@@ -75,7 +75,7 @@ The top-level scripts hide that detail.
 
 For release tarball users:
 
-- A running Herdr `v0.8.2` or newer daemon/session that reports terminal protocol `20`
+- A running Herdr `v0.9.0` or newer daemon/session that reports terminal protocol `22`
 - A supported host for the downloaded bridge tarball. Current planned desktop release artifacts are
   Linux x86_64, macOS ARM64, and macOS x86_64.
 
@@ -84,7 +84,7 @@ For source development:
 - Node.js 22 or newer
 - npm
 - Rust stable
-- A running Herdr `v0.8.2` or newer daemon/session that reports terminal protocol `20`
+- A running Herdr `v0.9.0` or newer daemon/session that reports terminal protocol `22`
 
 Android development also needs a JDK and Android SDK. See [docs/android.md](docs/android.md).
 
@@ -106,7 +106,7 @@ http://127.0.0.1:8787
 ```
 
 The desktop tarball includes the web assets and `herdr-web-bridge`; it does not include Herdr.
-Start or attach Herdr `v0.8.2` or newer with terminal protocol `20` separately before running the
+Start or attach Herdr `v0.9.0` or newer with terminal protocol `22` separately before running the
 bridge.
 
 For Android, install the APK from the same release and add the bridge URL in the Bridge area of
@@ -192,8 +192,8 @@ Settings are grouped by area:
 - Features: client feature toggles such as Notes.
 - Display: browser-wide navigation synchronization, agent features in Tabs, multi-host Space
   selection, top/bottom app padding, and mobile terminal controls size.
-- Terminal: font size, optional screen-reader text, browser-to-bridge transport, and input/output
-  batching delays.
+- Terminal: font size, optional screen-reader text, upload-conflict behavior, browser-to-bridge
+  transport, and input/output batching delays.
 - Mobile: touch-specific terminal behavior when running on a coarse pointer device.
 
 When viewing all of multiple hosts, use the Spaces list `…` menu to group spaces by host or keep a
@@ -202,6 +202,16 @@ flat list with host context in each row. The menu stays hidden in single-host sc
 Multi-host Space selection is enabled by default, retaining one active Space per host in
 Space-scoped views. Turn it off under Settings → Display to keep only the selected host's Space,
 Agents, Tabs, and Notes in those views. All scope continues to show content from every host.
+
+Desktop users can enable Command composer under Settings → Terminal to edit multiline prompts
+before staging or sending them. Enter inserts a newline by default; Ctrl+Enter on Windows/Linux or
+Cmd+Enter on macOS sends the prompt. With the desktop composer enabled, automatic input focus goes
+to the composer and returns there after Send. Stage focuses the terminal to edit or run staged
+input; clicking the terminal also selects direct input, retaining that focus through reconnects.
+Desktop and mobile command drafts stay separate per bridge and
+pane while switching panes, tabs, or hosts, hiding the composer, or reconnecting. Sending or staging
+clears that pane's draft, and a successful snapshot removes drafts for closed panes. Drafts live only
+in the current browser tab's memory: reloading the page clears them, and other clients do not share them.
 
 Terminal input payloads can be sent as JSON or binary WebSocket frames. JSON remains the default;
 binary is available for comparing terminal input performance. Terminal input batching is off by
@@ -214,6 +224,10 @@ Terminal screen-reader text is off by default. Enable it under Settings → Term
 visible terminal viewport as bounded plain text for assistive technology. The mirror follows output,
 scrolling, resizing, and alternate-screen changes, and replaces concealed terminal cells with
 spaces. Disable it when screen-reader access is not needed to avoid the additional snapshot work.
+
+Automatic upload conflict renaming is on by default. If `image.png` already exists, another upload
+is saved as `image-1.png` without a replacement prompt. Turn it off under Settings → Terminal →
+Uploads to keep the existing Replace or Cancel prompt instead.
 
 ## Launcher Presets
 
@@ -280,7 +294,7 @@ an agent command. This preserves wrappers, SSH commands, containers, and other e
 
 ## Run Locally
 
-Start or attach a normal Herdr `v0.8.2` or newer session with terminal protocol `20` first:
+Start or attach a normal Herdr `v0.9.0` or newer session with terminal protocol `22` first:
 
 ```bash
 herdr
@@ -459,7 +473,7 @@ local `vendor/herdr-compat` crate for copied Herdr protocol/schema/client/socket
 bridge HTTP/WebSocket behavior in `bridge/src/web_bridge.rs`. A separate upstream Herdr checkout can
 be used for refreshes and drift audits, but a full `vendor/herdr` snapshot is not part of this repo.
 The cost is that `vendor/herdr-compat` must be kept compatible with Herdr protocol changes.
-The current compatibility baseline is Herdr `v0.8.2` and terminal protocol `20`; the bridge requires
+The current compatibility baseline is Herdr `v0.9.0` and terminal protocol `22`; the bridge requires
 that exact protocol rather than attempting to decode older or newer private wire formats.
 
 See [docs/vendoring.md](docs/vendoring.md) for the refresh process.

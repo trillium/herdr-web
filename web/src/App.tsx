@@ -1,3 +1,5 @@
+import { CommandDraftContext, createCommandDraftStore } from "./commandDrafts";
+import { linkedWorkspaceLabels } from "./workspaceClose";
 import {
   Activity,
   Archive,
@@ -99,6 +101,7 @@ import type { LauncherPresetsResponse } from "./launcherPresets";
 import { fetchWithTimeout } from "./fetchWithTimeout";
 import {
   DEFAULT_MOBILE_COMMAND_ENTER_NEWLINE,
+  DEFAULT_MOBILE_COMMAND_FOCUS_AFTER_SUBMIT,
   DEFAULT_MOBILE_COMMAND_EXPANDING_INPUT,
   DEFAULT_MOBILE_COMPACT_CONTROLS,
   DEFAULT_MOBILE_KEYBOARD_HIDE_REFIT,
@@ -106,6 +109,7 @@ import {
   DEFAULT_MOBILE_TOUCH_SELECTION_ENDPOINT_TIMEOUT_MS,
   DEFAULT_MOBILE_TERMINAL_TAP_TARGET,
   parseMobileCommandEnterNewline,
+  parseMobileCommandFocusAfterSubmit,
   parseMobileCommandExpandingInput,
   parseMobileCompactControls,
   parseMobileKeyboardHideRefit,
@@ -169,11 +173,21 @@ import {
   parseTerminalOutputCoalesceMs,
 } from "./terminalOutputCoalescing";
 import {
+  DEFAULT_DESKTOP_COMMAND_COMPOSER,
+  DEFAULT_DESKTOP_COMMAND_ENTER_NEWLINE,
   DEFAULT_TERMINAL_FONT_SIZE_PX,
+  defaultTerminalCursorBlink,
+  parseDesktopCommandComposer,
+  parseDesktopCommandEnterNewline,
+  parseTerminalCursorBlink,
   parseTerminalFontSizePx,
 } from "./terminalPrefs";
 import { applyTheme, DEFAULT_THEME, nextTheme, parseTheme } from "./theme";
 import type { Theme } from "./theme";
+import {
+  DEFAULT_AUTO_RENAME_UPLOAD_CONFLICTS,
+  parseAutoRenameUploadConflicts,
+} from "./uploadPrefs";
 import {
   aggregateStatus,
   basename,
@@ -402,6 +416,7 @@ type DialogState = {
   id: string;
   label: string;
   clearable?: boolean;
+  linkedWorkspaceLabels?: string[];
 };
 type DisplayPrefs = {
   hostScope: HostScope;
@@ -424,7 +439,11 @@ type DisplayPrefs = {
   notesPanelOpen: boolean;
   sidebarOpen: boolean;
   terminalFontSizePx: number;
+  terminalCursorBlink: boolean;
+  desktopCommandComposer: boolean;
+  desktopCommandEnterNewline: boolean;
   terminalScreenReaderText: boolean;
+  autoRenameUploadConflicts: boolean;
   terminalInputTransport: TerminalInputTransport;
   terminalInputBatchDelayMs: number;
   terminalOutputCoalesceMs: number;
@@ -438,6 +457,7 @@ type DisplayPrefs = {
   mobileCommandExpandingInput: boolean;
   mobileCommandEnterNewline: boolean;
   mobileCompactControls: boolean;
+  mobileCommandFocusAfterSubmit: boolean;
   theme: Theme;
 };
 type SharedNavigationPrefs = {
@@ -498,7 +518,11 @@ function readDisplayPrefs(): DisplayPrefs {
     notesPanelOpen: false,
     sidebarOpen: true,
     terminalFontSizePx: DEFAULT_TERMINAL_FONT_SIZE_PX,
+    terminalCursorBlink: defaultTerminalCursorBlink(),
+    desktopCommandComposer: DEFAULT_DESKTOP_COMMAND_COMPOSER,
+    desktopCommandEnterNewline: DEFAULT_DESKTOP_COMMAND_ENTER_NEWLINE,
     terminalScreenReaderText: DEFAULT_TERMINAL_SCREEN_READER_TEXT,
+    autoRenameUploadConflicts: DEFAULT_AUTO_RENAME_UPLOAD_CONFLICTS,
     terminalInputTransport: DEFAULT_TERMINAL_INPUT_TRANSPORT,
     terminalInputBatchDelayMs: DEFAULT_TERMINAL_INPUT_BATCH_DELAY_MS,
     terminalOutputCoalesceMs: DEFAULT_TERMINAL_OUTPUT_COALESCE_MS,
@@ -512,6 +536,7 @@ function readDisplayPrefs(): DisplayPrefs {
     mobileCommandExpandingInput: DEFAULT_MOBILE_COMMAND_EXPANDING_INPUT,
     mobileCommandEnterNewline: DEFAULT_MOBILE_COMMAND_ENTER_NEWLINE,
     mobileCompactControls: DEFAULT_MOBILE_COMPACT_CONTROLS,
+    mobileCommandFocusAfterSubmit: DEFAULT_MOBILE_COMMAND_FOCUS_AFTER_SUBMIT,
     theme: DEFAULT_THEME,
   };
   try {
@@ -696,9 +721,25 @@ function parseDisplayPrefsValue(
       typeof parsed.notesPanelOpen === "boolean" ? parsed.notesPanelOpen : fallback.notesPanelOpen,
     sidebarOpen,
     terminalFontSizePx: parseTerminalFontSizePx(parsed.terminalFontSizePx),
+    terminalCursorBlink: parseTerminalCursorBlink(
+      parsed.terminalCursorBlink,
+      fallback.terminalCursorBlink,
+    ),
+    desktopCommandComposer: parseDesktopCommandComposer(
+      parsed.desktopCommandComposer,
+      fallback.desktopCommandComposer,
+    ),
+    desktopCommandEnterNewline: parseDesktopCommandEnterNewline(
+      parsed.desktopCommandEnterNewline,
+      fallback.desktopCommandEnterNewline,
+    ),
     terminalScreenReaderText: parseTerminalScreenReaderText(
       parsed.terminalScreenReaderText,
       fallback.terminalScreenReaderText,
+    ),
+    autoRenameUploadConflicts: parseAutoRenameUploadConflicts(
+      parsed.autoRenameUploadConflicts,
+      fallback.autoRenameUploadConflicts,
     ),
     terminalInputTransport: parseTerminalInputTransport(parsed.terminalInputTransport),
     terminalInputBatchDelayMs: parseTerminalInputBatchDelayMs(parsed.terminalInputBatchDelayMs),
@@ -723,6 +764,9 @@ function parseDisplayPrefsValue(
       parsed.mobileCommandEnterNewline,
     ),
     mobileCompactControls: parseMobileCompactControls(parsed.mobileCompactControls),
+    mobileCommandFocusAfterSubmit: parseMobileCommandFocusAfterSubmit(
+      parsed.mobileCommandFocusAfterSubmit,
+    ),
     theme: parseTheme(parsed.theme),
   };
 }
@@ -953,6 +997,15 @@ function usePointerDragResize(
 }
 
 export function App() {
+  const [commandDrafts] = useState(createCommandDraftStore);
+  return (
+    <CommandDraftContext.Provider value={commandDrafts}>
+      <AppContent commandDrafts={commandDrafts} />
+    </CommandDraftContext.Provider>
+  );
+}
+
+function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof createCommandDraftStore> }) {
   const bridge = useBridge();
   const initialPrefs = useMemo(readDisplayPrefs, []);
   const initialSharedNavigationPrefs = useMemo(readSharedNavigationPrefs, []);
@@ -1078,8 +1131,20 @@ export function App() {
   const [terminalFontSizePx, setTerminalFontSizePx] = useState(
     initialPrefs.terminalFontSizePx,
   );
+  const [terminalCursorBlink, setTerminalCursorBlink] = useState(
+    initialPrefs.terminalCursorBlink,
+  );
+  const [desktopCommandComposer, setDesktopCommandComposer] = useState(
+    initialPrefs.desktopCommandComposer,
+  );
+  const [desktopCommandEnterNewline, setDesktopCommandEnterNewline] = useState(
+    initialPrefs.desktopCommandEnterNewline,
+  );
   const [terminalScreenReaderText, setTerminalScreenReaderText] = useState(
     initialPrefs.terminalScreenReaderText,
+  );
+  const [autoRenameUploadConflicts, setAutoRenameUploadConflicts] = useState(
+    initialPrefs.autoRenameUploadConflicts,
   );
   const [terminalInputTransport, setTerminalInputTransport] = useState(
     initialPrefs.terminalInputTransport,
@@ -1118,6 +1183,9 @@ export function App() {
   );
   const [mobileCompactControls, setMobileCompactControls] = useState(
     initialPrefs.mobileCompactControls,
+  );
+  const [mobileCommandFocusAfterSubmit, setMobileCommandFocusAfterSubmit] = useState(
+    initialPrefs.mobileCommandFocusAfterSubmit,
   );
   const [theme, setTheme] = useState(initialPrefs.theme);
   const [launchTarget, setLaunchTarget] = useState<ScopedLaunchTarget | null>(null);
@@ -1212,7 +1280,11 @@ export function App() {
       setSelectedPanesByBridgeId(sharedNavigationPrefs.selectedPanesByBridgeId);
       setActiveWorkspacesByBridgeId(sharedNavigationPrefs.activeWorkspacesByBridgeId);
       setTerminalFontSizePx(prefs.terminalFontSizePx);
+      setTerminalCursorBlink(prefs.terminalCursorBlink);
+      setDesktopCommandComposer(prefs.desktopCommandComposer);
+      setDesktopCommandEnterNewline(prefs.desktopCommandEnterNewline);
       setTerminalScreenReaderText(prefs.terminalScreenReaderText);
+      setAutoRenameUploadConflicts(prefs.autoRenameUploadConflicts);
       setTerminalInputTransport(prefs.terminalInputTransport);
       setTerminalInputBatchDelayMs(prefs.terminalInputBatchDelayMs);
       setTerminalOutputCoalesceMs(prefs.terminalOutputCoalesceMs);
@@ -1226,6 +1298,7 @@ export function App() {
       setMobileCommandExpandingInput(prefs.mobileCommandExpandingInput);
       setMobileCommandEnterNewline(prefs.mobileCommandEnterNewline);
       setMobileCompactControls(prefs.mobileCompactControls);
+      setMobileCommandFocusAfterSubmit(prefs.mobileCommandFocusAfterSubmit);
       setTheme(prefs.theme);
       setDisplayPrefsLoaded(true);
       },
@@ -1317,6 +1390,14 @@ export function App() {
       }),
     [bridge.enabledRuntimes, connectionStates],
   );
+  useEffect(() => {
+    for (const { runtime, snapshot, loadState } of bridgeViews) {
+      if (runtime.canConnect && loadState === "ready" && snapshot) {
+        commandDrafts.retainPanes(runtime.id, snapshot.panes.map((pane) => pane.pane_id));
+      }
+    }
+  }, [bridgeViews, commandDrafts]);
+
   const pinnedAgentKeys = useMemo(
     () => buildAgentPinKeySet(bridgeViews, agentPinsStates),
     [agentPinsStates, bridgeViews],
@@ -1794,7 +1875,11 @@ export function App() {
       notesPanelOpen,
       sidebarOpen,
       terminalFontSizePx,
+      terminalCursorBlink,
+      desktopCommandComposer,
+      desktopCommandEnterNewline,
       terminalScreenReaderText,
+      autoRenameUploadConflicts,
       terminalInputTransport,
       terminalInputBatchDelayMs,
       terminalOutputCoalesceMs,
@@ -1808,6 +1893,7 @@ export function App() {
       mobileCommandExpandingInput,
       mobileCommandEnterNewline,
       mobileCompactControls,
+      mobileCommandFocusAfterSubmit,
       theme,
     });
   }, [
@@ -1832,7 +1918,11 @@ export function App() {
     notesPanelOpen,
     sidebarOpen,
     terminalFontSizePx,
+    terminalCursorBlink,
+    desktopCommandComposer,
+    desktopCommandEnterNewline,
     terminalScreenReaderText,
+    autoRenameUploadConflicts,
     terminalInputTransport,
     terminalInputBatchDelayMs,
     terminalOutputCoalesceMs,
@@ -1846,6 +1936,7 @@ export function App() {
     mobileCommandExpandingInput,
     mobileCommandEnterNewline,
     mobileCompactControls,
+    mobileCommandFocusAfterSubmit,
     theme,
   ]);
 
@@ -3687,7 +3778,10 @@ export function App() {
     if (key === "rename") {
       setDialog({ mode: "rename", kind, bridgeId, id, label, clearable });
     } else if (key === "close") {
-      setDialog({ mode: "close", kind, bridgeId, id, label });
+      const linkedLabels = kind === "space"
+        ? linkedWorkspaceLabels(connectionRefs.current[bridgeId]?.snapshot?.workspaces ?? [], id)
+        : [];
+      setDialog({ mode: "close", kind, bridgeId, id, label, linkedWorkspaceLabels: linkedLabels });
     } else if (key === "newtab") {
       setSelectedBridgeId(bridgeId);
       setActiveWorkspaceRefState({ bridgeId, workspaceId: id });
@@ -3772,7 +3866,7 @@ export function App() {
     }
     const action =
       kind === "space"
-        ? () => commands.closeWorkspace(id)
+        ? () => commands.closeWorkspace(id, Boolean(dialog.linkedWorkspaceLabels?.length))
         : kind === "tab"
           ? () => commands.closeTab(id)
           : () => commands.closePane(id);
@@ -3978,7 +4072,11 @@ export function App() {
           onToggleTheme={() => setTheme((current) => nextTheme(current))}
           onCreateSpace={() =>
             selectedRuntime && selectedCommands
-              ? void exec(selectedRuntime, () => selectedCommands.createWorkspace(), true)
+              ? void exec(
+                  selectedRuntime,
+                  () => selectedCommands.createWorkspace(activeSpace?.workspace_id),
+                  true,
+                )
               : setError("Bridge is not ready")
           }
           onCreateTab={(bridgeId, workspaceId) =>
@@ -4212,6 +4310,7 @@ export function App() {
         </header>
         {showSplit && splitCells ? (
           <SplitGrid
+            bridgeId={selectedRuntime?.id ?? ""}
             cells={splitCells}
             selectedPaneId={selectedPane?.pane_id ?? null}
             onSelectPane={(pane) => {
@@ -4226,8 +4325,12 @@ export function App() {
             focusToken={terminalFocusToken}
             touchInput={isTouchInput}
             theme={theme}
+            desktopCommandComposer={desktopCommandComposer}
+            desktopCommandEnterNewline={desktopCommandEnterNewline}
+            terminalCursorBlink={terminalCursorBlink}
             terminalFontSizePx={terminalFontSizePx}
             terminalScreenReaderText={terminalScreenReaderText}
+            autoRenameUploadConflicts={autoRenameUploadConflicts}
             mobileControlsScalePercent={mobileControlsScalePercent}
             mobileCompactControls={mobileCompactControls}
             onMobileCompactControlsChange={setMobileCompactControls}
@@ -4236,6 +4339,7 @@ export function App() {
             mobileTouchSelectionEndpointTimeoutMs={mobileTouchSelectionEndpointTimeoutMs}
             mobileCommandExpandingInput={mobileCommandExpandingInput}
             mobileCommandEnterNewline={mobileCommandEnterNewline}
+            mobileCommandFocusAfterSubmit={mobileCommandFocusAfterSubmit}
             terminalInputTransport={terminalInputTransport}
             terminalInputBatchDelayMs={terminalInputBatchDelayMs}
             terminalOutputCoalesceMs={terminalOutputCoalesceMs}
@@ -4252,6 +4356,7 @@ export function App() {
           />
         ) : renderTerminal ? (
           <TerminalView
+            bridgeId={selectedRuntime?.id ?? ""}
             pane={selectedPane}
             connectionKey={selectedRuntime?.connectionKey ?? "disconnected"}
             resumeToken={selectedRuntime?.resumeToken ?? 0}
@@ -4262,10 +4367,13 @@ export function App() {
             // The parlay-backed command composer is the single input experience at every
             // viewport width and pointer type — no longer gated on touch input.
             mobileControls={true}
-            cursorBlink={!isTouchInput}
+            desktopCommandComposer={desktopCommandComposer}
+            desktopCommandEnterNewline={desktopCommandEnterNewline}
+            cursorBlink={!isTouchInput && terminalCursorBlink}
             theme={theme}
             terminalFontSizePx={terminalFontSizePx}
             terminalScreenReaderText={terminalScreenReaderText}
+            autoRenameUploadConflicts={autoRenameUploadConflicts}
             mobileControlsScalePercent={mobileControlsScalePercent}
             mobileCompactControls={mobileCompactControls}
             onMobileCompactControlsChange={setMobileCompactControls}
@@ -4274,6 +4382,7 @@ export function App() {
             mobileTouchSelectionEndpointTimeoutMs={mobileTouchSelectionEndpointTimeoutMs}
             mobileCommandExpandingInput={mobileCommandExpandingInput}
             mobileCommandEnterNewline={mobileCommandEnterNewline}
+            mobileCommandFocusAfterSubmit={mobileCommandFocusAfterSubmit}
             terminalInputTransport={terminalInputTransport}
             terminalInputBatchDelayMs={terminalInputBatchDelayMs}
             terminalOutputCoalesceMs={terminalOutputCoalesceMs}
@@ -4448,9 +4557,9 @@ export function App() {
 
       {dialog?.mode === "close" ? (
         <ConfirmDialog
-          title={closeCopy(dialog.kind).title}
-          message={closeCopy(dialog.kind).message}
-          confirmLabel={closeCopy(dialog.kind).confirm}
+          title={closeCopy(dialog.kind, dialog.linkedWorkspaceLabels).title}
+          message={closeCopy(dialog.kind, dialog.linkedWorkspaceLabels).message}
+          confirmLabel={closeCopy(dialog.kind, dialog.linkedWorkspaceLabels).confirm}
           busy={busy}
           onCancel={() => setDialog(null)}
           onConfirm={confirmClose}
@@ -4519,8 +4628,16 @@ export function App() {
           onMultiHostSpaceSelection={setMultiHostSpaceSelection}
           terminalFontSizePx={terminalFontSizePx}
           onTerminalFontSizePx={setTerminalFontSizePx}
+          terminalCursorBlink={terminalCursorBlink}
+          onTerminalCursorBlink={setTerminalCursorBlink}
+          desktopCommandComposer={desktopCommandComposer}
+          onDesktopCommandComposer={setDesktopCommandComposer}
+          desktopCommandEnterNewline={desktopCommandEnterNewline}
+          onDesktopCommandEnterNewline={setDesktopCommandEnterNewline}
           terminalScreenReaderText={terminalScreenReaderText}
           onTerminalScreenReaderText={setTerminalScreenReaderText}
+          autoRenameUploadConflicts={autoRenameUploadConflicts}
+          onAutoRenameUploadConflicts={setAutoRenameUploadConflicts}
           terminalInputTransport={terminalInputTransport}
           onTerminalInputTransport={setTerminalInputTransport}
           terminalInputBatchDelayMs={terminalInputBatchDelayMs}
@@ -4546,11 +4663,18 @@ export function App() {
           mobileCommandExpandingInput={mobileCommandExpandingInput}
           onMobileCommandExpandingInput={setMobileCommandExpandingInput}
           mobileCommandEnterNewline={mobileCommandEnterNewline}
+          mobileCommandFocusAfterSubmit={mobileCommandFocusAfterSubmit}
           onMobileCommandEnterNewline={setMobileCommandEnterNewline}
+          onMobileCommandFocusAfterSubmit={setMobileCommandFocusAfterSubmit}
           showMobileKeyboardHideRefit={showMobileKeyboardHideRefit}
           mobileKeyboardHideRefit={mobileKeyboardHideRefit}
           onMobileKeyboardHideRefit={setMobileKeyboardHideRefit}
-          onClose={() => setBackendSettingsOpen(false)}
+          onClose={() => {
+            setBackendSettingsOpen(false);
+            if (desktopCommandComposer && !isTouchInput) {
+              requestTerminalFocus();
+            }
+          }}
         />
       ) : null}
 
@@ -6004,6 +6128,7 @@ function hasOpenModal() {
 }
 
 function SplitGrid({
+  bridgeId,
   cells,
   selectedPaneId,
   onSelectPane,
@@ -6011,8 +6136,12 @@ function SplitGrid({
   focusToken,
   touchInput,
   theme,
+  desktopCommandComposer,
+  desktopCommandEnterNewline,
+  terminalCursorBlink,
   terminalFontSizePx,
   terminalScreenReaderText,
+  autoRenameUploadConflicts,
   mobileControlsScalePercent,
   mobileCompactControls,
   onMobileCompactControlsChange,
@@ -6021,6 +6150,7 @@ function SplitGrid({
   mobileTouchSelectionEndpointTimeoutMs,
   mobileCommandExpandingInput,
   mobileCommandEnterNewline,
+  mobileCommandFocusAfterSubmit,
   terminalInputTransport,
   terminalInputBatchDelayMs,
   terminalOutputCoalesceMs,
@@ -6035,6 +6165,7 @@ function SplitGrid({
   onPaneCycleModeToggle,
   paneCycleMode,
 }: {
+  bridgeId: string;
   cells: { pane: PaneInfo; style: CSSProperties }[];
   selectedPaneId: string | null;
   onSelectPane: (pane: PaneInfo) => void;
@@ -6042,8 +6173,12 @@ function SplitGrid({
   focusToken: number;
   touchInput: boolean;
   theme: Theme;
+  desktopCommandComposer: boolean;
+  desktopCommandEnterNewline: boolean;
+  terminalCursorBlink: boolean;
   terminalFontSizePx: number;
   terminalScreenReaderText: boolean;
+  autoRenameUploadConflicts: boolean;
   mobileControlsScalePercent: number;
   mobileCompactControls: boolean;
   onMobileCompactControlsChange: (compact: boolean) => void;
@@ -6052,6 +6187,7 @@ function SplitGrid({
   mobileTouchSelectionEndpointTimeoutMs: MobileTouchSelectionEndpointTimeoutMs;
   mobileCommandExpandingInput: boolean;
   mobileCommandEnterNewline: boolean;
+  mobileCommandFocusAfterSubmit: boolean;
   terminalInputTransport: TerminalInputTransport;
   terminalInputBatchDelayMs: number;
   terminalOutputCoalesceMs: number;
@@ -6105,6 +6241,7 @@ function SplitGrid({
             onPointerDown={() => onSelectPane(pane)}
           >
             <TerminalView
+              bridgeId={bridgeId}
               pane={pane}
               connectionKey={connectionKey}
               resumeToken={resumeToken}
@@ -6115,10 +6252,13 @@ function SplitGrid({
               // Unified input composer on every device; still only the selected split
               // pane gets the controls bar (pane selection, not pointer type).
               mobileControls={selected}
-              cursorBlink={!touchInput}
+              desktopCommandComposer={selected && !touchInput && desktopCommandComposer}
+              desktopCommandEnterNewline={desktopCommandEnterNewline}
+              cursorBlink={!touchInput && terminalCursorBlink}
               theme={theme}
               terminalFontSizePx={terminalFontSizePx}
               terminalScreenReaderText={terminalScreenReaderText}
+              autoRenameUploadConflicts={autoRenameUploadConflicts}
               mobileControlsScalePercent={mobileControlsScalePercent}
               mobileCompactControls={mobileCompactControls}
               onMobileCompactControlsChange={onMobileCompactControlsChange}
@@ -6127,6 +6267,7 @@ function SplitGrid({
               mobileTouchSelectionEndpointTimeoutMs={mobileTouchSelectionEndpointTimeoutMs}
               mobileCommandExpandingInput={mobileCommandExpandingInput}
               mobileCommandEnterNewline={mobileCommandEnterNewline}
+              mobileCommandFocusAfterSubmit={mobileCommandFocusAfterSubmit}
               terminalInputTransport={terminalInputTransport}
               terminalInputBatchDelayMs={terminalInputBatchDelayMs}
               terminalOutputCoalesceMs={terminalOutputCoalesceMs}
@@ -9762,7 +9903,14 @@ export function menuItems(
   return paneItems;
 }
 
-function closeCopy(kind: MenuKind) {
+export function closeCopy(kind: MenuKind, linkedLabels: readonly string[] = []) {
+  if (kind === "space" && linkedLabels.length > 0) {
+    return {
+      title: "Close workspace group?",
+      message: `This closes this space and all linked worktree spaces (${linkedLabels.join(", ")}), including every tab and pane in the group.`,
+      confirm: "Close entire group",
+    };
+  }
   switch (kind) {
     case "space":
       return {

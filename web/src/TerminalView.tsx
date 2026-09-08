@@ -1,3 +1,5 @@
+import { useTerminalFocusRequest } from "./useTerminalFocusRequest";
+import { useCommandDraft } from "./commandDrafts";
 import {
   ChevronsDown,
   Copy,
@@ -82,10 +84,16 @@ import {
   isTerminalScrolledAwayFromPresent,
 } from "./terminalScrollPresence";
 import type { PaneInfo } from "./types";
+import {
+  UploadConflictError,
+  uploadWithOverwritePrompt,
+} from "./terminalUploads";
+import type { UploadCandidate, UploadedFile } from "./terminalUploads";
 
 import { ParlayInput } from "./ParlayInput";
 
 type Props = {
+  bridgeId: string;
   pane: PaneInfo | null;
   connectionKey: string;
   resumeToken: number;
@@ -97,6 +105,10 @@ type Props = {
   scrollSensitivity?: number;
   /** Supplemental browser-native input controls for narrow touch screens. */
   mobileControls?: boolean;
+  /** Whether to show the expanding command composer without enabling mobile terminal behavior. */
+  desktopCommandComposer?: boolean;
+  /** Whether Enter inserts a newline in the desktop command composer. */
+  desktopCommandEnterNewline?: boolean;
   /** Whether the terminal cursor blinks. Off on touch devices. */
   cursorBlink?: boolean;
   /** App light/dark theme; the terminal palette is baked in when the pane is (re)created. */
@@ -119,6 +131,8 @@ type Props = {
   mobileCommandExpandingInput?: boolean;
   /** Whether Enter inserts a newline in the expanding mobile command input. */
   mobileCommandEnterNewline?: boolean;
+  /** Refocus the mobile command field after Send. */
+  mobileCommandFocusAfterSubmit?: boolean;
   /** Browser-to-bridge transport for terminal input payloads. */
   terminalInputTransport?: TerminalInputTransport;
   /** Delay for coalescing short terminal input payloads. Zero disables batching. */
@@ -144,22 +158,14 @@ type Props = {
   terminalScreenReaderText?: boolean;
   /** Talk Back: receives screen-reader-safe plain text after terminal writes (project-jzd). */
   onAccessibleTextChange?: (text: string) => void;
+  /** Whether upload filename conflicts are resolved with a numeric suffix. */
+  autoRenameUploadConflicts?: boolean;
   /** Pane-specific accessible name for the terminal and its screen mirror. */
   accessibilityLabel?: string;
   /** Whether this is the currently selected terminal in a split. */
   selected?: boolean;
 };
 
-type UploadCandidate = {
-  blob: Blob;
-  name: string | null;
-};
-type UploadedFile = {
-  name: string;
-  path: string;
-  size: number;
-  mime?: string | null;
-};
 type UploadConflictState = {
   name: string;
   path: string;
@@ -196,6 +202,7 @@ const DEBUG_TERMINAL_RECONNECT = false;
 const TERMINAL_RESIZE_SETTLE_MS = 120;
 
 export function TerminalView({
+  bridgeId,
   pane,
   connectionKey,
   resumeToken,
@@ -204,6 +211,8 @@ export function TerminalView({
   autoFocus = true,
   scrollSensitivity = 1,
   mobileControls = false,
+  desktopCommandComposer = false,
+  desktopCommandEnterNewline = true,
   cursorBlink = true,
   theme = "dark",
   terminalFontSizePx = DEFAULT_TERMINAL_FONT_SIZE_PX,
@@ -215,6 +224,7 @@ export function TerminalView({
   mobileTouchSelectionEndpointTimeoutMs = DEFAULT_MOBILE_TOUCH_SELECTION_ENDPOINT_TIMEOUT_MS,
   mobileCommandExpandingInput = false,
   mobileCommandEnterNewline = false,
+  mobileCommandFocusAfterSubmit = false,
   terminalInputTransport = "json",
   terminalInputBatchDelayMs = 0,
   terminalOutputCoalesceMs = DEFAULT_TERMINAL_OUTPUT_COALESCE_MS,
@@ -228,6 +238,7 @@ export function TerminalView({
   onPrevAgentPane = () => {},
   terminalScreenReaderText = false,
   onAccessibleTextChange,
+  autoRenameUploadConflicts = true,
   accessibilityLabel = "Terminal",
   selected = false,
 }: Props) {
@@ -263,6 +274,7 @@ export function TerminalView({
   const [rendererReady, setRendererReady] = useState<TerminalRendererReady | null>(null);
   const [accessibleScreen, setAccessibleScreen] = useState("");
   const [hasAttachedForTerminal, setHasAttachedForTerminal] = useState(false);
+  const terminalAttachCountRef = useRef(0);
   const [showConnectionOverlay, setShowConnectionOverlay] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -276,6 +288,8 @@ export function TerminalView({
   autoFocusRef.current = autoFocus;
   const scrollSensitivityRef = useRef(scrollSensitivity);
   scrollSensitivityRef.current = scrollSensitivity;
+  const desktopCommandComposerRef = useRef(desktopCommandComposer);
+  desktopCommandComposerRef.current = desktopCommandComposer;
   const mobileControlsRef = useRef(mobileControls);
   mobileControlsRef.current = mobileControls;
   const cursorBlinkRef = useRef(cursorBlink);
@@ -299,8 +313,8 @@ export function TerminalView({
   connectionKeyRef.current = connectionKey;
   terminalIdRef.current = pane?.terminal_id ?? null;
 
-  const focusMobileCommandInput = useCallback(() => {
-    if (!mobileControlsRef.current) {
+  const focusCommandInput = useCallback(() => {
+    if (!mobileControlsRef.current && !desktopCommandComposerRef.current) {
       return false;
     }
     const input = mobileCommandInputRef.current;
@@ -311,11 +325,19 @@ export function TerminalView({
     return true;
   }, []);
 
-  const setMobileControlsHeight = useCallback((heightPx: number | null) => {
+  const setCommandControlsHeight = useCallback((heightPx: number | null) => {
+    // The controls component kept the fork's `terminal-mobile-controls` class, so
+    // publish the measured height under both variable names: upstream styles use
+    // `--terminal-command-controls-height`, fork styles use `--terminal-mobile-controls-height`.
     if (heightPx === null) {
+      stageRef.current?.style.removeProperty("--terminal-command-controls-height");
       stageRef.current?.style.removeProperty("--terminal-mobile-controls-height");
       return;
     }
+    stageRef.current?.style.setProperty(
+      "--terminal-command-controls-height",
+      `${Math.ceil(heightPx)}px`,
+    );
     stageRef.current?.style.setProperty(
       "--terminal-mobile-controls-height",
       `${Math.ceil(heightPx)}px`,
@@ -332,10 +354,10 @@ export function TerminalView({
       rendererRef.current?.focusTextInput();
       return;
     }
-    if (!focusMobileCommandInput()) {
+    if (!focusCommandInput()) {
       rendererRef.current?.focusTextInput();
     }
-  }, [focusMobileCommandInput]);
+  }, [focusCommandInput]);
 
   const showUploadStatus = useCallback((message: string | null, timeoutMs?: number) => {
     if (uploadStatusTimerRef.current !== null) {
@@ -558,20 +580,11 @@ export function TerminalView({
     rendererRef.current?.setScrollSensitivity(scrollSensitivity);
   }, [scrollSensitivity]);
 
-  useEffect(() => {
-    if (focusToken === 0) {
-      return;
-    }
-    const focus = () => focusPreferredInput();
-    const frame = window.requestAnimationFrame(focus);
-    const timers = [80, 220].map((delay) => window.setTimeout(focus, delay));
-    return () => {
-      window.cancelAnimationFrame(frame);
-      for (const timer of timers) {
-        window.clearTimeout(timer);
-      }
-    };
-  }, [focusPreferredInput, focusToken]);
+  useTerminalFocusRequest(
+    focusToken,
+    focusPreferredInput,
+    mobileControls || !desktopCommandComposer,
+  );
 
   useEffect(() => {
     const host = hostRef.current;
@@ -585,6 +598,7 @@ export function TerminalView({
     setRendererReady(null);
     setAccessibleScreen("");
     setHasAttachedForTerminal(false);
+    terminalAttachCountRef.current = 0;
     setShowConnectionOverlay(false);
     setCloseReason(null);
     terminalInputBlockedRef.current = false;
@@ -657,7 +671,7 @@ export function TerminalView({
           !mobileControlsRef.current
             ? null
             : mobileTapTargetRef.current === "command-input"
-              ? focusMobileCommandInput
+              ? focusCommandInput
               : focusTerminalKeyboardInput,
         );
         renderer.setMobileTouchSelection(
@@ -757,9 +771,10 @@ export function TerminalView({
     };
   }, [
     connectionKey,
+    cursorBlink,
     clearQueuedTerminalInput,
     flushBatchedTerminalInput,
-    focusMobileCommandInput,
+    focusCommandInput,
     focusTerminalKeyboardInput,
     handleMobileTerminalTouch,
     measureTerminal,
@@ -940,6 +955,7 @@ export function TerminalView({
         lastCloseReason = null;
         terminalInputBlockedRef.current = false;
         setCloseReason(null);
+        terminalAttachCountRef.current += 1;
         setHasAttachedForTerminal(true);
         setConnectionState("attached");
         debugReconnect("open", { socketGeneration: currentSocketGeneration });
@@ -947,8 +963,13 @@ export function TerminalView({
         if (size) {
           sendResize(size);
         }
-        if (autoFocusRef.current) {
-          window.setTimeout(() => ready.renderer.focus(), 0);
+        if (autoFocusRef.current && !desktopCommandComposerRef.current) {
+          window.setTimeout(() => {
+            if (!disposed && socket === nextSocket && autoFocusRef.current &&
+                !desktopCommandComposerRef.current) {
+              ready.renderer.focus();
+            }
+          }, 0);
         }
         flushBatchedTerminalInput();
         flushQueuedTerminalInput();
@@ -1220,6 +1241,17 @@ export function TerminalView({
     wsUrl,
   ]);
 
+  // Wait for React to enable the composer after attach before focusing it.
+  // Selection changes alone must not override a direct click into a split terminal.
+  useEffect(() => {
+    if (connectionState === "attached" && autoFocusRef.current &&
+        desktopCommandComposerRef.current && !mobileControlsRef.current) {
+      if (terminalAttachCountRef.current === 1 || !hostRef.current?.contains(document.activeElement)) {
+        focusCommandInput();
+      }
+    }
+  }, [connectionState, focusCommandInput]);
+
   useEffect(() => {
     if (resumeToken > 0) {
       requestReconnectRef.current("resume");
@@ -1260,10 +1292,10 @@ export function TerminalView({
       !mobileControls
         ? null
         : mobileTapTarget === "command-input"
-          ? focusMobileCommandInput
+          ? focusCommandInput
           : focusTerminalKeyboardInput,
     );
-  }, [focusMobileCommandInput, focusTerminalKeyboardInput, mobileControls, mobileTapTarget]);
+  }, [focusCommandInput, focusTerminalKeyboardInput, mobileControls, mobileTapTarget]);
 
   useEffect(() => {
     rendererRef.current?.setMobileTouchSelection(
@@ -1447,7 +1479,14 @@ export function TerminalView({
     try {
       const uploaded: UploadedFile[] = [];
       for (const file of uploadFiles) {
-        uploaded.push(await uploadWithOverwritePrompt(httpUrl, file, confirmUploadReplace));
+        uploaded.push(
+          await uploadWithOverwritePrompt(
+            httpUrl,
+            file,
+            autoRenameUploadConflicts,
+            confirmUploadReplace,
+          ),
+        );
       }
       if (
         connectionKeyRef.current !== uploadConnectionKey ||
@@ -1522,6 +1561,8 @@ export function TerminalView({
     return true;
   };
 
+  const showCommandControls = mobileControls || desktopCommandComposer;
+
   return (
     <section
       ref={stageRef}
@@ -1591,19 +1632,24 @@ export function TerminalView({
           <Paperclip size={16} />
         </button>
       ) : null}
-      {mobileControls ? (
-        <MobileTerminalControls
+      {showCommandControls && pane ? (
+        <TerminalCommandControls
+          key={JSON.stringify([bridgeId, pane.pane_id])}
+          bridgeId={bridgeId}
+          paneId={pane.pane_id}
           commandInputRef={mobileCommandInputRef}
           disabled={!pane || connectionState !== "attached"}
           uploadDisabled={uploadDisabled}
-          expandingInput={mobileCommandExpandingInput}
-          enterNewline={mobileCommandEnterNewline}
-          controlsScalePercent={mobileControlsScalePercent}
+          expandingInput={mobileControls ? mobileCommandExpandingInput : true}
+          enterNewline={mobileControls ? mobileCommandEnterNewline : desktopCommandEnterNewline}
+          mobileControls={mobileControls}
+          mobileFocusAfterSubmit={mobileCommandFocusAfterSubmit}
+          controlsScalePercent={mobileControls ? mobileControlsScalePercent : 100}
           compactControls={mobileCompactControls}
           onCompactControlsChange={onMobileCompactControlsChange}
           mobileModeActive={mobileModeActive}
           onToggleMobileMode={toggleMobileMode}
-          onControlsHeightChange={setMobileControlsHeight}
+          onControlsHeightChange={setCommandControlsHeight}
           onInput={sendTerminalInput}
           onTerminalFocus={() => rendererRef.current?.focusTextInput()}
           onUpload={openFilePicker}
@@ -1693,12 +1739,16 @@ function MobileSelectionActions({
   );
 }
 
-export function MobileTerminalControls({
+export function TerminalCommandControls({
+  bridgeId,
+  paneId,
   commandInputRef,
   disabled,
   uploadDisabled,
   expandingInput,
   enterNewline,
+  mobileControls,
+  mobileFocusAfterSubmit = false,
   controlsScalePercent,
   compactControls,
   onCompactControlsChange,
@@ -1717,11 +1767,15 @@ export function MobileTerminalControls({
   onPaneCycleModeToggle,
   paneCycleMode,
 }: {
+  bridgeId: string;
+  paneId: string;
   commandInputRef: RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
   disabled: boolean;
   uploadDisabled: boolean;
   expandingInput: boolean;
   enterNewline: boolean;
+  mobileControls: boolean;
+  mobileFocusAfterSubmit?: boolean;
   controlsScalePercent: number;
   compactControls: boolean;
   onCompactControlsChange: (compact: boolean) => void;
@@ -1741,14 +1795,23 @@ export function MobileTerminalControls({
   paneCycleMode: "pin" | "all";
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const [value, setValue] = useState("");
+  const [value, setValue] = useCommandDraft(bridgeId, paneId);
+  // Keep this deadline outside the keyed field so it survives input replacement.
+  const compositionGuardUntilRef = useRef(0);
+  const acceptedValueRef = useRef(value);
+  useLayoutEffect(() => {
+    acceptedValueRef.current = value;
+  }, [value]);
   const [fieldKey, setFieldKey] = useState(0);
+  const focusAfterSubmitRef = useRef(false);
   const [expanded, setExpanded] = useState(false);
   const [ctrlLatch, setCtrlLatch] = useState(false);
   const setCommandInputNode = (node: HTMLInputElement | HTMLTextAreaElement | null) => {
     commandInputRef.current = node;
   };
   const clearCommandInput = () => {
+    compositionGuardUntilRef.current = performance.now() + 250;
+    acceptedValueRef.current = "";
     setValue("");
     const node = commandInputRef.current;
     if (node) {
@@ -1760,6 +1823,7 @@ export function MobileTerminalControls({
   // Tap cycles panes; hold toggles which pool it cycles through.
   const paneCyclePress = useLongPress(onPaneCycleModeToggle, () => onPaneCycle("next"));
   const submit = () => {
+    focusAfterSubmitRef.current = !mobileControls || mobileFocusAfterSubmit;
     const command = value;
     clearCommandInput();
     onSubmitCommand(command);
@@ -1771,6 +1835,9 @@ export function MobileTerminalControls({
     const command = value;
     clearCommandInput();
     onStageCommand(command);
+    if (!mobileControls) {
+      onTerminalFocus();
+    }
   };
   const sendKey = (key: TerminalKey) => {
     onInput(ctrlLatch && key.ctrlData ? key.ctrlData : key.data);
@@ -1784,6 +1851,10 @@ export function MobileTerminalControls({
     if (fieldKey > 0 && node) {
       node.value = "";
       node.defaultValue = "";
+      if (focusAfterSubmitRef.current) {
+        focusAfterSubmitRef.current = false;
+        node.focus();
+      }
     }
   }, [commandInputRef, fieldKey]);
 
@@ -1820,14 +1891,17 @@ export function MobileTerminalControls({
     if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
       return;
     }
-    if (
-      event.key !== "Enter" ||
-      enterNewline ||
-      event.shiftKey ||
-      event.altKey ||
-      event.ctrlKey ||
-      event.metaKey
-    ) {
+    if (event.key !== "Enter") {
+      return;
+    }
+    if (!mobileControls && isCommandComposerSubmitShortcut(event)) {
+      event.preventDefault();
+      if (!disabled) {
+        submit();
+      }
+      return;
+    }
+    if (enterNewline || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) {
       return;
     }
     event.preventDefault();
@@ -2031,6 +2105,23 @@ export function MobileTerminalControls({
   );
 }
 
+type CommandComposerShortcutEvent = Pick<
+  KeyboardEvent<HTMLTextAreaElement>,
+  "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey"
+>;
+
+export function isCommandComposerSubmitShortcut(
+  event: CommandComposerShortcutEvent,
+  platform = typeof navigator === "undefined" ? "" : navigator.platform,
+) {
+  if (event.key !== "Enter" || event.altKey || event.shiftKey) {
+    return false;
+  }
+  return platform.startsWith("Mac")
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey;
+}
+
 type TerminalKey = {
   label: string;
   data: string;
@@ -2177,71 +2268,8 @@ function uploadCandidatesFromClipboard(data: DataTransfer): UploadCandidate[] {
   return files;
 }
 
-async function uploadWithOverwritePrompt(
-  httpUrl: (path: string, query?: URLSearchParams) => string,
-  file: UploadCandidate,
-  confirmReplace: (error: UploadConflictError) => Promise<boolean>,
-): Promise<UploadedFile> {
-  try {
-    return await uploadFile(httpUrl, file, false);
-  } catch (error) {
-    if (!(error instanceof UploadConflictError)) {
-      throw error;
-    }
-    const replace = await confirmReplace(error);
-    if (!replace) {
-      throw new Error("Upload canceled");
-    }
-    return uploadFile(httpUrl, file, true);
-  }
-}
-
 function uploadConflictMessage(conflict: UploadConflictState) {
   return conflict.path
     ? `${conflict.name} already exists at ${conflict.path}.`
     : `${conflict.name} already exists.`;
-}
-
-async function uploadFile(
-  httpUrl: (path: string, query?: URLSearchParams) => string,
-  file: UploadCandidate,
-  overwrite: boolean,
-): Promise<UploadedFile> {
-  const params = new URLSearchParams();
-  if (file.name) {
-    params.set("name", file.name);
-  }
-  if (overwrite) {
-    params.set("overwrite", "true");
-  }
-  const response = await fetch(httpUrl("/api/uploads", params), {
-    method: "POST",
-    headers: file.blob.type ? { "content-type": file.blob.type } : undefined,
-    body: file.blob,
-  });
-  const payload = (await response.json().catch(() => ({}))) as {
-    file?: UploadedFile;
-    error?: string;
-    name?: string;
-    path?: string;
-  };
-  if (response.status === 409) {
-    throw new UploadConflictError(
-      typeof payload.name === "string" ? payload.name : file.name || "file",
-      typeof payload.path === "string" ? payload.path : "",
-    );
-  }
-  if (!response.ok || !payload.file) {
-    throw new Error(payload.error || `Upload failed (${response.status})`);
-  }
-  return payload.file;
-}
-
-class UploadConflictError extends Error {
-  constructor(
-    readonly name: string,
-    readonly path: string,
-  ) {
-    super(`file exists: ${path || name}`);
-  }
 }

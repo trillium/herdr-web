@@ -49,6 +49,24 @@ afterEach(async () => {
 });
 
 describe("BackendSettingsDialog terminal accessibility", () => {
+  it("offers mobile refocus independently of expanding input", async () => {
+    const onFocusChange = vi.fn();
+    const { container } = await render(
+      <BackendSettingsDialog {...settingsProps()} showMobileTerminalSettings={true}
+        mobileCommandExpandingInput={false} onMobileCommandFocusAfterSubmit={onFocusChange} />,
+    );
+    const tab = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+      .find((button) => button.textContent?.includes("Mobile"));
+    expect(tab).toBeDefined();
+    await act(async () => tab!.click());
+    const group = requiredElement<HTMLElement>(container,
+      '[role="group"][aria-label="Focus command input after Send"]');
+    const [off, on] = Array.from(group.querySelectorAll<HTMLButtonElement>("button"));
+    expect(off.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => on.click());
+    expect(onFocusChange).toHaveBeenCalledWith(true);
+  });
+
   it("exposes a persisted-style opt-in control in the Terminal area", async () => {
     const onChange = vi.fn();
     const { container } = await render(<SettingsHarness onChange={onChange} />);
@@ -73,6 +91,98 @@ describe("BackendSettingsDialog terminal accessibility", () => {
     expect(off?.getAttribute("aria-pressed")).toBe("false");
     expect(on?.getAttribute("aria-pressed")).toBe("true");
   });
+
+  it("allows automatic conflict renaming to be disabled in the Terminal area", async () => {
+    const onChange = vi.fn();
+    const { container } = await render(<UploadSettingsHarness onChange={onChange} />);
+    const terminalTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+    ).find((button) => button.textContent?.includes("Terminal"));
+    if (!terminalTab) {
+      throw new Error("missing Terminal settings tab");
+    }
+
+    await act(async () => terminalTab.click());
+    const group = requiredElement<HTMLElement>(
+      container,
+      '[role="group"][aria-label="Automatically rename conflicting uploads"]',
+    );
+    const [off, on] = Array.from(group.querySelectorAll<HTMLButtonElement>("button"));
+    expect(off?.getAttribute("aria-pressed")).toBe("false");
+    expect(on?.getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => off?.click());
+    expect(onChange).toHaveBeenCalledWith(false);
+    expect(off?.getAttribute("aria-pressed")).toBe("true");
+    expect(on?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("offers desktop command composer settings in the Terminal area", async () => {
+    const onComposerChange = vi.fn();
+    const onEnterNewlineChange = vi.fn();
+    const { container } = await render(
+      <ComposerSettingsHarness
+        onComposerChange={onComposerChange}
+        onEnterNewlineChange={onEnterNewlineChange}
+      />,
+    );
+    const terminalTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+    ).find((button) => button.textContent?.includes("Terminal"));
+    if (!terminalTab) {
+      throw new Error("missing Terminal settings tab");
+    }
+
+    await act(async () => terminalTab.click());
+    const composerGroup = requiredElement<HTMLElement>(
+      container,
+      '[role="group"][aria-label="Command composer"]',
+    );
+    const [composerOff, composerOn] = Array.from(
+      composerGroup.querySelectorAll<HTMLButtonElement>("button"),
+    );
+    expect(composerOff?.getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => composerOn?.click());
+    expect(onComposerChange).toHaveBeenCalledWith(true);
+    expect(composerOn?.getAttribute("aria-pressed")).toBe("true");
+
+    const newlineGroup = requiredElement<HTMLElement>(
+      container,
+      '[role="group"][aria-label="Desktop composer Enter inserts newline"]',
+    );
+    const [newlineOff, newlineOn] = Array.from(
+      newlineGroup.querySelectorAll<HTMLButtonElement>("button"),
+    );
+    expect(newlineOn?.getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => newlineOff?.click());
+    expect(onEnterNewlineChange).toHaveBeenCalledWith(false);
+    expect(newlineOff?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("allows cursor blinking to be enabled in the Terminal area", async () => {
+    const onChange = vi.fn();
+    const { container } = await render(<CursorBlinkSettingsHarness onChange={onChange} />);
+    const terminalTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+    ).find((button) => button.textContent?.includes("Terminal"));
+    if (!terminalTab) {
+      throw new Error("missing Terminal settings tab");
+    }
+
+    await act(async () => terminalTab.click());
+    const group = requiredElement<HTMLElement>(
+      container,
+      '[role="group"][aria-label="Terminal cursor blink"]',
+    );
+    const [off, on] = Array.from(group.querySelectorAll<HTMLButtonElement>("button"));
+    expect(off?.getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => on?.click());
+    expect(onChange).toHaveBeenCalledWith(true);
+    expect(on?.getAttribute("aria-pressed")).toBe("true");
+  });
 });
 
 describe("BackendSettingsDialog build stamp", () => {
@@ -83,7 +193,7 @@ describe("BackendSettingsDialog build stamp", () => {
         bridge_version: "0.1.0",
         git_sha: "66c5eb6d",
         build_time: "2026-09-03T08:20:55Z",
-        protocol_version: 20,
+        protocol_version: 22,
       }),
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -96,7 +206,7 @@ describe("BackendSettingsDialog build stamp", () => {
       expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/version");
       expect(values).toHaveLength(2);
       expect(values[0]?.trim()).not.toBe("");
-      expect(values[1]).toBe("v0.1.0 · 66c5eb6d · 2026-09-03T08:20:55Z · protocol 20");
+      expect(values[1]).toBe("v0.1.0 · 66c5eb6d · 2026-09-03T08:20:55Z · protocol 22");
     } finally {
       vi.unstubAllGlobals();
     }
@@ -116,6 +226,21 @@ describe("BackendSettingsDialog build stamp", () => {
   });
 });
 
+function CursorBlinkSettingsHarness({ onChange }: { onChange: (enabled: boolean) => void }) {
+  const [terminalCursorBlink, setTerminalCursorBlink] = useState(false);
+  return (
+    <BackendSettingsDialog
+      {...settingsProps()}
+      showMobileTerminalSettings={false}
+      terminalCursorBlink={terminalCursorBlink}
+      onTerminalCursorBlink={(enabled) => {
+        onChange(enabled);
+        setTerminalCursorBlink(enabled);
+      }}
+    />
+  );
+}
+
 function SettingsHarness({ onChange }: { onChange: (enabled: boolean) => void }) {
   const [terminalScreenReaderText, setTerminalScreenReaderText] = useState(false);
   return (
@@ -125,6 +250,47 @@ function SettingsHarness({ onChange }: { onChange: (enabled: boolean) => void })
       onTerminalScreenReaderText={(enabled) => {
         onChange(enabled);
         setTerminalScreenReaderText(enabled);
+      }}
+    />
+  );
+}
+
+function UploadSettingsHarness({ onChange }: { onChange: (enabled: boolean) => void }) {
+  const [autoRenameUploadConflicts, setAutoRenameUploadConflicts] = useState(true);
+  return (
+    <BackendSettingsDialog
+      {...settingsProps()}
+      autoRenameUploadConflicts={autoRenameUploadConflicts}
+      onAutoRenameUploadConflicts={(enabled) => {
+        onChange(enabled);
+        setAutoRenameUploadConflicts(enabled);
+      }}
+    />
+  );
+}
+
+function ComposerSettingsHarness({
+  onComposerChange,
+  onEnterNewlineChange,
+}: {
+  onComposerChange: (enabled: boolean) => void;
+  onEnterNewlineChange: (enabled: boolean) => void;
+}) {
+  const [desktopCommandComposer, setDesktopCommandComposer] = useState(false);
+  const [desktopCommandEnterNewline, setDesktopCommandEnterNewline] = useState(true);
+  return (
+    <BackendSettingsDialog
+      {...settingsProps()}
+      showMobileTerminalSettings={false}
+      desktopCommandComposer={desktopCommandComposer}
+      onDesktopCommandComposer={(enabled) => {
+        onComposerChange(enabled);
+        setDesktopCommandComposer(enabled);
+      }}
+      desktopCommandEnterNewline={desktopCommandEnterNewline}
+      onDesktopCommandEnterNewline={(enabled) => {
+        onEnterNewlineChange(enabled);
+        setDesktopCommandEnterNewline(enabled);
       }}
     />
   );
@@ -147,8 +313,16 @@ function settingsProps() {
     onMultiHostSpaceSelection: vi.fn(),
     terminalFontSizePx: 13,
     onTerminalFontSizePx: vi.fn(),
+    terminalCursorBlink: false,
+    onTerminalCursorBlink: vi.fn(),
+    desktopCommandComposer: false,
+    onDesktopCommandComposer: vi.fn(),
+    desktopCommandEnterNewline: true,
+    onDesktopCommandEnterNewline: vi.fn(),
     terminalScreenReaderText: false,
     onTerminalScreenReaderText: vi.fn(),
+    autoRenameUploadConflicts: true,
+    onAutoRenameUploadConflicts: vi.fn(),
     terminalInputTransport: "json" as const,
     onTerminalInputTransport: vi.fn(),
     terminalInputBatchDelayMs: 0,
@@ -170,6 +344,8 @@ function settingsProps() {
     mobileCommandExpandingInput: true,
     onMobileCommandExpandingInput: vi.fn(),
     mobileCommandEnterNewline: false,
+    mobileCommandFocusAfterSubmit: false,
+    onMobileCommandFocusAfterSubmit: vi.fn(),
     onMobileCommandEnterNewline: vi.fn(),
     showMobileKeyboardHideRefit: true,
     mobileKeyboardHideRefit: true,

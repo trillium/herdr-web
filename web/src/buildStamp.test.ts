@@ -11,7 +11,7 @@ const VALID = {
   bridge_version: "0.1.0",
   git_sha: "66c5eb6d",
   build_time: "2026-09-03T08:20:55Z",
-  protocol_version: 20,
+  protocol_version: 22,
 };
 
 describe("parseBridgeBuildInfo", () => {
@@ -23,14 +23,14 @@ describe("parseBridgeBuildInfo", () => {
     expect(parseBridgeBuildInfo(null)).toBeNull();
     expect(parseBridgeBuildInfo("0.1.0")).toBeNull();
     expect(parseBridgeBuildInfo({ ...VALID, git_sha: undefined })).toBeNull();
-    expect(parseBridgeBuildInfo({ ...VALID, protocol_version: "20" })).toBeNull();
+    expect(parseBridgeBuildInfo({ ...VALID, protocol_version: "22" })).toBeNull();
   });
 });
 
 describe("formatting", () => {
   it("renders the bridge stamp as one readable line", () => {
     expect(formatBridgeBuildInfo(VALID)).toBe(
-      "v0.1.0 · 66c5eb6d · 2026-09-03T08:20:55Z · protocol 20",
+      "v0.1.0 · 66c5eb6d · 2026-09-03T08:20:55Z · protocol 22",
     );
   });
 

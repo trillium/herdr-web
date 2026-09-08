@@ -1,3 +1,4 @@
+import { parseMobileCommandFocusAfterSubmit } from "./mobileTerminalPrefs";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MOBILE_COMMAND_ENTER_NEWLINE,
@@ -77,5 +78,14 @@ describe("mobile terminal preferences", () => {
     expect(parseMobileCompactControls(false)).toBe(false);
     expect(parseMobileCompactControls("false")).toBe(DEFAULT_MOBILE_COMPACT_CONTROLS);
     expect(parseMobileCompactControls(undefined)).toBe(DEFAULT_MOBILE_COMPACT_CONTROLS);
+  });
+});
+
+describe("mobile command refocus", () => {
+  it("is opt-in and accepts only stored booleans", () => {
+    expect(parseMobileCommandFocusAfterSubmit(true)).toBe(true);
+    for (const value of [false, undefined, null, "true", 1]) {
+      expect(parseMobileCommandFocusAfterSubmit(value)).toBe(false);
+    }
   });
 });

@@ -43,7 +43,7 @@ export function parseBridgeBuildInfo(value: unknown): BridgeBuildInfo | null {
   };
 }
 
-/** One line a phone can read or screenshot: `v0.1.0 · 66c5eb6d · 2026-09-03T08:20:55Z · protocol 20`. */
+/** One line a phone can read or screenshot: `v0.1.0 · 66c5eb6d · 2026-09-03T08:20:55Z · protocol 22`. */
 export function formatBridgeBuildInfo(info: BridgeBuildInfo): string {
   return [
     `v${info.bridge_version}`,

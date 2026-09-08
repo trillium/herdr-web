@@ -49,3 +49,9 @@ export function parseMobileCommandEnterNewline(value: unknown) {
 export function parseMobileCompactControls(value: unknown) {
   return typeof value === "boolean" ? value : DEFAULT_MOBILE_COMPACT_CONTROLS;
 }
+
+export const DEFAULT_MOBILE_COMMAND_FOCUS_AFTER_SUBMIT = false;
+
+export function parseMobileCommandFocusAfterSubmit(value: unknown) {
+  return typeof value === "boolean" ? value : DEFAULT_MOBILE_COMMAND_FOCUS_AFTER_SUBMIT;
+}
