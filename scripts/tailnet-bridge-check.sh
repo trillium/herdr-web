@@ -26,10 +26,23 @@ if [ $# -gt 0 ]; then
 elif command -v tailscale >/dev/null 2>&1 || [ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]; then
   TS=$(command -v tailscale || echo "/Applications/Tailscale.app/Contents/MacOS/Tailscale")
   while IFS= read -r line; do
-    # `tailscale status` rows vary (tab/space separated); pick the DNS-name
-    # column: first field that is not an IP/user/OS/status token.
-    h=$(printf '%s' "$line" | awk '{for(i=1;i<=NF;i++) if ($i ~ /\./ && $i !~ /^[0-9]+\./ && $i !~ /offline|active|idle/) {print $i; exit}}')
-    [ -n "$h" ] && hosts+=("$h")
+    # Skip blank lines, comments, and the `tailscale status` footer
+    # (e.g. "# Funnel on:" / "- https://<host>.ts.net" lines).
+    stripped=$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//')
+    case "$stripped" in ""|\#*|"-"*) continue;; esac
+    # Column 2 is the short hostname (e.g. `macbook`); MagicDNS answers
+    # for short names, so use it directly instead of hunting for a
+    # dotted DNS name (which skipped every real row and matched the
+    # Funnel footer URL, scheme included, yielding always-UNREACHABLE).
+    h=$(printf '%s' "$line" | awk '{print $2}')
+    # Defense in depth: strip any URL scheme/path/trailing dot that
+    # slips through, and reject non-hostname tokens (IPs, user@, OS).
+    h=$(printf '%s' "$h" | sed -e 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' -e 's#/.*##' -e 's/\.$//')
+    case "$h" in
+      ""|*@*|macOS|iOS|linux|windows|active*|idle|offline*|direct*) continue;;
+      *[!A-Za-z0-9_.-]*) continue;;
+    esac
+    hosts+=("$h")
   done < <("$TS" status 2>/dev/null)
 fi
 

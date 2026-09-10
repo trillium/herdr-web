@@ -102,6 +102,11 @@
 
 ### Fixed
 
+- Fixed `scripts/tailnet-bridge-check.sh` reporting every host `UNREACHABLE`. Its host parser
+  required a dotted DNS name, so it skipped all real `tailscale status` rows (short hostnames)
+  and latched onto the Funnel footer URL including its `https://` scheme, producing a URL curl
+  can never resolve. It now reads the short hostname column and skips footer lines.
+
 ### Removed
 
 ## [0.6.0] - 2026-09-07
