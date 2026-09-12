@@ -18,6 +18,14 @@
 
 ### Added
 
+- Added per-connection device logging to the bridge file log (`herdr-web.log`): one
+  coalesced line per inbound HTTP connection and websocket upgrade with timestamp, peer
+  tailnet hostname or IP, request path, response status, and user-agent family. Hostname
+  resolution is best-effort in the background and never blocks serving; repeated identical
+  lines coalesce within a 10s window so reconnect storms can't flood the log. Privacy:
+  no bodies, no query strings, no tokens, and the user-agent is truncated to a device
+  class. Logging only — no auth, protocol, or UI changes.
+
 - Added GitHub Actions CI (`.github/workflows/ci.yml`) covering both toolchains on every pull
   request and every push to `main`. Blocking: the vendored-layout check, web lint/test/build, the
   `scripts/dev.mjs` tests, `cargo fmt --check`, and release `cargo build`/`cargo test` for both
