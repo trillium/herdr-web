@@ -7679,9 +7679,7 @@ mod tests {
             Some("term-9")
         );
         assert_eq!(
-            parsed
-                .get("request_id")
-                .and_then(serde_json::Value::as_str),
+            parsed.get("request_id").and_then(serde_json::Value::as_str),
             Some("req-123")
         );
         assert_eq!(
@@ -7696,8 +7694,7 @@ mod tests {
 
     #[test]
     fn command_submit_event_payload_omits_missing_terminal_id() {
-        let raw =
-            command_submit_event_payload("pane-1", None, "req-123", "talon-ender", 42);
+        let raw = command_submit_event_payload("pane-1", None, "req-123", "talon-ender", 42);
         let parsed: serde_json::Value =
             serde_json::from_str(&raw).expect("payload should be valid JSON");
         assert_eq!(
