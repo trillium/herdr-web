@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { CompositionEvent, KeyboardEvent } from "react";
 import type { ActionEnvelope, CommandContext } from "@parlay/client";
 import { autosizeMobileCommandTextarea } from "./mobileCommandTextarea";
 import { randomId } from "./randomId";
@@ -33,6 +33,8 @@ export interface ParlayInputProps {
   enterNewline: boolean;
   controlsScalePercent: number;
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  onCompositionStart?: (event: CompositionEvent<HTMLTextAreaElement | HTMLInputElement>) => void;
+  onCompositionEnd?: (event: CompositionEvent<HTMLTextAreaElement | HTMLInputElement>) => void;
   inputRef: (node: HTMLInputElement | HTMLTextAreaElement | null) => void;
 }
 
@@ -47,6 +49,8 @@ export function ParlayInput({
   enterNewline,
   controlsScalePercent,
   onKeyDown,
+  onCompositionStart,
+  onCompositionEnd,
   inputRef,
 }: ParlayInputProps) {
   const PARLAY_SERVER_URL = `${window.location.protocol}//${window.location.hostname}:4242`;
@@ -174,6 +178,8 @@ export function ParlayInput({
           value={value}
           onChange={(event) => onValueChange(event.target.value)}
           onKeyDown={onKeyDown}
+          onCompositionStart={onCompositionStart}
+          onCompositionEnd={onCompositionEnd}
         />
       );
     }
@@ -190,6 +196,8 @@ export function ParlayInput({
         disabled={disabled}
         value={value}
         onChange={(event) => onValueChange(event.target.value)}
+        onCompositionStart={onCompositionStart}
+        onCompositionEnd={onCompositionEnd}
       />
     );
   }
@@ -276,6 +284,8 @@ export function ParlayInput({
         value={value}
         onChange={(event) => handleChange(event.target.value)}
         onKeyDown={onKeyDown}
+        onCompositionStart={onCompositionStart}
+        onCompositionEnd={onCompositionEnd}
       />
     );
   }
@@ -292,6 +302,8 @@ export function ParlayInput({
       disabled={disabled}
       value={value}
       onChange={(event) => handleChange(event.target.value)}
+      onCompositionStart={onCompositionStart}
+      onCompositionEnd={onCompositionEnd}
     />
   );
 }

@@ -28,6 +28,12 @@ import {
 } from "react";
 import type { ChangeEvent, ClipboardEvent, DragEvent, KeyboardEvent, RefObject } from "react";
 import { autosizeMobileCommandTextarea } from "./mobileCommandTextarea";
+import {
+  decideCommandSubmit,
+  noteCommandSubmitSeen,
+  subscribeCommandSubmitRequests,
+} from "./commandSubmit";
+import type { CommandSubmitSignal } from "./commandSubmit";
 import { ConfirmDialog } from "./overlays";
 import { addNativeResumeHandler } from "./native";
 import { shellQuote } from "./shell";
@@ -1637,6 +1643,7 @@ export function TerminalView({
           key={JSON.stringify([bridgeId, pane.pane_id])}
           bridgeId={bridgeId}
           paneId={pane.pane_id}
+          terminalId={pane?.terminal_id ?? null}
           commandInputRef={mobileCommandInputRef}
           disabled={!pane || connectionState !== "attached"}
           uploadDisabled={uploadDisabled}
@@ -1742,6 +1749,7 @@ function MobileSelectionActions({
 export function TerminalCommandControls({
   bridgeId,
   paneId,
+  terminalId = null,
   commandInputRef,
   disabled,
   uploadDisabled,
@@ -1769,6 +1777,7 @@ export function TerminalCommandControls({
 }: {
   bridgeId: string;
   paneId: string;
+  terminalId?: string | null;
   commandInputRef: RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
   disabled: boolean;
   uploadDisabled: boolean;
@@ -1798,6 +1807,9 @@ export function TerminalCommandControls({
   const [value, setValue] = useCommandDraft(bridgeId, paneId);
   // Keep this deadline outside the keyed field so it survives input replacement.
   const compositionGuardUntilRef = useRef(0);
+  const composingRef = useRef(false);
+  const seenSubmitRequestsRef = useRef<Set<string> | null>(null);
+  const pendingSubmitRef = useRef<CommandSubmitSignal | null>(null);
   const acceptedValueRef = useRef(value);
   useLayoutEffect(() => {
     acceptedValueRef.current = value;
@@ -1837,6 +1849,54 @@ export function TerminalCommandControls({
     onStageCommand(command);
     if (!mobileControls) {
       onTerminalFocus();
+    }
+  };
+  const submitRef = useRef(submit);
+  submitRef.current = submit;
+  const scopeRef = useRef({ paneId, terminalId, disabled });
+  scopeRef.current = { paneId, terminalId, disabled };
+  const evaluateSubmitSignal = useCallback((signal: CommandSubmitSignal) => {
+    if (seenSubmitRequestsRef.current === null) {
+      seenSubmitRequestsRef.current = new Set();
+    }
+    const seen = seenSubmitRequestsRef.current;
+    const scope = scopeRef.current;
+    const decision = decideCommandSubmit(
+      {
+        signal,
+        paneId: scope.paneId,
+        terminalId: scope.terminalId ?? null,
+        disabled: scope.disabled,
+        composing: composingRef.current,
+        draft: acceptedValueRef.current,
+        nowMs: Date.now(),
+      },
+      seen,
+    );
+    if (decision === "wrong-pane" || decision === "composing") {
+      if (decision === "composing") {
+        pendingSubmitRef.current = signal;
+      }
+      return;
+    }
+    noteCommandSubmitSeen(seen, signal.request_id);
+    if (decision === "submit") {
+      pendingSubmitRef.current = null;
+      submitRef.current();
+    }
+  }, []);
+  useEffect(() => subscribeCommandSubmitRequests(evaluateSubmitSignal), [
+    evaluateSubmitSignal,
+  ]);
+  const onCommandCompositionStart = () => {
+    composingRef.current = true;
+  };
+  const onCommandCompositionEnd = () => {
+    composingRef.current = false;
+    const pending = pendingSubmitRef.current;
+    pendingSubmitRef.current = null;
+    if (pending) {
+      evaluateSubmitSignal(pending);
     }
   };
   const sendKey = (key: TerminalKey) => {
@@ -2079,6 +2139,8 @@ export function TerminalCommandControls({
             enterNewline={enterNewline}
             controlsScalePercent={controlsScalePercent}
             onKeyDown={onCommandTextareaKeyDown}
+            onCompositionStart={onCommandCompositionStart}
+            onCompositionEnd={onCommandCompositionEnd}
             inputRef={setCommandInputNode}
           />
         <button
