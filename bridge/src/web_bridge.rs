@@ -1468,6 +1468,10 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
             post(command_handler).options(preflight_handler),
         )
         .route(
+            "/api/command-submit",
+            post(command_submit_handler).options(preflight_handler),
+        )
+        .route(
             "/api/selection",
             post(selection_handler).options(preflight_handler),
         )
@@ -2257,6 +2261,17 @@ struct CommandRequest {
 #[derive(Debug, Deserialize)]
 struct SelectionRequest {
     pane_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CommandSubmitRequest {
+    pane_id: String,
+    #[serde(default)]
+    terminal_id: Option<String>,
+    #[serde(default)]
+    request_id: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3243,6 +3258,70 @@ async fn selection_handler(
     Ok(Json(serde_json::json!({ "selected_pane_id": pane_id })))
 }
 
+/// Server-sent submit trigger producer (hw-submit-event).
+///
+/// A local input source (e.g. a Talon voice ender) POSTs the pane whose
+/// composer should submit; the bridge fans a
+/// `herdr_web.command_submit_requested` event out on `ui_event_tx` and the
+/// owning client submits its existing draft. The draft text itself is never
+/// in the payload — the text in the box is authoritative.
+async fn command_submit_handler(
+    State(state): State<BridgeState>,
+    headers: HeaderMap,
+    Json(body): Json<CommandSubmitRequest>,
+) -> Result<Json<serde_json::Value>, BridgeError> {
+    ensure_allowed_request(&headers, &state.request_policy)?;
+    let pane_id = body.pane_id.trim();
+    if pane_id.is_empty() {
+        return Err(BridgeError::BadRequest("missing pane_id".to_string()));
+    }
+    let terminal_id = body
+        .terminal_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let api = state.api.clone();
+    let pane_id_owned = pane_id.to_string();
+    let panes = tokio::task::spawn_blocking(move || current_panes(&api))
+        .await
+        .map_err(|err| BridgeError::Protocol(err.to_string()))??;
+    if !panes.iter().any(|pane| pane.pane_id == pane_id_owned) {
+        return Err(BridgeError::Protocol(format!(
+            "pane not found: {pane_id_owned}"
+        )));
+    }
+    let request_id = body
+        .request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let source = body
+        .source
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("talon-ender");
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    broadcast_command_submit_requested(
+        &state,
+        &pane_id_owned,
+        terminal_id,
+        &request_id,
+        source,
+        ts_ms,
+    );
+    Ok(Json(serde_json::json!({
+        "request_id": request_id,
+        "pane_id": pane_id_owned,
+        "ts": ts_ms,
+    })))
+}
+
 async fn upload_handler(
     State(state): State<BridgeState>,
     Query(query): Query<UploadQuery>,
@@ -3966,6 +4045,43 @@ fn broadcast_notes_changed(state: &BridgeState, note_id: Option<&str>, revision:
     let _ = state.ui_event_tx.send(payload.to_string());
 }
 
+fn command_submit_event_payload(
+    pane_id: &str,
+    terminal_id: Option<&str>,
+    request_id: &str,
+    source: &str,
+    ts_ms: u64,
+) -> String {
+    let mut payload = serde_json::json!({
+        "type": "herdr_web.command_submit_requested",
+        "pane_id": pane_id,
+        "request_id": request_id,
+        "source": source,
+        "ts": ts_ms,
+    });
+    if let Some(terminal_id) = terminal_id {
+        payload["terminal_id"] = serde_json::json!(terminal_id);
+    }
+    payload.to_string()
+}
+
+fn broadcast_command_submit_requested(
+    state: &BridgeState,
+    pane_id: &str,
+    terminal_id: Option<&str>,
+    request_id: &str,
+    source: &str,
+    ts_ms: u64,
+) {
+    let _ = state.ui_event_tx.send(command_submit_event_payload(
+        pane_id,
+        terminal_id,
+        request_id,
+        source,
+        ts_ms,
+    ));
+}
+
 fn observe_agent_activity_snapshot(state: &BridgeState, panes: &[PaneInfo]) {
     if state.agent_activity.observe_snapshot(panes) {
         broadcast_agent_activity_changed(state);
@@ -4090,6 +4206,7 @@ fn rest_path_is_safe(rest: &str) -> bool {
 ///
 /// Blocked (anything not listed above, including):
 ///   - `command`           — executes arbitrary shell commands on the remote
+///   - `command-submit`    — triggers command submission on the remote
 ///   - `uploads`           — writes files to the remote filesystem
 ///   - `selection`         — sets terminal selection state
 ///   - `mobile-mode`       — sets a local-filesystem flag on the remote
@@ -7526,6 +7643,7 @@ mod tests {
     #[test]
     fn proxy_allow_list_rejects_blocked_paths() {
         assert!(!is_proxy_path_allowed("command"));
+        assert!(!is_proxy_path_allowed("command-submit"));
         assert!(!is_proxy_path_allowed("uploads"));
         assert!(!is_proxy_path_allowed("selection"));
         assert!(!is_proxy_path_allowed("mobile-mode"));
@@ -7533,6 +7651,57 @@ mod tests {
         assert!(!is_proxy_path_allowed("launcher-presets/launch"));
         assert!(!is_proxy_path_allowed("unknown-endpoint"));
         assert!(!is_proxy_path_allowed(""));
+    }
+
+    #[test]
+    fn command_submit_event_payload_has_expected_shape() {
+        let raw = command_submit_event_payload(
+            "pane-1",
+            Some("term-9"),
+            "req-123",
+            "talon-ender",
+            1_756_000_000_000,
+        );
+        let parsed: serde_json::Value =
+            serde_json::from_str(&raw).expect("payload should be valid JSON");
+        assert_eq!(
+            parsed.get("type").and_then(serde_json::Value::as_str),
+            Some("herdr_web.command_submit_requested")
+        );
+        assert_eq!(
+            parsed.get("pane_id").and_then(serde_json::Value::as_str),
+            Some("pane-1")
+        );
+        assert_eq!(
+            parsed
+                .get("terminal_id")
+                .and_then(serde_json::Value::as_str),
+            Some("term-9")
+        );
+        assert_eq!(
+            parsed.get("request_id").and_then(serde_json::Value::as_str),
+            Some("req-123")
+        );
+        assert_eq!(
+            parsed.get("source").and_then(serde_json::Value::as_str),
+            Some("talon-ender")
+        );
+        assert_eq!(
+            parsed.get("ts").and_then(serde_json::Value::as_u64),
+            Some(1_756_000_000_000)
+        );
+    }
+
+    #[test]
+    fn command_submit_event_payload_omits_missing_terminal_id() {
+        let raw = command_submit_event_payload("pane-1", None, "req-123", "talon-ender", 42);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&raw).expect("payload should be valid JSON");
+        assert_eq!(
+            parsed.get("type").and_then(serde_json::Value::as_str),
+            Some("herdr_web.command_submit_requested")
+        );
+        assert!(parsed.get("terminal_id").is_none());
     }
 
     #[test]

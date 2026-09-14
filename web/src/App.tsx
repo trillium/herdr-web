@@ -156,6 +156,7 @@ import {
   useFocusReturn,
 } from "./overlayFocus";
 import { createSnapshotRefreshController } from "./refreshCoordinator";
+import { emitCommandSubmitRequest, parseCommandSubmitSignal } from "./commandSubmit";
 import { TerminalView } from "./TerminalView";
 import {
   DEFAULT_TERMINAL_SCREEN_READER_TEXT,
@@ -4976,6 +4977,11 @@ export function BridgeConnectionController({
         }
         if (isAgentPinsChangedEvent(event)) {
           onAgentPinsChangedRef.current(runtime.id);
+          return;
+        }
+        const submitSignal = parseCommandSubmitSignal(event.data);
+        if (submitSignal) {
+          emitCommandSubmitRequest(submitSignal);
           return;
         }
         refresh();

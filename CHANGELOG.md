@@ -18,6 +18,13 @@
 
 ### Added
 
+- Added a server-sent submit trigger: `POST /api/command-submit {pane_id, terminal_id?,
+  request_id?, source?}` fans a `herdr_web.command_submit_requested` event out on the
+  existing `/ws/ui-events` channel, and the owning composer submits its current draft via
+  the existing submit path. The handler scope-checks pane/terminal, dedupes by
+  `request_id`, enforces a 5s freshness bound, defers while IME-composing (never a
+  synthetic Enter), and refuses empty drafts. No keyboard-path or Enter-default changes.
+
 - Added per-connection device logging to the bridge file log (`herdr-web.log`): one
   coalesced line per inbound HTTP connection and websocket upgrade with timestamp, peer
   tailnet hostname or IP, request path, response status, and user-agent family. Hostname
