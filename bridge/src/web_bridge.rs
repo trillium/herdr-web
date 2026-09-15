@@ -147,6 +147,7 @@ struct BridgeState {
     upload_dir: PathBuf,
     remote_bridges: Arc<Vec<RemoteBridge>>,
     remote_http_client: reqwest::Client,
+    daemon_health: Arc<std::sync::Mutex<DaemonHealth>>,
 }
 
 #[derive(Debug, Clone)]
@@ -156,6 +157,12 @@ struct RequestPolicy {
     allowed_hosts: Vec<String>,
     allowed_origins: Vec<String>,
     allowed_connect_sources: Vec<String>,
+    /// This machine's resolved tailnet short name (e.g. `macbook`), seeded at startup from
+    /// `tailnet_name_cached()`. Gates treat it like an implicit `--allow-host` entry so the
+    /// tailnet name the bridge itself resolves needs no manual flags. `None` when Tailscale
+    /// is absent at startup (same as capabilities omitting `tailnet_name`); a later Tailscale
+    /// start is picked up on bridge restart.
+    tailnet_name: Option<String>,
 }
 
 /// Lets handlers that only need the request gate take `State<RequestPolicy>` instead of the
@@ -256,6 +263,40 @@ struct LauncherPresetsCapability {
 #[derive(Debug, Serialize)]
 struct NotesCapability {
     version: u32,
+}
+
+/// Last-known downstream (Herdr daemon) contact, served by `GET /api/health`.
+///
+/// `last_seen_ms` is the last successful daemon status round trip; it stays put across failed
+/// checks (a stale-but-stamped value beats "unknown"), while `reachable`/`last_check_ms`
+/// describe the most recent probe. All timestamps are epoch millis, matching the `ts` convention
+/// on `herdr_web.command_submit_requested`.
+#[derive(Debug, Clone, Default)]
+struct DaemonHealth {
+    last_seen_ms: Option<u64>,
+    last_check_ms: Option<u64>,
+    reachable: bool,
+    version: Option<String>,
+    protocol: Option<u32>,
+    last_error: Option<String>,
+}
+
+/// The slice of bridge state `GET /api/health` needs. Handlers take `State<HealthState>` rather
+/// than the full `BridgeState` (via `FromRef`) so the route is exercisable in tests without a
+/// daemon, mirroring `version_handler`'s `State<RequestPolicy>`.
+#[derive(Debug, Clone)]
+struct HealthState {
+    policy: RequestPolicy,
+    daemon_health: Arc<std::sync::Mutex<DaemonHealth>>,
+}
+
+impl FromRef<BridgeState> for HealthState {
+    fn from_ref(state: &BridgeState) -> Self {
+        Self {
+            policy: state.request_policy.clone(),
+            daemon_health: state.daemon_health.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1283,6 +1324,8 @@ Use --host 0.0.0.0 to listen on non-loopback interfaces.\n\
 Use --allow-origin http://HOSTNAME:PORT when serving from a non-localhost address to work around herdr 0.8.0+ CORS checks.\n\
 Use --allow-origin http://localhost for bundled Android app access.\n\
 Use --allow-host HOSTNAME to accept that exact DNS hostname in Host headers.\n\
+The bridge's own resolved tailnet name (see tailnet_name in /api/capabilities) is always\n\
+accepted in Host/Origin without flags; Tailscale starting after the bridge needs a restart.\n\
 Use --allow-connect-origin ORIGIN to let the served web app connect to another bridge origin.\n\
 Use --launcher-presets PATH or HERDR_WEB_LAUNCHER_PRESETS to load custom launch presets.\n\
 Use --remote-bridge URL (repeatable) to register another herdr-web bridge (e.g. http://mini2:8787)\n\
@@ -1312,12 +1355,22 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
         .join("connection-priorities.json");
     ensure_private_dir(&preferences_path.parent().unwrap_or(&PathBuf::from(".")))?;
     let connection_manager = Arc::new(ConnectionManager::new(preferences_path));
+    // Warm the process tailnet-name cache now so the request policy below auto-covers it:
+    // pages served under this machine's tailnet name need no manual --allow-host/--allow-origin.
+    let tailnet_name = tailnet_name_cached().await;
+    if let Some(name) = tailnet_name.as_deref() {
+        info!(
+            tailnet_name = %name,
+            "tailnet origin auto-coverage active: Host/Origin carrying this name bypass manual allow-lists"
+        );
+    }
     let request_policy = RequestPolicy {
         bind_host: options.host.clone(),
         bind_port: options.port,
         allowed_hosts: options.allowed_hosts.clone(),
         allowed_origins: options.allowed_origins.clone(),
         allowed_connect_sources: options.allowed_connect_sources.clone(),
+        tailnet_name,
     };
     let api = ApiClient::for_socket_path(crate::session::active_api_socket_path());
     let daemon_status = startup_daemon_status(&api)?;
@@ -1333,6 +1386,9 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
         protocol = daemon_protocol,
         "herdr-web bridge connected to compatible Herdr daemon"
     );
+    // The startup status round trip above is the first successful downstream contact.
+    let daemon_health = Arc::new(std::sync::Mutex::new(DaemonHealth::default()));
+    record_daemon_contact(&daemon_health, daemon_version.to_string(), daemon_protocol);
     let remote_bridges = build_remote_bridges(&options.remote_bridges);
     for remote in &remote_bridges {
         info!(id = %remote.id, url = %remote.base_url, "herdr-web bridge proxying remote bridge");
@@ -1357,8 +1413,10 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
         upload_dir: options.upload_dir.clone(),
         remote_bridges: Arc::new(remote_bridges),
         remote_http_client,
+        daemon_health: daemon_health.clone(),
     };
     spawn_agent_activity_watcher(state.clone());
+    spawn_daemon_health_watcher(state.api.clone(), daemon_health);
     let agent_activity_routes = Router::new().route(
         "/api/agent-activity",
         get(agent_activity_list_handler).options(preflight_handler),
@@ -1458,6 +1516,10 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
         .route(
             "/api/version",
             get(version_handler).options(preflight_handler),
+        )
+        .route(
+            "/api/health",
+            get(health_handler).options(preflight_handler),
         )
         .route(
             "/api/bridges",
@@ -1901,6 +1963,12 @@ fn host_authority_allowed(authority: &str, policy: &RequestPolicy) -> bool {
         return true;
     }
 
+    // The resolved tailnet name gets the same any-port treatment: it names this machine, so a
+    // Host header carrying it (directly or behind `tailscale serve`) is not DNS rebinding.
+    if host_matches_tailnet_name(host, policy.tailnet_name.as_deref()) {
+        return true;
+    }
+
     // Everything below is DNS-rebinding protection for hosts the operator did not name.
     if !authority_port_matches(authority, policy.bind_port) {
         return false;
@@ -1929,10 +1997,28 @@ fn request_origin_allowed(headers: &HeaderMap, policy: &RequestPolicy) -> bool {
 
     same_authority(origin_authority, host)
         || (is_loopback_authority(origin_authority) && is_loopback_authority(host))
+        || host_matches_tailnet_name(host_part(origin_authority), policy.tailnet_name.as_deref())
         || policy
             .allowed_origins
             .iter()
             .any(|allowed| allowed.eq_ignore_ascii_case(origin))
+}
+
+/// Whether a request Host matches this machine's resolved tailnet short name.
+///
+/// Exact short-name match only (case-insensitive, trailing-dot tolerant): never a suffix or
+/// sub-domain match, so `macbook.evil.com` can never ride on a `macbook` tailnet name — that
+/// would reopen the DNS-rebinding hole the Host gate exists to close.
+fn host_matches_tailnet_name(host: &str, tailnet_name: Option<&str>) -> bool {
+    let Some(name) = tailnet_name else {
+        return false;
+    };
+    let name = name.trim().trim_end_matches('.');
+    if name.is_empty() {
+        return false;
+    }
+    let host = host.trim().trim_end_matches('.');
+    !host.is_empty() && host.eq_ignore_ascii_case(name)
 }
 
 fn origin_authority(origin: &str) -> Option<&str> {
@@ -3308,7 +3394,7 @@ async fn command_submit_handler(
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0);
     broadcast_command_submit_requested(
-        &state,
+        &state.ui_event_tx,
         &pane_id_owned,
         terminal_id,
         &request_id,
@@ -3655,6 +3741,139 @@ fn build_info() -> BuildInfo {
         build_time: env!("HERDR_WEB_BUILD_TIME"),
         protocol_version: PROTOCOL_VERSION,
     }
+}
+
+/// `GET /api/health` — version plus downstream (Herdr daemon) last-seen in one place, so the
+/// loop doctor can join this hop without parsing logs. `ok` is true only while the last daemon
+/// probe succeeded; the daemon block always reports the freshest known contact, never an error.
+async fn health_handler(
+    State(health): State<HealthState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, BridgeError> {
+    ensure_allowed_request(&headers, &health.policy)?;
+    let snapshot = health
+        .daemon_health
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default();
+    Ok(Json(health_body(&snapshot)))
+}
+
+/// Pure response builder for `/api/health`, kept separate from the handler for tests.
+fn health_body(daemon: &DaemonHealth) -> serde_json::Value {
+    serde_json::json!({
+        "ok": daemon.reachable,
+        "bridge_version": env!("CARGO_PKG_VERSION"),
+        "git_sha": env!("HERDR_WEB_GIT_SHA"),
+        "build_time": env!("HERDR_WEB_BUILD_TIME"),
+        "protocol_version": PROTOCOL_VERSION,
+        "web_compat": 1,
+        "daemon": {
+            "reachable": daemon.reachable,
+            "version": daemon.version,
+            "protocol": daemon.protocol,
+            "last_seen_ms": daemon.last_seen_ms,
+            "last_check_ms": daemon.last_check_ms,
+            "last_error": daemon.last_error,
+        },
+    })
+}
+
+fn epoch_ms_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Records a successful daemon status round trip: last-seen advances, the error clears.
+fn record_daemon_contact(
+    daemon_health: &std::sync::Mutex<DaemonHealth>,
+    version: String,
+    protocol: u32,
+) {
+    let now_ms = epoch_ms_now();
+    if let Ok(mut guard) = daemon_health.lock() {
+        guard.last_seen_ms = Some(now_ms);
+        guard.last_check_ms = Some(now_ms);
+        guard.reachable = true;
+        guard.version = Some(version);
+        guard.protocol = Some(protocol);
+        guard.last_error = None;
+    }
+}
+
+/// Records a failed daemon probe: reachability flips, but last-seen keeps its stamp.
+fn record_daemon_failure(daemon_health: &std::sync::Mutex<DaemonHealth>, error: String) {
+    if let Ok(mut guard) = daemon_health.lock() {
+        guard.last_check_ms = Some(epoch_ms_now());
+        guard.reachable = false;
+        guard.last_error = Some(truncate_daemon_error(&error));
+    }
+}
+
+fn truncate_daemon_error(error: &str) -> String {
+    const MAX_DAEMON_ERROR_CHARS: usize = 160;
+    let trimmed = error.trim();
+    if trimmed.chars().count() <= MAX_DAEMON_ERROR_CHARS {
+        return trimmed.to_string();
+    }
+    let truncated: String = trimmed.chars().take(MAX_DAEMON_ERROR_CHARS).collect();
+    format!("{truncated}…")
+}
+
+/// Background probe keeping `/api/health`'s downstream last-seen fresh: a lightweight daemon
+/// status round trip every interval, recorded as contact or failure. Failures log on the
+/// reachable→unreachable transition only, so a down daemon can't flood the log.
+fn spawn_daemon_health_watcher(api: ApiClient, daemon_health: Arc<std::sync::Mutex<DaemonHealth>>) {
+    const DAEMON_HEALTH_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+    tokio::spawn(async move {
+        let mut was_reachable = true;
+        loop {
+            tokio::time::sleep(DAEMON_HEALTH_REFRESH_INTERVAL).await;
+            let probe = tokio::task::spawn_blocking({
+                let api = api.clone();
+                move || api.status_with_timeout(DAEMON_STATUS_TIMEOUT)
+            })
+            .await;
+            let status = match probe {
+                Ok(Ok(status)) => status,
+                Ok(Err(err)) => {
+                    record_daemon_failure(&daemon_health, err.to_string());
+                    if was_reachable {
+                        warn!(error = %err, "daemon health probe failed");
+                    }
+                    was_reachable = false;
+                    continue;
+                }
+                Err(err) => {
+                    record_daemon_failure(&daemon_health, err.to_string());
+                    if was_reachable {
+                        warn!(error = %err, "daemon health probe task failed");
+                    }
+                    was_reachable = false;
+                    continue;
+                }
+            };
+            match validated_daemon_protocol(status.clone()) {
+                Ok(protocol) => {
+                    record_daemon_contact(
+                        &daemon_health,
+                        status.version.unwrap_or_default(),
+                        protocol,
+                    );
+                    was_reachable = true;
+                }
+                Err(err) => {
+                    record_daemon_failure(&daemon_health, err.to_string());
+                    if was_reachable {
+                        warn!(error = %err, "daemon health probe rejected daemon status");
+                    }
+                    was_reachable = false;
+                }
+            }
+        }
+    });
 }
 
 /// Process-wide cache of this machine's tailnet name. The tailnet name does not change minute
@@ -4066,14 +4285,14 @@ fn command_submit_event_payload(
 }
 
 fn broadcast_command_submit_requested(
-    state: &BridgeState,
+    ui_event_tx: &tokio::sync::broadcast::Sender<String>,
     pane_id: &str,
     terminal_id: Option<&str>,
     request_id: &str,
     source: &str,
     ts_ms: u64,
 ) {
-    let _ = state.ui_event_tx.send(command_submit_event_payload(
+    let _ = ui_event_tx.send(command_submit_event_payload(
         pane_id,
         terminal_id,
         request_id,
@@ -7346,6 +7565,7 @@ mod tests {
             allowed_hosts: Vec::new(),
             allowed_origins: vec!["http://localhost".to_string()],
             allowed_connect_sources: Vec::new(),
+            tailnet_name: None,
         };
         assert!(request_allowed(
             &origin_headers("192.168.1.10:4000", Some("http://localhost")),
@@ -7412,6 +7632,7 @@ mod tests {
             allowed_hosts: vec!["herdr-host.local".to_string()],
             allowed_origins: Vec::new(),
             allowed_connect_sources: Vec::new(),
+            tailnet_name: None,
         };
         // Same port as the bridge bind: the plain direct-connect case.
         assert!(host_authority_allowed("herdr-host.local:4000", &policy));
@@ -7426,6 +7647,68 @@ mod tests {
     }
 
     #[test]
+    fn host_matches_tailnet_name_is_exact_short_name_only() {
+        assert!(host_matches_tailnet_name("macbook", Some("macbook")));
+        assert!(host_matches_tailnet_name("MACBOOK", Some("macbook")));
+        assert!(host_matches_tailnet_name("macbook.", Some("macbook")));
+        assert!(!host_matches_tailnet_name("macbook", None));
+        assert!(!host_matches_tailnet_name("macbook", Some("")));
+        assert!(!host_matches_tailnet_name("", Some("macbook")));
+        // A suffix of the tailnet name is not a match (DNS-rebinding guard).
+        assert!(!host_matches_tailnet_name("evil-macbook", Some("macbook")));
+        assert!(!host_matches_tailnet_name("macbook2", Some("macbook")));
+        // A sub-domain carrying the short name as a label is not a match either:
+        // only this machine's own name (or its exact FQDN via --allow-host) passes.
+        assert!(!host_matches_tailnet_name(
+            "macbook.evil.com",
+            Some("macbook")
+        ));
+        assert!(!host_matches_tailnet_name(
+            "macbook.hippo-tilapia.ts.net",
+            Some("macbook")
+        ));
+    }
+
+    #[test]
+    fn host_gate_auto_covers_resolved_tailnet_name_on_any_port() {
+        let policy = test_policy_with_tailnet("0.0.0.0", 8787, "macbook");
+        assert!(host_authority_allowed("macbook:8787", &policy));
+        assert!(host_authority_allowed("MACBOOK:8787", &policy));
+        // `tailscale serve` proxy case: tailnet name on a non-bind port.
+        assert!(host_authority_allowed("macbook:8443", &policy));
+        assert!(host_authority_allowed("macbook", &policy));
+        // Other names still rejected.
+        assert!(!host_authority_allowed("mini2:8787", &policy));
+        assert!(!host_authority_allowed("macbook.evil.com:8787", &policy));
+    }
+
+    #[test]
+    fn host_gate_rejects_tailnet_looking_host_when_unresolved() {
+        // Tailscale absent at startup: a bare hostname stays rejected on an
+        // unspecified bind, exactly as before auto-coverage existed.
+        let policy = test_policy("0.0.0.0", 8787);
+        assert!(!host_authority_allowed("macbook:8787", &policy));
+    }
+
+    #[test]
+    fn origin_gate_auto_covers_resolved_tailnet_name() {
+        let policy = test_policy_with_tailnet("0.0.0.0", 8787, "macbook");
+        assert!(request_origin_allowed(
+            &origin_headers("macbook:8787", Some("http://macbook:8787")),
+            &policy
+        ));
+        assert!(request_allowed(
+            &origin_headers("macbook:8787", Some("http://macbook:8787")),
+            &policy
+        ));
+        // Cross-site origins still rejected even with a tailnet name configured.
+        assert!(!request_origin_allowed(
+            &origin_headers("macbook:8787", Some("https://example.com")),
+            &policy
+        ));
+    }
+
+    #[test]
     fn host_gate_keeps_port_check_for_hosts_outside_the_allow_list() {
         let policy = RequestPolicy {
             bind_host: "0.0.0.0".to_string(),
@@ -7433,6 +7716,7 @@ mod tests {
             allowed_hosts: vec!["herdr-host.local".to_string()],
             allowed_origins: Vec::new(),
             allowed_connect_sources: Vec::new(),
+            tailnet_name: None,
         };
         // Not allow-listed: rejected on the bridge port and on any other port.
         assert!(!host_authority_allowed("evil.example:4000", &policy));
@@ -7456,6 +7740,7 @@ mod tests {
             allowed_hosts: Vec::new(),
             allowed_origins: Vec::new(),
             allowed_connect_sources: Vec::new(),
+            tailnet_name: None,
         };
         assert!(host_authority_allowed("192.168.1.10:4000", &bound));
         assert!(!host_authority_allowed("192.168.1.10:8443", &bound));
@@ -7469,6 +7754,7 @@ mod tests {
             allowed_hosts: Vec::new(),
             allowed_origins: vec!["http://localhost".to_string()],
             allowed_connect_sources: Vec::new(),
+            tailnet_name: None,
         };
         assert_eq!(
             cors_origin_header(
@@ -7689,6 +7975,43 @@ mod tests {
         assert_eq!(
             parsed.get("ts").and_then(serde_json::Value::as_u64),
             Some(1_756_000_000_000)
+        );
+    }
+
+    #[test]
+    fn command_submit_broadcast_reaches_subscribers_with_request_id() {
+        // Synthetic-trip seam: the POST handler's fan-out must deliver the exact request
+        // to every `/ws/ui-events` subscriber; a bare channel proves delivery end to end
+        // of the broadcast without needing a daemon.
+        let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+        broadcast_command_submit_requested(
+            &tx,
+            "pane-1",
+            Some("term-9"),
+            "req-trip-1",
+            "voice-loop-trip",
+            42,
+        );
+        let raw = rx
+            .try_recv()
+            .expect("subscriber should receive the submit event");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&raw).expect("broadcast payload should be valid JSON");
+        assert_eq!(
+            parsed.get("type").and_then(serde_json::Value::as_str),
+            Some("herdr_web.command_submit_requested")
+        );
+        assert_eq!(
+            parsed.get("pane_id").and_then(serde_json::Value::as_str),
+            Some("pane-1")
+        );
+        assert_eq!(
+            parsed.get("request_id").and_then(serde_json::Value::as_str),
+            Some("req-trip-1")
+        );
+        assert_eq!(
+            parsed.get("source").and_then(serde_json::Value::as_str),
+            Some("voice-loop-trip")
         );
     }
 
@@ -9013,7 +9336,18 @@ mod tests {
             allowed_hosts: Vec::new(),
             allowed_origins: Vec::new(),
             allowed_connect_sources: Vec::new(),
+            tailnet_name: None,
         }
+    }
+
+    fn test_policy_with_tailnet(
+        bind_host: &str,
+        bind_port: u16,
+        tailnet_name: &str,
+    ) -> RequestPolicy {
+        let mut policy = test_policy(bind_host, bind_port);
+        policy.tailnet_name = Some(tailnet_name.to_string());
+        policy
     }
 
     async fn version_route_response() -> (StatusCode, serde_json::Value) {
@@ -9059,6 +9393,137 @@ mod tests {
             Some(env!("CARGO_PKG_VERSION"))
         );
         assert_eq!(build_info().bridge_version, env!("CARGO_PKG_VERSION"));
+    }
+
+    fn test_health_state(daemon: DaemonHealth) -> HealthState {
+        HealthState {
+            policy: test_policy("127.0.0.1", 8787),
+            daemon_health: Arc::new(Mutex::new(daemon)),
+        }
+    }
+
+    async fn health_route_response(health: HealthState) -> (StatusCode, serde_json::Value) {
+        health_route_response_with_headers(health, "127.0.0.1:8787", None).await
+    }
+
+    async fn health_route_response_with_headers(
+        health: HealthState,
+        host: &str,
+        origin: Option<&str>,
+    ) -> (StatusCode, serde_json::Value) {
+        let app = Router::new()
+            .route("/api/health", get(health_handler))
+            .with_state(health);
+        let mut builder = AxumRequest::builder().uri("/api/health").header(HOST, host);
+        if let Some(origin) = origin {
+            builder = builder.header(ORIGIN, origin);
+        }
+        let request = builder.body(axum::body::Body::empty()).unwrap();
+        let response = tower::ServiceExt::oneshot(app, request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        if status == StatusCode::OK {
+            (status, serde_json::from_slice(&bytes).unwrap())
+        } else {
+            (status, serde_json::Value::Null)
+        }
+    }
+
+    #[test]
+    fn health_body_reports_unhealthy_before_any_daemon_contact() {
+        let body = health_body(&DaemonHealth::default());
+        assert_eq!(body.get("ok").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            body.get("bridge_version").and_then(|v| v.as_str()),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(
+            body.get("protocol_version").and_then(|v| v.as_u64()),
+            Some(u64::from(PROTOCOL_VERSION))
+        );
+        assert_eq!(body.get("web_compat").and_then(|v| v.as_u64()), Some(1));
+        let daemon = body
+            .get("daemon")
+            .expect("/api/health needs a daemon block");
+        assert_eq!(
+            daemon.get("reachable").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert!(daemon.get("version").is_none_or(|v| v.is_null()));
+        assert!(daemon.get("last_seen_ms").is_none_or(|v| v.is_null()));
+    }
+
+    #[test]
+    fn daemon_contact_marks_healthy_and_clears_error() {
+        let health = Mutex::new(DaemonHealth::default());
+        record_daemon_contact(&health, "0.9.1".to_string(), PROTOCOL_VERSION);
+        let snapshot = health.lock().unwrap().clone();
+        assert!(snapshot.reachable);
+        assert_eq!(snapshot.version.as_deref(), Some("0.9.1"));
+        assert_eq!(snapshot.protocol, Some(PROTOCOL_VERSION));
+        assert!(snapshot.last_seen_ms.is_some());
+        assert_eq!(snapshot.last_check_ms, snapshot.last_seen_ms);
+        assert!(snapshot.last_error.is_none());
+        let body = health_body(&snapshot);
+        assert_eq!(body.get("ok").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn daemon_failure_keeps_last_seen_and_records_error() {
+        let health = Mutex::new(DaemonHealth::default());
+        record_daemon_contact(&health, "0.9.1".to_string(), PROTOCOL_VERSION);
+        let seen = health.lock().unwrap().last_seen_ms;
+        record_daemon_failure(&health, "connection refused".to_string());
+        let snapshot = health.lock().unwrap().clone();
+        assert!(!snapshot.reachable);
+        assert_eq!(snapshot.last_seen_ms, seen);
+        assert_eq!(snapshot.last_error.as_deref(), Some("connection refused"));
+        let body = health_body(&snapshot);
+        assert_eq!(body.get("ok").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            body.pointer("/daemon/last_seen_ms")
+                .and_then(|v| v.as_u64()),
+            seen
+        );
+    }
+
+    #[test]
+    fn daemon_error_truncates_to_bounded_length() {
+        let long = "x".repeat(500);
+        assert_eq!(truncate_daemon_error(&long).chars().count(), 161);
+        assert_eq!(truncate_daemon_error("  ok  "), "ok");
+    }
+
+    #[tokio::test]
+    async fn health_route_reports_version_and_daemon_last_seen() {
+        let health = Mutex::new(DaemonHealth::default());
+        record_daemon_contact(&health, "0.9.1".to_string(), PROTOCOL_VERSION);
+        let snapshot = health.lock().unwrap().clone();
+        let (status, body) = health_route_response(test_health_state(snapshot.clone())).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.get("ok").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            body.pointer("/daemon/version").and_then(|v| v.as_str()),
+            Some("0.9.1")
+        );
+        assert_eq!(
+            body.pointer("/daemon/last_seen_ms")
+                .and_then(|v| v.as_u64()),
+            snapshot.last_seen_ms
+        );
+    }
+
+    #[tokio::test]
+    async fn health_route_is_gated_by_the_request_policy() {
+        let (status, _) = health_route_response_with_headers(
+            test_health_state(DaemonHealth::default()),
+            "127.0.0.1:8787",
+            Some("https://example.com"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

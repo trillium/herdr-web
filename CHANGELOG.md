@@ -113,6 +113,24 @@
   forwarded. [PR #11](https://github.com/trillium/herdr-web/pull/11)
 - The mobile command input is now backed by a locally running parlay server for phrase-triggered
   voice submit, replacing the previous native text input.
+- Added tailnet origin auto-coverage: the bridge seeds its request policy with the tailnet short
+  name it already resolves for `/api/capabilities`, so Host/Origin headers carrying that name
+  pass without manual `--allow-host`/`--allow-origin` flags (same any-port semantics as an
+  explicit `--allow-host` entry, covering `tailscale serve` proxies). Matching is exact-name
+  only — never suffix or sub-domain — so it cannot weaken DNS-rebinding protection. A Tailscale
+  start after the bridge still needs a restart.
+- Added `GET /api/health` reporting bridge version/build stamp plus downstream (Herdr daemon)
+  last-seen in one place: `ok`, `bridge_version`, `git_sha`, `build_time`, `protocol_version`,
+  `web_compat`, and a `daemon` block with `reachable`, `version`, `protocol`, `last_seen_ms`,
+  `last_check_ms`, and `last_error`. Last-seen is recorded at startup and refreshed by a
+  background probe every 30s; failures flip reachability but keep the last good stamp.
+  `scripts/doctor.sh` now checks it, and the endpoint is local-only like `/api/version` (not
+  on the remote-bridge proxy allow-list).
+- Added `scripts/voice-loop-trip.sh`, a synthetic herdr-web hop trip check: gates on
+  `/api/health`, picks a live pane from `/api/snapshot`, POSTs a `voice-loop-trip`
+  `command-submit` event, and asserts the echoed `request_id`, printing per-leg timings.
+  It proves box-event in, submit-command out (fanned to `/ws/ui-events` subscribers) as one
+  runnable check.
 ### Changed
 
 ### Fixed
