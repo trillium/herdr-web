@@ -34,6 +34,28 @@ else
   if [ -n "$tn" ]; then pass "tailnet_name=$tn"; else warn "tailnet_name absent — Tailscale CLI unreachable from bridge PATH or not on a tailnet"; fi
 fi
 
+echo "== health ($BASE/api/health)"
+health=$(curl -fsS -m 5 "$BASE/api/health" 2>/dev/null)
+if [ -z "$health" ]; then
+  warn "health endpoint unreachable — binary predates /api/health (rebuild)"
+else
+  ok=$(printf '%s' "$health" | jq -r '.ok // empty')
+  hbv=$(printf '%s' "$health" | jq -r '.bridge_version // empty')
+  dreach=$(printf '%s' "$health" | jq -r '.daemon.reachable // empty')
+  dver=$(printf '%s' "$health" | jq -r '.daemon.version // empty')
+  dseen=$(printf '%s' "$health" | jq -r '.daemon.last_seen_ms // empty')
+  derr=$(printf '%s' "$health" | jq -r '.daemon.last_error // empty')
+  if [ -n "$hbv" ]; then pass "bridge_version=$hbv"; else warn "bridge_version absent in /api/health"; fi
+  if [ "$dreach" = "true" ]; then
+    pass "daemon reachable (version=${dver:-unknown}, last_seen_ms=${dseen:-unknown})"
+  else
+    failf "daemon unreachable (last_seen_ms=${dseen:-never}, last_error=${derr:-unknown})"
+  fi
+  if [ "$ok" != "true" ]; then
+    failf "health ok=false — loop cannot complete while a hop is down"
+  fi
+fi
+
 echo "== static assets"
 served=$(curl -fsS -m 5 "$BASE/" 2>/dev/null | grep -oE 'index-[A-Za-z0-9_-]+\.js' | head -1)
 here=$(grep -oE 'index-[A-Za-z0-9_-]+\.js' "$(dirname "$0")/../web/dist/index.html" 2>/dev/null | head -1)
