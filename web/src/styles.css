@@ -2150,13 +2150,13 @@ button {
 }
 
 .term-key-icon svg {
-  width: calc(15px * var(--mobile-controls-scale));
-  height: calc(15px * var(--mobile-controls-scale));
+  width: calc(20px * var(--mobile-controls-scale));
+  height: calc(20px * var(--mobile-controls-scale));
 }
 
 .term-send svg {
-  width: calc(16px * var(--mobile-controls-scale));
-  height: calc(16px * var(--mobile-controls-scale));
+  width: calc(20px * var(--mobile-controls-scale));
+  height: calc(20px * var(--mobile-controls-scale));
 }
 
 .term-key-panel .term-key {
@@ -2227,6 +2227,21 @@ button {
 .term-stage-command {
   background: var(--surface0);
   color: var(--subtext1);
+}
+
+/* Small-viewport (phone) composer sizing. Desktop keeps the base 34px grid above;
+   on narrow viewports the bar gets a taller input row, roomier keys, and a wider
+   send target so the composer fits a phone viewport and thumb input. */
+@media (max-width: 820px) {
+  .terminal-mobile-controls {
+    --mobile-key-height: calc(36px * var(--mobile-controls-scale));
+    --mobile-key-min-width: calc(40px * var(--mobile-controls-scale));
+    --mobile-key-icon-width: calc(40px * var(--mobile-controls-scale));
+    --mobile-input-row-height: calc(44px * var(--mobile-controls-scale));
+    --mobile-send-width: calc(48px * var(--mobile-controls-scale));
+    padding: calc(8px * var(--mobile-controls-scale)) max(10px, env(safe-area-inset-right))
+      calc(9px * var(--mobile-controls-scale)) max(10px, env(safe-area-inset-left));
+  }
 }
 
 /* --------------------------------------------------------- split grid */

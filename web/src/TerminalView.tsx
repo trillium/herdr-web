@@ -2030,7 +2030,7 @@ export function TerminalCommandControls({
                 data-active={expanded ? "true" : "false"}
                 onClick={() => setExpanded((open) => !open)}
               >
-                <Keyboard size={15} />
+                <Keyboard size={20} />
               </button>
               <button
                 className="term-key term-key-icon"
@@ -2040,7 +2040,7 @@ export function TerminalCommandControls({
                 disabled={uploadDisabled}
                 onClick={onUpload}
               >
-                <Paperclip size={15} />
+                <Paperclip size={20} />
               </button>
               <button
                 className="term-key term-key-icon"
@@ -2056,7 +2056,7 @@ export function TerminalCommandControls({
                 }}
                 onClick={onTerminalFocus}
               >
-                <SquareTerminal size={15} />
+                <SquareTerminal size={20} />
               </button>
             </div>
           </div>
@@ -2097,7 +2097,7 @@ export function TerminalCommandControls({
           data-active={compactControls ? "false" : "true"}
           onClick={() => onCompactControlsChange(!compactControls)}
         >
-          <Keyboard size={15} />
+          <Keyboard size={20} />
         </button>
         <button
           className="term-key term-key-icon term-mobile-mode-toggle"
@@ -2107,7 +2107,7 @@ export function TerminalCommandControls({
           data-active={mobileModeActive ? "true" : "false"}
           onClick={onToggleMobileMode}
         >
-          <Smartphone size={15} />
+          <Smartphone size={20} />
         </button>
         <button
           className="term-key term-key-icon term-pin-cycle"
@@ -2121,7 +2121,7 @@ export function TerminalCommandControls({
           data-cycle-mode={paneCycleMode}
           {...paneCyclePress}
         >
-          <SkipForward size={15} />
+          <SkipForward size={20} />
         </button>
         <ParlayInput
             key={fieldKey}
@@ -2151,7 +2151,7 @@ export function TerminalCommandControls({
           title="Stage"
           onClick={stage}
         >
-          <TextCursorInput size={16} />
+          <TextCursorInput size={20} />
         </button>
         <button
           className="term-send"
@@ -2160,7 +2160,7 @@ export function TerminalCommandControls({
           aria-label={value.length > 0 ? "Send command" : "Send enter"}
           title={value.length > 0 ? "Send" : "Enter"}
         >
-          <Send size={16} />
+          <Send size={20} />
         </button>
       </form>
     </div>

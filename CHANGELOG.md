@@ -135,6 +135,11 @@
 
 ### Fixed
 
+- Restored mobile sizing for the input composer: a small-viewport breakpoint gives the
+  composer bar a taller input row, roomier keys, and a wider send target on phone
+  viewports (desktop keeps the 34px grid), and the touch glyphs grow to a comfortable
+  thumb size while staying inside the button grid.
+
 - Fixed `scripts/tailnet-bridge-check.sh` reporting every host `UNREACHABLE`. Its host parser
   required a dotted DNS name, so it skipped all real `tailscale status` rows (short hostnames)
   and latched onto the Funnel footer URL including its `https://` scheme, producing a URL curl
