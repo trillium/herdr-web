@@ -2217,6 +2217,16 @@ button {
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
+/* Advisory voice line-ender countdown (parlay armTimer): rendered only, the
+   authoritative submit timer is server-side and this never submits. */
+.term-voice-countdown {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 12px;
+  color: var(--subtext1);
+  white-space: nowrap;
+}
+
 .term-send {
   width: var(--mobile-send-width);
   flex: 0 0 var(--mobile-send-width);

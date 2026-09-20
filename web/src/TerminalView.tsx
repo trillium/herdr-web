@@ -35,6 +35,8 @@ import {
 } from "./commandSubmit";
 import type { CommandSubmitSignal } from "./commandSubmit";
 import { ConfirmDialog } from "./overlays";
+import { randomId } from "./randomId";
+import { postVoiceCommandSubmit, VOICE_ENDER_SOURCE } from "./voiceEnder";
 import { addNativeResumeHandler } from "./native";
 import { shellQuote } from "./shell";
 import {
@@ -1836,7 +1838,12 @@ export function TerminalCommandControls({
   const paneCyclePress = useLongPress(onPaneCycleModeToggle, () => onPaneCycle("next"));
   const submit = () => {
     focusAfterSubmitRef.current = !mobileControls || mobileFocusAfterSubmit;
-    const command = value;
+    // Read the live element, not just render-scoped state: a voice-ender
+    // submit stages stripped text into the box synchronously just before the
+    // bridge broadcast returns, and the React re-render may not have flushed
+    // yet. The node always mirrors the displayed buffer (see submitVoiceEnder
+    // and clearCommandInput), so preferring it is race-free on every path.
+    const command = commandInputRef.current?.value ?? value;
     clearCommandInput();
     onSubmitCommand(command);
   };
@@ -1888,6 +1895,31 @@ export function TerminalCommandControls({
   useEffect(() => subscribeCommandSubmitRequests(evaluateSubmitSignal), [
     evaluateSubmitSignal,
   ]);
+  // Voice line-ender submit (task-ayazf): parlay-input already stripped the
+  // ender tail and re-verified it against the live buffer before firing
+  // onSubmit. Stage the remainder synchronously — draft state, guard ref,
+  // and DOM node — then submit through the live bridge path
+  // (POST /api/command-submit -> herdr_web.command_submit_requested) so the
+  // shared decideCommandSubmit guard (wrong-pane/duplicate/stale/composing/
+  // empty) applies. Never submit the box directly here: the broadcast
+  // listener owns submission, and it reads acceptedValueRef + the live node.
+  const submitVoiceEnder = (text: string) => {
+    acceptedValueRef.current = text;
+    setValue(text);
+    const node = commandInputRef.current;
+    if (node) {
+      node.value = text;
+    }
+    void postVoiceCommandSubmit(fetch, {
+      paneId,
+      terminalId: terminalId ?? null,
+      requestId: randomId(),
+      source: VOICE_ENDER_SOURCE,
+    }).catch((error: unknown) => {
+      // Leave the stripped text in the box so a manual Send still works.
+      console.debug("voice-ender bridge submit failed:", error);
+    });
+  };
   const onCommandCompositionStart = () => {
     composingRef.current = true;
   };
@@ -2125,13 +2157,10 @@ export function TerminalCommandControls({
         </button>
         <ParlayInput
             key={fieldKey}
+            boxId={`herdr-voice-box-${paneId}`}
             value={value}
             onValueChange={setValue}
-            onVoiceSubmit={(text) => {
-              onSubmitCommand(text);
-              setValue("");
-              setFieldKey((k) => k + 1);
-            }}
+            onVoiceSubmit={submitVoiceEnder}
             onNextAgent={onNextAgentPane}
             onPrevAgent={onPrevAgentPane}
             disabled={disabled}

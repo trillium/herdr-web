@@ -9,11 +9,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emitCommandSubmitRequest } from "./commandSubmit";
 import { TerminalCommandControls } from "./TerminalView";
 
+// Mock the optional local-only `parlay-input` wrapper to capture the voice-ender
+// seam (onSubmit) without needing the real eval pipeline.
+type CapturedVoiceOptions = {
+  streamId: string;
+  voiceEnabled: boolean;
+  onSubmit: (text: string) => void;
+};
+let capturedVoiceOptions: CapturedVoiceOptions | null = null;
+vi.mock("parlay-input", () => ({
+  parlayInput: (_element: Element, options: CapturedVoiceOptions) => {
+    capturedVoiceOptions = options;
+    return () => {};
+  },
+}));
+
 const roots: Root[] = [];
 
 beforeEach(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT = true;
+  capturedVoiceOptions = null;
 });
 
 afterEach(async () => {
@@ -90,6 +106,52 @@ describe("command submit requested events", () => {
       field.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
     });
     expect(onSubmitCommand).toHaveBeenCalledExactlyOnceWith("composing command");
+  });
+});
+
+describe("voice-ender bridge submit", () => {
+  it("stages stripped text and POSTs /api/command-submit, submitting on broadcast", async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: { body?: string }) => {
+      void url;
+      void init;
+      return Response.json({ request_id: "req-voice", pane_id: "pane-a", ts: Date.now() });
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    const { container, onSubmitCommand } = await renderControls();
+    const voice = capturedVoiceOptions;
+    if (!voice) {
+      throw new Error("voice box was never wired to parlay-input");
+    }
+    // One streamId per input box, stable for the pane.
+    expect(voice.streamId).toBe("herdr-voice-box-pane-a");
+    expect(voice.voiceEnabled).toBe(true);
+
+    await act(async () => {
+      voice.onSubmit("dictated command");
+    });
+
+    // Staged synchronously into the live element so the bridge-path submit
+    // reads it even before the React re-render flushes.
+    expect(commandField(container).value).toBe("dictated command");
+    // Submitted via the live bridge path, never directly into the terminal.
+    expect(fetchImpl).toHaveBeenCalledExactlyOnceWith(
+      "/api/command-submit",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const postedInit = fetchImpl.mock.calls[0]?.[1] as { body: string } | undefined;
+    if (!postedInit) {
+      throw new Error("command-submit was never POSTed");
+    }
+    const posted = JSON.parse(postedInit.body) as Record<string, string>;
+    expect(posted).toEqual({
+      pane_id: "pane-a",
+      request_id: expect.any(String),
+      source: "parlay-ender",
+    });
+    expect(onSubmitCommand).not.toHaveBeenCalled();
+
+    await emitSignal({ pane_id: "pane-a", request_id: posted.request_id, ts: Date.now() });
+    expect(onSubmitCommand).toHaveBeenCalledExactlyOnceWith("dictated command");
   });
 });
 

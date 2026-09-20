@@ -16,24 +16,27 @@ export function parseAllowedHosts(value: string | undefined): string[] | true | 
 
 const allowedHosts = parseAllowedHosts(process.env.HERDR_WEB_ALLOWED_HOSTS);
 
-// `@parlay/client` is an intentionally OPTIONAL, LOCAL-ONLY, NEVER-PUBLISHED dependency.
-// It resolves only when the gitignored symlink `web/local-deps/parlay-client` is present,
-// which enables the parlay voice-submit path. It is deliberately absent from
-// package.json/package-lock.json so `npm ci` never fetches it from a registry.
+// `@parlay/client` and `parlay-input` are intentionally OPTIONAL, LOCAL-ONLY,
+// NEVER-PUBLISHED dependencies. Each resolves only when its gitignored symlink
+// (`web/local-deps/parlay-client`, `web/local-deps/parlay-input`) is present.
+// The voice box (`ParlayInput`) is wired through `parlay-input`; both are
+// deliberately absent from package.json/package-lock.json so `npm ci` never
+// fetches them from a registry.
 //
-// Externalization is CONDITIONAL on the symlink (see build.rolldownOptions.external below):
-//   - symlink present  → bundle the real @parlay/client → the parlay voice-submit path
-//     ("bravely"/"gravely"/… trailing dictation submit) works in the built app, matching
+// Externalization is CONDITIONAL on each symlink (see build.rolldownOptions.external
+// below):
+//   - symlink present  → bundle the real package → the parlay voice-submit path
+//     (trailing dictation line-ender submit) works in the built app, matching
 //     dev/test.
-//   - symlink absent   → externalize @parlay/client so `vite build` still succeeds without
-//     the dep; ParlayInput's guarded `try { await import(...) }` then falls back to a plain
-//     input at runtime.
+//   - symlink absent   → externalize the specifier so `vite build` still succeeds
+//     without the dep; ParlayInput's guarded `try { await import(...) }` then falls
+//     back to a plain input at runtime.
 //
-// Externalizing UNCONDITIONALLY was the bug behind "bravely no longer submits": a production
-// build emitted a 0-byte `__vite-browser-external` stub for @parlay/client with nothing serving
-// it at runtime (the bridge serves a static dir, no module server), so the runtime import always
-// failed and every deployed build silently shipped the plain input — voice-submit could never
-// work in prod even when built with the symlink present. Do not add a registry version.
+// Externalizing UNCONDITIONALLY was the bug behind voice-submit never firing in
+// production: a production build emitted a 0-byte `__vite-browser-external` stub for
+// the specifier with nothing serving it at runtime (the bridge serves a static dir,
+// no module server), so the runtime import always failed and every deployed build
+// silently shipped the plain input. Do not add a registry version.
 
 // Resolve to the package's built entry, not the bare directory. Vite's dev/build resolver would
 // infer the entry from package.json, but Vitest's module runner does not resolve a directory id,
@@ -103,7 +106,15 @@ function readPackageJson(dir: string): unknown {
 }
 
 function resolveParlayEntry(): string | undefined {
-  const packageDir = resolve(__dirname, "local-deps/parlay-client");
+  return resolveLocalEntry("local-deps/parlay-client", "@parlay/client");
+}
+
+function resolveParlayInputEntry(): string | undefined {
+  return resolveLocalEntry("local-deps/parlay-input", "parlay-input");
+}
+
+function resolveLocalEntry(dirName: string, specifier: string): string | undefined {
+  const packageDir = resolve(__dirname, dirName);
   if (!existsSync(packageDir)) return undefined;
   const candidates = parlayEntryCandidates(readPackageJson(packageDir));
   for (const candidate of candidates) {
@@ -112,7 +123,7 @@ function resolveParlayEntry(): string | undefined {
   }
   console.warn(
     `[parlay-client-resolver] ${packageDir} exists but no built entry was found ` +
-      `(tried: ${candidates.join(", ")}). Build the parlay client checkout, or parlay ` +
+      `(tried: ${candidates.join(", ")}). Build the parlay checkout behind ${specifier}, or parlay ` +
       `voice-submit will fall back to a plain input.`,
   );
   return undefined;
@@ -141,33 +152,54 @@ const webBuildSha = (() => {
 const webBuildTime = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 
 const parlayEntry = resolveParlayEntry();
+const parlayInputEntry = resolveParlayInputEntry();
 const hasLocalParlay = parlayEntry !== undefined;
+const hasLocalParlayInput = parlayInputEntry !== undefined;
+// Externalize each optional dep independently: with the symlink present the
+// resolver above points the specifier at its built entry and rolldown bundles
+// it, so the parlay voice-submit path ships in the built app. Without it,
+// externalize so the build still succeeds and ParlayInput falls back to the
+// plain input at runtime.
+const localEntries: Record<string, string | undefined> = {
+  "@parlay/client": parlayEntry,
+  "parlay-input": parlayInputEntry,
+};
+const optionalExternals = Object.entries(localEntries)
+  .filter(([, entry]) => entry === undefined)
+  .map(([specifier]) => specifier);
 
-// Under Vitest there is no equivalent of `build.rolldownOptions.external`, so with the symlink
-// absent every module that even mentions `@parlay/client` failed to TRANSFORM ("Failed to resolve
-// import"), taking 5 unrelated test files down with it. That is a resolution error at build time,
-// which the guarded `try { await import(...) }` in ParlayInput.tsx cannot catch -- the tests were
-// already written to tolerate a missing package (ParlayMobileInput.test.tsx skips its cases when
-// the import rejects), they just never got the chance.
+// Under Vitest there is no equivalent of `build.rolldownOptions.external`, so with a
+// symlink absent every module that even mentions the specifier failed to TRANSFORM
+// ("Failed to resolve import"), taking unrelated test files down with it. That is a
+// resolution error at build time, which the guarded `try { await import(...) }` in
+// ParlayInput.tsx cannot catch -- the tests were already written to tolerate a missing
+// package, they just never got the chance.
 //
-// Resolving to a virtual module whose evaluation throws restores the intended shape: the specifier
-// resolves, so transform succeeds, and the dynamic import then REJECTS exactly as an externalized
-// specifier does in a production build. This is deliberately scoped to Vitest so `vite build`
-// keeps using `external` and the built output is byte-for-byte unchanged.
+// Resolving to a virtual module whose evaluation throws restores the intended shape:
+// the specifier resolves, so transform succeeds, and the dynamic import then REJECTS
+// exactly as an externalized specifier does in a production build. This is deliberately
+// scoped to Vitest so `vite build` keeps using `external` and the built output is
+// byte-for-byte unchanged.
 const PARLAY_MISSING_ID = "\0parlay-client-missing";
-const stubParlayForVitest = !hasLocalParlay && Boolean(process.env.VITEST);
+const PARLAY_INPUT_MISSING_ID = "\0parlay-input-missing";
+const missingIds: Record<string, string> = {
+  "@parlay/client": PARLAY_MISSING_ID,
+  "parlay-input": PARLAY_INPUT_MISSING_ID,
+};
+const stubParlayForVitest = (!hasLocalParlay || !hasLocalParlayInput) && Boolean(process.env.VITEST);
 
 function parlayClientResolver(): Plugin {
   return {
     name: "parlay-client-resolver",
     resolveId(id) {
-      if (id !== "@parlay/client") return;
-      if (parlayEntry) return parlayEntry;
-      if (stubParlayForVitest) return PARLAY_MISSING_ID;
+      if (id !== "@parlay/client" && id !== "parlay-input") return;
+      const entry = localEntries[id];
+      if (entry) return entry;
+      if (stubParlayForVitest) return missingIds[id];
     },
     load(id) {
-      if (id !== PARLAY_MISSING_ID) return;
-      return 'throw new Error("@parlay/client is not installed (optional local-only dependency)");';
+      if (id !== PARLAY_MISSING_ID && id !== PARLAY_INPUT_MISSING_ID) return;
+      return `throw new Error("${id === PARLAY_INPUT_MISSING_ID ? "parlay-input" : "@parlay/client"} is not installed (optional local-only dependency)");`;
     },
   };
 }
@@ -196,13 +228,16 @@ export default defineConfig({
   build: {
     rolldownOptions: {
       // Only externalize when the local symlink is absent. With the symlink present the
-      // resolver above points @parlay/client at its built entry and rolldown bundles it,
+      // resolver above points the specifier at its built entry and rolldown bundles it,
       // so the parlay voice-submit path ships in the built app. Without it, externalize so
       // the build still succeeds and ParlayInput falls back to the plain input at runtime.
-      external: hasLocalParlay ? [] : ["@parlay/client"],
+      external: optionalExternals,
       onwarn(warning: { message?: string }) {
-        // Suppress warning for unresolved @parlay/client — it's optional.
-        if (warning.message?.includes("@parlay/client")) {
+        // Suppress warnings for unresolved optional parlay deps — they're optional.
+        if (
+          warning.message?.includes("@parlay/client") ||
+          warning.message?.includes("parlay-input")
+        ) {
           return;
         }
       },
