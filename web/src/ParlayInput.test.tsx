@@ -1,57 +1,54 @@
 /**
  * @vitest-environment jsdom
  *
- * Regression test for the mobile "next agent" / "previous agent" trigger.
+ * ParlayInput is wired through `parlay-input` (task-ayazf): the wrapper owns
+ * the eval loop (REST up-channel + shared SSE down-channel), the component
+ * only stages submit text and renders the advisory ender countdown.
  *
- * The parlay command dispatcher maps the phrases "next agent"/"next tab" to
- * `ctx.tabs.next()` and "previous agent" to `ctx.tabs.prev()` (see
- * `@parlay/client` builtins). Those context hooks used to be no-op stubs
- * (`next: () => {}`), so typing/saying "next agent" in the mobile input did
- * nothing — the exact bug the captain hit on iPhone. They are now wired to the
- * `onNextAgent`/`onPrevAgent` props, which App routes into the same tested
- * `nextVisibleAgentPaneEntry` + `focusPane` navigation the desktop keyboard uses.
- *
- * This test captures the dispatcher context the component installs and invokes
- * `ctx.tabs.next()` / `ctx.tabs.prev()` directly, asserting they now reach the
- * navigation callbacks. On the pre-fix code the stubs never call the props, so
- * this fails; with the wiring it passes.
+ * The optional local-only module is mocked here so the seam is covered with or
+ * without the gitignored symlink; the real protocol behavior (payload shape,
+ * tail re-verify, stale resync) is pinned against the actual wrapper in
+ * voiceEnder.test.ts.
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock the optional local-only parlay client so we can capture the dispatcher
-// context the component builds without needing the real voice/eval pipeline.
-type CapturedContext = { tabs: { next: () => void; prev: () => void } };
-let capturedCtx: CapturedContext | null = null;
-vi.mock("@parlay/client", () => ({
-  setEvalServerBaseUrl: vi.fn(),
-  setDispatcherContext: vi.fn((ctx: unknown) => {
-    capturedCtx = ctx as CapturedContext;
-  }),
-  scheduleEval: vi.fn(),
-  bumpInputVersion: vi.fn(),
-  applyEnvelope: vi.fn(),
-  PARLAY_SETTINGS_DEFAULTS: { voiceSettleMs: 300 },
+// Mock the optional local-only wrapper so we can capture the options the
+// component installs (server/ids/voice flag/fetch shim/onSubmit/onAction)
+// without needing the real eval pipeline.
+type ParlayInputOptions = {
+  server: string;
+  device: string;
+  streamId: string;
+  voiceEnabled: boolean;
+  fetch: (url: string, init?: unknown) => Promise<unknown>;
+  onSubmit: (text: string) => void;
+  onAction: (action: { verb: string; args?: Record<string, unknown> }) => void;
+  onApply: () => void;
+  onError: (error: unknown) => void;
+};
+let capturedOptions: ParlayInputOptions | null = null;
+let mountImpl: ((element: Element, options: ParlayInputOptions) => () => void) | null = null;
+vi.mock("parlay-input", () => ({
+  parlayInput: (element: Element, options: ParlayInputOptions) => {
+    capturedOptions = options;
+    if (mountImpl) {
+      return mountImpl(element, options);
+    }
+    return () => {};
+  },
 }));
 
 const { ParlayInput } = await import("./ParlayInput");
-
-// jsdom has no EventSource; the component opens one for voice actions. Provide a
-// minimal inert stub so rendering does not throw.
-class FakeEventSource {
-  addEventListener() {}
-  removeEventListener() {}
-  close() {}
-}
 
 const roots: Root[] = [];
 
 beforeEach(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
     true;
-  capturedCtx = null;
-  vi.stubGlobal("EventSource", FakeEventSource);
+  capturedOptions = null;
+  mountImpl = null;
 });
 
 afterEach(async () => {
@@ -62,11 +59,16 @@ afterEach(async () => {
   });
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
-async function renderInput(props: {
-  onNextAgent: () => void;
-  onPrevAgent: () => void;
+async function renderInput(props?: {
+  onNextAgent?: () => void;
+  onPrevAgent?: () => void;
+  onVoiceSubmit?: (text: string) => void;
+  onValueChange?: (next: string) => void;
+  boxId?: string;
+  value?: string;
 }) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -75,55 +77,123 @@ async function renderInput(props: {
   await act(async () => {
     root.render(
       <ParlayInput
-        value=""
-        onValueChange={vi.fn()}
-        onVoiceSubmit={vi.fn()}
-        onNextAgent={props.onNextAgent}
-        onPrevAgent={props.onPrevAgent}
+        value={props?.value ?? ""}
+        onValueChange={props?.onValueChange ?? (() => {})}
+        onVoiceSubmit={props?.onVoiceSubmit ?? (() => {})}
+        onNextAgent={props?.onNextAgent}
+        onPrevAgent={props?.onPrevAgent}
         disabled={false}
         expandingInput={false}
         enterNewline={false}
         controlsScalePercent={100}
-        inputRef={vi.fn()}
+        boxId={props?.boxId}
+        inputRef={() => {}}
       />,
     );
   });
   return container;
 }
 
-describe("ParlayInput next/prev agent wiring", () => {
-  it("routes parlay ctx.tabs.next() to the onNextAgent callback", async () => {
-    const onNextAgent = vi.fn();
-    const onPrevAgent = vi.fn();
-    await renderInput({ onNextAgent, onPrevAgent });
+function options() {
+  if (!capturedOptions) {
+    throw new Error("parlayInput was never mounted");
+  }
+  return capturedOptions;
+}
 
-    const ctx = capturedCtx;
-    if (!ctx) {
-      throw new Error("parlay dispatcher context was never installed");
-    }
-    act(() => {
-      ctx.tabs.next();
-    });
+describe("ParlayInput parlay-input wiring", () => {
+  it("mounts the voice box with a stable per-box stream id and the herdr voice flag", async () => {
+    const container = await renderInput({ boxId: "herdr-voice-box-pane-a" });
 
-    expect(onNextAgent).toHaveBeenCalledTimes(1);
-    expect(onPrevAgent).not.toHaveBeenCalled();
+    expect(container.querySelector("input.term-native-input")).not.toBeNull();
+    const opts = options();
+    expect(opts.streamId).toBe("herdr-voice-box-pane-a");
+    expect(opts.voiceEnabled).toBe(true);
+    expect(opts.device).toMatch(/^herdr-web-mobile-.+/u);
+    expect(opts.server).toMatch(/:4242$/u);
   });
 
-  it("routes parlay ctx.tabs.prev() to the onPrevAgent callback", async () => {
+  it("routes nextTab/prevTab actions to the pane navigation callbacks", async () => {
     const onNextAgent = vi.fn();
     const onPrevAgent = vi.fn();
     await renderInput({ onNextAgent, onPrevAgent });
 
-    const ctx = capturedCtx;
-    if (!ctx) {
-      throw new Error("parlay dispatcher context was never installed");
-    }
     act(() => {
-      ctx.tabs.prev();
+      options().onAction({ verb: "nextTab" });
+    });
+    expect(onNextAgent).toHaveBeenCalledTimes(1);
+    expect(onPrevAgent).not.toHaveBeenCalled();
+
+    act(() => {
+      options().onAction({ verb: "prevTab" });
+    });
+    expect(onPrevAgent).toHaveBeenCalledTimes(1);
+    expect(onNextAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("stages stripped submit text and fires onVoiceSubmit once", async () => {
+    const onVoiceSubmit = vi.fn();
+    const onValueChange = vi.fn();
+    const container = await renderInput({ onVoiceSubmit, onValueChange, value: "" });
+    const input = container.querySelector("input");
+    if (!input) {
+      throw new Error("missing input");
+    }
+
+    act(() => {
+      options().onSubmit("take the trash out");
     });
 
-    expect(onPrevAgent).toHaveBeenCalledTimes(1);
+    // Staged synchronously into the live element so the bridge-path submit
+    // reads it even before the React re-render flushes.
+    expect(input.value).toBe("take the trash out");
+    expect(onValueChange).toHaveBeenCalledWith("take the trash out");
+    expect(onVoiceSubmit).toHaveBeenCalledExactlyOnceWith("take the trash out");
+  });
+});
+
+describe("ParlayInput advisory countdown", () => {
+  it("renders armTimer as a countdown and never submits locally", async () => {
+    const fetchImpl = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetchImpl);
+    const container = await renderInput();
+
+    act(() => {
+      options().onAction({ verb: "armTimer", args: { timerId: "t-1", fireInMs: 1000 } });
+    });
+
+    const status = container.querySelector('[role="status"]');
+    expect(status).not.toBeNull();
+    expect(status?.textContent).toMatch(/sending in \d+s…/iu);
+    // Advisory only: no submission may leave this box for an armTimer.
+    expect(fetchImpl).not.toHaveBeenCalledWith("/api/command-submit", expect.anything());
+  });
+
+  it("clears the countdown on cancelTimer", async () => {
+    const container = await renderInput();
+
+    act(() => {
+      options().onAction({ verb: "armTimer", args: { timerId: "t-1", fireInMs: 1000 } });
+    });
+    expect(container.querySelector('[role="status"]')).not.toBeNull();
+
+    act(() => {
+      options().onAction({ verb: "cancelTimer", args: { timerId: "t-1" } });
+    });
+    expect(container.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("ignores host-unknown verbs without wedging the input", async () => {
+    const onNextAgent = vi.fn();
+    const container = await renderInput({ onNextAgent });
+
+    act(() => {
+      options().onAction({ verb: "openChannelPicker", args: { channels: ["a"] } });
+    });
+
+    expect(container.querySelector('[role="status"]')).toBeNull();
     expect(onNextAgent).not.toHaveBeenCalled();
+    expect(container.querySelector("input.term-native-input")).not.toBeNull();
   });
 });
 
@@ -131,31 +201,30 @@ describe("ParlayInput next/prev agent wiring", () => {
  * Regression test for the blank page on Safari/iOS.
  *
  * The parlay server lives on a separate origin (port 4242) and this page's CSP
- * is `connect-src 'self' data:`, so the event stream is blocked. Chrome reports
- * that as an async `error` event, but WebKit throws SecurityError out of the
- * `EventSource` constructor. That throw used to escape the effect, React tore
- * down the whole tree, and the app rendered nothing at all — a blocked optional
- * voice sidecar took the terminal down with it.
+ * is `connect-src 'self' data:` plus `--allow-connect-origin` entries, so the
+ * event stream can be blocked. Chrome reports that as an async `error` event,
+ * but WebKit throws SecurityError out of the `EventSource` constructor (which
+ * `parlay-input` opens inside its mount call). That throw used to escape the
+ * effect, React tore down the whole tree, and the app rendered nothing at
+ * all — a blocked optional voice sidecar took the terminal down with it.
  */
 describe("ParlayInput when the event stream is blocked", () => {
-  class ThrowingEventSource {
-    constructor() {
+  it("still renders when the wrapper mount throws", async () => {
+    mountImpl = () => {
       // What WebKit raises for a CSP-blocked EventSource URL.
       throw new DOMException("The operation is insecure.", "SecurityError");
-    }
-  }
+    };
 
-  it("still renders when the EventSource constructor throws", async () => {
-    vi.stubGlobal("EventSource", ThrowingEventSource);
-
-    const container = await renderInput({ onNextAgent: vi.fn(), onPrevAgent: vi.fn() });
+    const container = await renderInput();
 
     expect(container.innerHTML.length).toBeGreaterThan(0);
     expect(container.querySelector("input")).not.toBeNull();
   });
 
   it("degrades to a usable plain input rather than losing the tree", async () => {
-    vi.stubGlobal("EventSource", ThrowingEventSource);
+    mountImpl = () => {
+      throw new DOMException("The operation is insecure.", "SecurityError");
+    };
     const onValueChange = vi.fn();
 
     const container = document.createElement("div");

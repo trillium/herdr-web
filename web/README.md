@@ -40,35 +40,61 @@ session.
 
 ## Optional: Enable Parlay-backed Voice Input
 
-The `ParlayInput` component (`src/ParlayInput.tsx`) is optional and degrades gracefully
-to a plain text input when parlay is unavailable. To enable parlay voice-submit phrase detection,
-set up a local symlink to your parlay checkout:
+The `ParlayInput` voice box (`src/ParlayInput.tsx`) is wired to the Parlay eval
+loop through `parlay-input` (the zero-dependency DOM wrapper implementing the
+real REST up-channel + shared SSE down-channel) and degrades gracefully to a
+plain text input when parlay is unavailable. To enable voice line-ender submit
+(dictating a line ending with "send it" / "submit" / "submit that" auto-submits
+after the server's 1s verify hold), set up a local symlink to your parlay
+checkout and build the wrapper:
 
 ```bash
 mkdir -p web/local-deps
-ln -s /path/to/parlay/packages/client web/local-deps/parlay-client
+ln -s /path/to/parlay/packages/input web/local-deps/parlay-input
+cd /path/to/parlay/packages/input && bun install && bun run build
 ```
 
-`@parlay/client` is intentionally NOT listed in `package.json`/`package-lock.json` (it is never
-published and never fetched from a registry). The Vite resolver in `vite.config.ts` picks up the
-symlink directly, so no reinstall is needed — just restart the dev server / rebuild after creating
-it.
+`parlay-input` is intentionally NOT listed in `package.json`/`package-lock.json`
+(it is never published and never fetched from a registry). The Vite resolver in
+`vite.config.ts` picks up the symlink directly, so no reinstall is needed — just
+restart the dev server / rebuild after creating it.
 
-Parlay requires the eval engine and server running locally:
+Parlay requires the eval engine and server running:
 
 ```bash
-# Terminal 1: eval engine
-cd /path/to/parlay/packages/eval-engine && ./parlay-eval-engine
+# Terminal 1: eval engine (compiled Go)
+cd /path/to/parlay && parlay eval serve  # :4343
 
-# Terminal 2: parlay server
-cd /path/to/parlay/packages/server && bun run start  # :4242
+# Terminal 2: parlay server (port 4242)
+cd /path/to/parlay/packages/server && bun run start  # or the Go server
 ```
 
-Voice-submit phrases are configured in parlay (defaults: "bravely", "gravely", "briefly", "lap").
+How it works: every voice-box change POSTs
+`{streamId, version, text, cursor, reason:'input', voiceEnabled:true,
+platform:'herdr'}` to `POST /api/chat/eval` (one stable `streamId` per box —
+per-box isolation is server-side). `armTimer`/`cancelTimer` render the advisory
+"Sending in 1s…" countdown only and never submit locally; the async `submitNow`
+re-verifies the ender tail against the live buffer, strips it, and submits the
+remainder through the live bridge path (`POST /api/command-submit` →
+`herdr_web.command_submit_requested`).
+
+Two serving prerequisites, both verified against the origin guard:
+
+- **Bridge CSP:** the page must be allowed to reach the Parlay server. Pass
+  the server origin to the bridge, e.g.
+  `herdr-web-bridge --allow-connect-origin http://192.168.1.10:4242`.
+  Without it the browser blocks every parlay round trip and the box stays a
+  plain input.
+- **Parlay origin guard:** private-LAN page origins (`192.168.x`, `10.x`,
+  `.local`, loopback) are accepted as-is. A Tailnet (`100.x`) page origin is
+  NOT in the private-LAN set and gets a `403` (indistinguishable from down
+  without reading the status) — set `PARLAY_ALLOWED_ORIGINS` on the parlay
+  server to the exact serving origin, e.g.
+  `PARLAY_ALLOWED_ORIGINS=http://100.x.y.z:8787`.
 
 If the symlink is missing or stale, the app will still build and run with a plain text input —
 no special action needed. `web/local-deps/` is gitignored. Note that the symlink's presence is
-baked into `web/dist`: a production build made without it externalizes `@parlay/client`, so the
+baked into `web/dist`: a production build made without it externalizes `parlay-input`, so the
 built app always falls back to the plain input. See [docs/packaging.md](../docs/packaging.md).
 
 ## Vite dev server environment variables:

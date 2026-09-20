@@ -18,6 +18,20 @@
 
 ### Added
 
+- Wired the voice box to the Parlay eval loop with `parlay-input` (task-ayazf):
+  every composer change POSTs `{streamId, version, text, cursor, reason:'input',
+  voiceEnabled:true, platform:'herdr'}` to the Parlay server `/api/chat/eval`
+  (one stable `streamId` per box, `herdr-voice-box-{paneId}`); `armTimer` /
+  `cancelTimer` render the advisory "Sending in 1s…" countdown only and never
+  submit locally; the async `submitNow` re-verifies the ender tail ("send it" /
+  "submit" / "submit that") against the live buffer, strips it, and submits
+  the remainder through the live bridge path (`POST /api/command-submit` →
+  `herdr_web.command_submit_requested`). Requires the `web/local-deps/parlay-input`
+  symlink at build time (see `web/README.md`), `--allow-connect-origin` for the
+  Parlay server on the bridge, and `PARLAY_ALLOWED_ORIGINS` on the Parlay server
+  for Tailnet (`100.x`) page origins; without any of these the box stays a plain
+  input.
+
 - Added a server-sent submit trigger: `POST /api/command-submit {pane_id, terminal_id?,
   request_id?, source?}` fans a `herdr_web.command_submit_requested` event out on the
   existing `/ws/ui-events` channel, and the owning composer submits its current draft via

@@ -1,5 +1,15 @@
 /**
  * @vitest-environment jsdom
+ *
+ * Session/id coverage for the parlay voice box against the REAL `parlay-input`
+ * wrapper: per-mount device isolation, stable per-box stream ids, and the
+ * insecure-context mount that once crashed mobile Safari.
+ *
+ * `parlay-input` is an intentionally OPTIONAL, LOCAL-ONLY dependency: it only
+ * resolves when the gitignored `web/local-deps/parlay-input` symlink is present
+ * (see web/README.md), so the standard `npm ci` environment has no such module.
+ * Skip the suite when the import rejects, mirroring the component's own
+ * guarded import.
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -11,48 +21,29 @@ class FakeEventSource {
   static instances: FakeEventSource[] = [];
   readonly url: string;
   closed = false;
+  listeners: Record<string, Array<(event: unknown) => void>> = {};
   constructor(url: string) {
     this.url = url;
     FakeEventSource.instances.push(this);
   }
-  addEventListener() {}
+  addEventListener(type: string, listener: (event: unknown) => void) {
+    (this.listeners[type] ||= []).push(listener);
+  }
   removeEventListener() {}
   close() {
     this.closed = true;
   }
 }
 
-const realCrypto = globalThis.crypto;
-
-/** jsdom has no matchMedia; @parlay/client reads it at module scope. */
-function stubMatchMedia() {
-  vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    addListener: () => {},
-    removeListener: () => {},
-    dispatchEvent: () => false,
-  }));
-}
-
-/**
- * `@parlay/client` is an intentionally OPTIONAL, LOCAL-ONLY dependency: it only
- * resolves when the gitignored `web/local-deps/parlay-client` symlink is present
- * (see web/README.md), so the standard `npm ci` environment has no such module.
- * Mirror ParlayInput's own guarded import to decide whether the parlay path is
- * exercisable here, and skip these session-id tests when it is not. matchMedia
- * must be stubbed before the import since the package reads it at module scope.
- */
-stubMatchMedia();
 let parlayAvailable = true;
 try {
-  await import("@parlay/client");
+  await import("parlay-input");
 } catch {
   parlayAvailable = false;
 }
+
+const realCrypto = globalThis.crypto;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Plain HTTP on a non-localhost origin: no randomUUID, getRandomValues intact. */
 function stubInsecureContextCrypto() {
@@ -62,13 +53,29 @@ function stubInsecureContextCrypto() {
   });
 }
 
-/**
- * Since #14 the component early-returns a plain input when `@parlay/client` is
- * unavailable, and that branch never generates ids — so these tests only mean
- * anything on the parlay-available path. Reading the ids back off the
- * `/api/chat/events` EventSource keeps that honest: no parlay, no EventSource,
- * no ids, and the assertions fail loudly instead of passing vacuously.
- */
+type EvalBody = {
+  streamId: string;
+  version: number;
+  text: string;
+  device: string;
+  platform?: string;
+};
+
+let evalBodies: EvalBody[] = [];
+
+function stubFetch() {
+  evalBodies = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: { body?: string }) => {
+      if (String(url).endsWith("/api/chat/eval")) {
+        evalBodies.push(JSON.parse(init?.body ?? "{}") as EvalBody);
+      }
+      return new Response("{}", { headers: { "Content-Type": "application/json" } });
+    }),
+  );
+}
+
 function deviceIdsFromEventSources() {
   return FakeEventSource.instances.map(
     (instance) => new URL(instance.url).searchParams.get("device") ?? "",
@@ -80,7 +87,7 @@ beforeEach(() => {
     true;
   FakeEventSource.instances = [];
   vi.stubGlobal("EventSource", FakeEventSource);
-  stubMatchMedia();
+  stubFetch();
 });
 
 afterEach(async () => {
@@ -94,7 +101,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function mountInput() {
+async function mountInput(boxId: string, value = "") {
   const { ParlayInput } = await import("./ParlayInput");
   const host = document.createElement("div");
   document.body.append(host);
@@ -103,18 +110,34 @@ async function mountInput() {
   await act(async () => {
     root.render(
       <ParlayInput
-        value=""
+        value={value}
         onValueChange={() => {}}
         onVoiceSubmit={() => {}}
         disabled={false}
         expandingInput={false}
         enterNewline={false}
         controlsScalePercent={100}
+        boxId={boxId}
         inputRef={() => {}}
       />,
     );
   });
   return host;
+}
+
+async function typeInto(host: HTMLElement, text: string) {
+  const input = host.querySelector("input");
+  if (!input) {
+    throw new Error("missing input");
+  }
+  await act(async () => {
+    input.value = text;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  // Default voice-settle debounce plus margin for the eval POST to land.
+  await act(async () => {
+    await sleep(600);
+  });
 }
 
 describe.skipIf(!parlayAvailable)("ParlayMobileInput session ids", () => {
@@ -125,7 +148,7 @@ describe.skipIf(!parlayAvailable)("ParlayMobileInput session ids", () => {
     // render and React tore down the whole terminal tree with it.
     stubInsecureContextCrypto();
 
-    const host = await mountInput();
+    const host = await mountInput("herdr-voice-box-pane-a");
 
     expect(host.querySelector("input.term-native-input")).not.toBeNull();
     expect(FakeEventSource.instances).toHaveLength(1);
@@ -135,23 +158,50 @@ describe.skipIf(!parlayAvailable)("ParlayMobileInput session ids", () => {
   it("mounts with no Web Crypto at all", async () => {
     vi.stubGlobal("crypto", undefined);
 
-    const host = await mountInput();
+    const host = await mountInput("herdr-voice-box-pane-a");
 
     expect(host.querySelector("input.term-native-input")).not.toBeNull();
     expect(deviceIdsFromEventSources()[0]).toMatch(/^herdr-web-mobile-.+/u);
   });
 
-  it("gives every mount distinct ids when randomUUID is missing", async () => {
-    // The point of be704dc: two tabs must not share a device id, or one tab
-    // replays the other's SSE-broadcast actions into its terminal.
+  it("gives every mount a distinct device id when randomUUID is missing", async () => {
+    // Two tabs must not share a device id, or one tab replays the other's
+    // SSE-broadcast actions into its terminal.
     stubInsecureContextCrypto();
 
-    await mountInput();
-    await mountInput();
+    await mountInput("herdr-voice-box-pane-a");
+    await mountInput("herdr-voice-box-pane-b");
 
     const [first, second] = deviceIdsFromEventSources();
     expect(first).toBeTruthy();
     expect(second).toBeTruthy();
     expect(first).not.toBe(second);
+  });
+
+  it("keeps one streamId per box across remounts and tags evals herdr", async () => {
+    // Per-box isolation is server-side by streamId: remounting the same pane's
+    // box (submit, pane switch, expanding toggle) must not mint a new stream.
+    const first = await mountInput("herdr-voice-box-pane-a");
+    await typeInto(first, "take the trash out");
+
+    await act(async () => {
+      for (const root of roots.splice(0)) {
+        root.unmount();
+      }
+    });
+
+    const second = await mountInput("herdr-voice-box-pane-a");
+    await typeInto(second, "take the trash out submit");
+
+    expect(evalBodies.length).toBeGreaterThanOrEqual(2);
+    for (const body of evalBodies) {
+      expect(body.streamId).toBe("herdr-voice-box-pane-a");
+      expect(body.platform).toBe("herdr");
+    }
+    // Fresh mount, fresh device: the two boxes never share an SSE identity.
+    const [firstDevice, secondDevice] = deviceIdsFromEventSources();
+    expect(firstDevice).toBeTruthy();
+    expect(secondDevice).toBeTruthy();
+    expect(firstDevice).not.toBe(secondDevice);
   });
 });
