@@ -7,6 +7,18 @@
 // only, identical lines coalesce, and the queue is bounded. No PII: kinds are
 // an allow-list and details carry statuses/guard reasons only — never box
 // text, never URLs, never tokens.
+//
+// `ender-result` carries the harden-step detail vocabulary (fixed strings
+// only, never buffer text):
+//   armed / armed-require-tail / cancelled ......... advisory timer verbs
+//   submitnow-tail-ok ............................. server tail verified
+//   submitnow-applied ............................. text submitNow, no tail
+//   submitnow-only-ender .......................... buffer was just the tail
+//   submitnow-tail-stale .......................... buffer moved past the tail
+//   <verb>-rejected-stale ......................... stale envelope dropped
+//   resync / rejected-protocol .................... envelope-level outcomes
+//   fallback-no-tail .............................. local re-verify missed
+//   fallback-stood-down ........................... stream recovered first
 
 export type ClientLogKind =
   | "eval-ok"
@@ -15,7 +27,8 @@ export type ClientLogKind =
   | "sse-drop"
   | "fallback-engaged"
   | "submit-fired"
-  | "submit-dropped";
+  | "submit-dropped"
+  | "ender-result";
 
 const CLIENT_LOG_KINDS: readonly string[] = [
   "eval-ok",
@@ -25,6 +38,7 @@ const CLIENT_LOG_KINDS: readonly string[] = [
   "fallback-engaged",
   "submit-fired",
   "submit-dropped",
+  "ender-result",
 ];
 
 export type ClientLogEvent = {

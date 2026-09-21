@@ -21,7 +21,55 @@ export const VOICE_FALLBACK_ENDER_PHRASES = ["submit that", "send it", "submit"]
 /** Extra grace past the server verify-hold deadline before the fallback fires. */
 export const VOICE_FALLBACK_GRACE_MS = 2000;
 
-const TRAILING_JUNK = /[.!?,;\s]+$/;
+/**
+ * Dictation-tolerant trailing-tail match shared by the server-armed tail and
+ * the phrase backstop.
+ *
+ * Dictation engines do not emit the ender phrase verbatim: words arrive
+ * capitalized ("Send It"), separated by doubled spaces, glued to the
+ * previous word with a comma ("out,send it"), or hyphenated ("send-it").
+ * The match therefore compares word sequences, not substrings: the tail is
+ * split into words (on whitespace AND punctuation, so both sides normalize
+ * the same way), the words are joined with a separator class that accepts
+ * any run of whitespace or punctuation, and the whole pattern is anchored to
+ * the end of the buffer with only trailing junk allowed after it. A word
+ * boundary (start of buffer, whitespace, or punctuation) is required before
+ * the first word so "submit" never matches inside "resubmit".
+ *
+ * The strip point is the regex match start, so the returned remainder keeps
+ * the caller's original text byte-identical (only trimmed).
+ */
+function splitTailWords(tail: string): string[] {
+  return tail
+    .split(/\s+/u)
+    .flatMap((token) => token.split(/[\p{P}]+/u))
+    .filter((word) => word.length > 0);
+}
+
+function escapeRegExp(word: string): string {
+  return word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildTrailingTailPattern(words: string[]): RegExp | null {
+  if (words.length === 0) {
+    return null;
+  }
+  const body = words.map(escapeRegExp).join("[\\s\\p{P}]+" );
+  return new RegExp(`(?:^|[\\s\\p{P}])${body}[\\s\\p{P}]*$`, "iu");
+}
+
+function stripTrailingTail(liveValue: string, words: string[]): string | null {
+  const pattern = buildTrailingTailPattern(words);
+  if (!pattern) {
+    return null;
+  }
+  const match = pattern.exec(liveValue);
+  if (!match || match.index === undefined) {
+    return null;
+  }
+  const stripped = liveValue.slice(0, match.index).trim();
+  return stripped ? stripped : null;
+}
 
 /**
  * Match a trailing ender tail against the live buffer. Returns the stripped
@@ -36,42 +84,21 @@ export function matchFallbackTail(liveValue: string, requireTail?: string): stri
 }
 
 /**
- * Mirror of the wrapper's submitNow tail check: case-insensitive trailing
- * match, only whitespace/punctuation allowed after the tail.
+ * Mirror of the wrapper's submitNow tail check, hardened for dictation
+ * realities: case-insensitive, internal whitespace/punctuation runs in either
+ * side collapse ("send  it", "send, it", "Send-It" all match a "send
+ * it" tail), only whitespace/punctuation allowed after the tail.
  */
 export function stripRequiredTail(liveValue: string, requireTail: string): string | null {
-  const idx = liveValue.toLowerCase().lastIndexOf(requireTail.toLowerCase());
-  if (idx === -1) {
-    return null;
-  }
-  const after = liveValue
-    .slice(idx + requireTail.length)
-    .trim()
-    .replace(/[.!?,;]+/g, "");
-  if (after !== "") {
-    return null;
-  }
-  const stripped = liveValue.slice(0, idx).trim();
-  return stripped ? stripped : null;
+  return stripTrailingTail(liveValue, splitTailWords(requireTail));
 }
 
 function stripFallbackPhrase(liveValue: string): string | null {
-  const cleaned = liveValue.replace(TRAILING_JUNK, "");
-  const lower = cleaned.toLowerCase();
   for (const phrase of VOICE_FALLBACK_ENDER_PHRASES) {
-    if (!lower.endsWith(phrase)) {
-      continue;
-    }
-    const start = cleaned.length - phrase.length;
-    const before = start === 0 ? "" : cleaned[start - 1];
-    if (before !== "" && !/\s/.test(before)) {
-      continue;
-    }
-    const stripped = cleaned.slice(0, start).trim();
-    if (stripped) {
+    const stripped = stripTrailingTail(liveValue, splitTailWords(phrase));
+    if (stripped !== null) {
       return stripped;
     }
-    return null;
   }
   return null;
 }

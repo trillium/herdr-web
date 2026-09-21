@@ -21,6 +21,38 @@ describe("stripRequiredTail (server-armed tail)", () => {
     );
   });
 
+  it("tolerates dictation spacing/case/punctuation inside the tail", () => {
+    // Doubled spaces from pause-separated dictation.
+    expect(stripRequiredTail("take the trash out send  it", "send it")).toBe(
+      "take the trash out",
+    );
+    // Comma-glued words and shouting case (the comma is consumed as the
+    // separator, so the remainder stays clean).
+    expect(stripRequiredTail("take the trash out,send it", "send it")).toBe(
+      "take the trash out",
+    );
+    expect(stripRequiredTail("take the trash out SEND IT", "send it")).toBe(
+      "take the trash out",
+    );
+    // Hyphenated dictation and a punctuated multi-word tail.
+    expect(stripRequiredTail("take the trash out send-it", "send it")).toBe(
+      "take the trash out",
+    );
+    expect(stripRequiredTail("please submit... that??", "submit that")).toBe(
+      "please",
+    );
+    // The tail side normalizes the same way as the buffer side.
+    expect(stripRequiredTail("take the trash out send it", "Send,  it")).toBe(
+      "take the trash out",
+    );
+  });
+
+  it("still rejects word-internal matches and mid-buffer tails", () => {
+    expect(stripRequiredTail("please resubmit", "submit")).toBeNull();
+    expect(stripRequiredTail("the submitter", "submit")).toBeNull();
+    expect(stripRequiredTail("submit thatch", "submit that")).toBeNull();
+  });
+
   it("rejects when text continues after the tail (stale buffer)", () => {
     expect(stripRequiredTail("submit the report tomorrow", "submit")).toBeNull();
   });
@@ -53,6 +85,17 @@ describe("matchFallbackTail (phrase backstop)", () => {
     // No boundary: "submit" inside a longer word must not fire.
     expect(matchFallbackTail("resubmit")).toBeNull();
     expect(matchFallbackTail("hello there")).toBeNull();
+  });
+
+  it("tolerates dictation realities in the phrase backstop", () => {
+    expect(matchFallbackTail("take the trash out  SEND  IT")).toBe(
+      "take the trash out",
+    );
+    expect(matchFallbackTail("take the trash out,send-it!")).toBe(
+      "take the trash out",
+    );
+    expect(matchFallbackTail("please submit... that.")).toBe("please");
+    expect(matchFallbackTail("go. Submit")).toBe("go.");
   });
 
   it("requires a non-empty remainder", () => {

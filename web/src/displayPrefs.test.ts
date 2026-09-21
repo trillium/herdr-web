@@ -71,4 +71,18 @@ describe("display preferences", () => {
     expect(parseVoiceSubmitEnabled("false")).toBe(DEFAULT_VOICE_SUBMIT_ENABLED);
     expect(parseVoiceSubmitEnabled(undefined, false)).toBe(false);
   });
+
+  it("reads the voice toggle correctly in every stored state", () => {
+    // Explicit on/off round-trip through storage.
+    expect(parseVoiceSubmitEnabled(true, DEFAULT_VOICE_SUBMIT_ENABLED)).toBe(true);
+    expect(parseVoiceSubmitEnabled(false, DEFAULT_VOICE_SUBMIT_ENABLED)).toBe(false);
+    // Missing key (pre-toggle prefs) defaults on: current behavior preserved.
+    expect(parseVoiceSubmitEnabled(undefined, DEFAULT_VOICE_SUBMIT_ENABLED)).toBe(true);
+    expect(parseVoiceSubmitEnabled(null, DEFAULT_VOICE_SUBMIT_ENABLED)).toBe(true);
+    // Corrupt values never wedge the box: fall back, never throw.
+    for (const garbage of ["true", "false", "yes", 0, 1, {}, [], NaN]) {
+      expect(parseVoiceSubmitEnabled(garbage, DEFAULT_VOICE_SUBMIT_ENABLED)).toBe(true);
+      expect(parseVoiceSubmitEnabled(garbage, false)).toBe(false);
+    }
+  });
 });

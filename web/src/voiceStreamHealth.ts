@@ -13,7 +13,13 @@
 
 export type VoiceStreamHooks = {
   onOpen?: () => void;
-  onError?: () => void;
+  /**
+   * SSE error; carries the EventSource `readyState` at the moment of the
+   * error (0 connecting/retrying, 1 open, 2 closed/gave-up) so the client
+   * log can record the drop reason, not just the drop. `undefined` when the
+   * constructor exposes no `readyState` (test doubles).
+   */
+  onError?: (readyState?: number) => void;
   onMessage?: () => void;
 };
 
@@ -84,7 +90,11 @@ export function makeTrackedEventSource(
     });
     source.addEventListener("error", () => {
       health.recordSseError();
-      hooks.onError?.();
+      const readyState =
+        typeof (source as EventSource & { readyState?: unknown }).readyState === "number"
+          ? (source as EventSource & { readyState: number }).readyState
+          : undefined;
+      hooks.onError?.(readyState);
     });
     // Any envelope proves the stream is alive, even between open/error flaps.
     source.addEventListener("message", () => {

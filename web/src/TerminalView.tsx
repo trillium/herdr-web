@@ -1905,9 +1905,13 @@ export function TerminalCommandControls({
       logClientEvent("submit-fired", signal.source);
       submitRef.current();
     } else {
-      // duplicate/stale/empty: noted above so a retry is ignored, and the
-      // box keeps its text for a manual Send.
-      logClientEvent("submit-dropped", decision);
+      // duplicate/stale/not-ready/empty: noted above so a retry is ignored,
+      // and the box keeps its text for a manual Send. Stale carries the
+      // signal age so clock skew (phone vs bridge) reads apart from a slow
+      // broadcast.
+      const detail =
+        decision === "stale" ? `stale ageMs=${Date.now() - signal.ts}` : decision;
+      logClientEvent("submit-dropped", detail);
     }
   }, []);
   useEffect(() => subscribeCommandSubmitRequests(evaluateSubmitSignal), [

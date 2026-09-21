@@ -55,6 +55,20 @@ describe("ClientLogBeacon", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it("accepts the ender-result detail vocabulary", async () => {
+    const { beacon, fetchImpl } = makeBeacon();
+    beacon.log("ender-result", "submitnow-tail-stale");
+    await Promise.resolve();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, Record<string, unknown>];
+    const body = JSON.parse(init["body"] as string) as {
+      events: { kind: string; detail?: string }[];
+    };
+    expect(body.events[0]).toEqual(
+      expect.objectContaining({ kind: "ender-result", detail: "submitnow-tail-stale" }),
+    );
+  });
+
   it("drops unknown kinds and strips non-printable detail", async () => {
     const { beacon, fetchImpl } = makeBeacon();
     beacon.log("eval-ok\nevil" as never);

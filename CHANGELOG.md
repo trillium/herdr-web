@@ -171,6 +171,20 @@
   reports no connection state) and stands down the moment the stream recovers, the
   countdown resolves, or the tail leaves the live buffer — and the tail re-verify
   against the live buffer means it can never double-submit with the server path.
+- Hardened the herdr-web half of the voice loop (#53): beacon detail, tolerant tails, and a
+  fallback proof. The client log gains an `ender-result` kind (advisory arm/cancel,
+  server tail re-verify outcomes, fallback no-tail/stand-down), `sse-drop` carries the
+  EventSource readyState at error time, stale `submit-dropped` verdicts carry the
+  signal age (clock skew reads apart from a slow broadcast), and every other guard
+  verdict is logged wherever a submit is dropped. The local tail matcher tolerates
+  dictation spacing/case/punctuation ("send  it", "send, it", "Send-It") while
+  still refusing word-internal matches ("resubmit"). Proof: both fallback transitions
+  (eval-kill engages, eval-recovery stands down) plus the beacon vocabulary in Vitest,
+  and a new `scripts/voice-submit-e2e.sh` that boots an isolated bridge and checks the
+  beacon pipeline, submit validation/pane gating, and the `/ws/ui-events` handshake
+  (companion to the live-target `scripts/voice-loop-trip.sh`). The voice toggle
+  parser is pinned for every stored state (on/off/missing/corrupt). Redeploy picks
+  the new bundle up through the documented `--delete` sync.
 ### Changed
 
 ### Fixed

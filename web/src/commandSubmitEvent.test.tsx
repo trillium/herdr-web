@@ -24,12 +24,18 @@ vi.mock("parlay-input", () => ({
   },
 }));
 
+const { logClientEventMock } = vi.hoisted(() => ({ logClientEventMock: vi.fn() }));
+vi.mock("./clientLog", () => ({
+  logClientEvent: (...args: unknown[]) => logClientEventMock(...args),
+}));
+
 const roots: Root[] = [];
 
 beforeEach(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT = true;
   capturedVoiceOptions = null;
+  logClientEventMock.mockClear();
 });
 
 afterEach(async () => {
@@ -68,6 +74,18 @@ describe("command submit requested events", () => {
 
     await emitSignal({ pane_id: "pane-a", request_id: "req-empty", ts: Date.now() });
     expect(onSubmitCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs the guard verdict with signal age on stale drops", async () => {
+    const { onSubmitCommand } = await renderControls();
+    await emitSignal({ pane_id: "pane-a", request_id: "req-stale-age", ts: Date.now() - 60_000 });
+    expect(onSubmitCommand).not.toHaveBeenCalled();
+    // The verdict carries the signal age so clock skew reads apart from a
+    // slow broadcast in the bridge log.
+    expect(logClientEventMock).toHaveBeenCalledWith(
+      "submit-dropped",
+      expect.stringMatching(/^stale ageMs=\d+$/u),
+    );
   });
 
   it("honors terminal scope when both sides are known", async () => {

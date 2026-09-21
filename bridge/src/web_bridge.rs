@@ -3429,6 +3429,7 @@ const ALLOWED_CLIENT_LOG_KINDS: &[&str] = &[
     "fallback-engaged",
     "submit-fired",
     "submit-dropped",
+    "ender-result",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -8057,6 +8058,29 @@ mod tests {
         let detail = detail.expect("detail survives truncation");
         assert!(detail.len() <= MAX_CLIENT_LOG_DETAIL_BYTES);
         assert!(!detail.is_empty());
+    }
+
+    #[test]
+    fn client_log_accepts_ender_result_detail_vocabulary() {
+        for detail in [
+            "armed",
+            "armed-require-tail",
+            "cancelled",
+            "submitnow-tail-ok",
+            "submitnow-only-ender",
+            "submitnow-tail-stale",
+            "fallback-no-tail",
+            "fallback-stood-down",
+            "sse-drop detail=es-closed",
+        ] {
+            let (kind, seen) = validate_client_log_event(&ClientLogEvent {
+                kind: "ender-result".to_string(),
+                detail: Some(detail.to_string()),
+            })
+            .expect("ender-result validates");
+            assert_eq!(kind, "ender-result");
+            assert_eq!(seen.as_deref(), Some(detail));
+        }
     }
 
     #[test]
