@@ -193,7 +193,7 @@ Settings are grouped by area:
 - Display: browser-wide navigation synchronization, agent features in Tabs, multi-host Space
   selection, top/bottom app padding, and mobile terminal controls size.
 - Terminal: font size, optional screen-reader text, upload-conflict behavior, browser-to-bridge
-  transport, and input/output batching delays.
+  transport, input/output batching delays, and the voice-submit switch.
 - Mobile: touch-specific terminal behavior when running on a coarse pointer device.
 
 When viewing all of multiple hosts, use the Spaces list `…` menu to group spaces by host or keep a

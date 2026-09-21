@@ -36,6 +36,7 @@ import {
 import type { CommandSubmitSignal } from "./commandSubmit";
 import { ConfirmDialog } from "./overlays";
 import { randomId } from "./randomId";
+import { logClientEvent } from "./clientLog";
 import { postVoiceCommandSubmit, VOICE_ENDER_SOURCE } from "./voiceEnder";
 import { addNativeResumeHandler } from "./native";
 import { shellQuote } from "./shell";
@@ -135,6 +136,11 @@ type Props = {
   mobileLongPressBehavior?: MobileLongPressBehavior;
   /** How long the loupe endpoint waits for a second drag. */
   mobileTouchSelectionEndpointTimeoutMs?: MobileTouchSelectionEndpointTimeoutMs;
+  /**
+   * User-facing voice-submit switch; gates the parlay-input mount and the
+   * eval `voiceEnabled` flag. Defaults ON (current behavior preserved).
+   */
+  voiceSubmitEnabled?: boolean;
   /** Whether the mobile command input wraps and grows while editing. */
   mobileCommandExpandingInput?: boolean;
   /** Whether Enter inserts a newline in the expanding mobile command input. */
@@ -230,6 +236,7 @@ export function TerminalView({
   mobileTapTarget = "command-input",
   mobileLongPressBehavior = "off",
   mobileTouchSelectionEndpointTimeoutMs = DEFAULT_MOBILE_TOUCH_SELECTION_ENDPOINT_TIMEOUT_MS,
+  voiceSubmitEnabled = true,
   mobileCommandExpandingInput = false,
   mobileCommandEnterNewline = false,
   mobileCommandFocusAfterSubmit = false,
@@ -1651,6 +1658,7 @@ export function TerminalView({
           uploadDisabled={uploadDisabled}
           expandingInput={mobileControls ? mobileCommandExpandingInput : true}
           enterNewline={mobileControls ? mobileCommandEnterNewline : desktopCommandEnterNewline}
+          voiceSubmitEnabled={voiceSubmitEnabled}
           mobileControls={mobileControls}
           mobileFocusAfterSubmit={mobileCommandFocusAfterSubmit}
           controlsScalePercent={mobileControls ? mobileControlsScalePercent : 100}
@@ -1776,6 +1784,7 @@ export function TerminalCommandControls({
   onPaneCycle,
   onPaneCycleModeToggle,
   paneCycleMode,
+  voiceSubmitEnabled = true,
 }: {
   bridgeId: string;
   paneId: string;
@@ -1804,6 +1813,8 @@ export function TerminalCommandControls({
   onPaneCycle: (direction: "next" | "prev") => void;
   onPaneCycleModeToggle: () => void;
   paneCycleMode: "pin" | "all";
+  /** User-facing voice-submit switch; gates the parlay-input mount + eval flag. */
+  voiceSubmitEnabled?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [value, setValue] = useCommandDraft(bridgeId, paneId);
@@ -1883,13 +1894,20 @@ export function TerminalCommandControls({
     if (decision === "wrong-pane" || decision === "composing") {
       if (decision === "composing") {
         pendingSubmitRef.current = signal;
+      } else {
+        logClientEvent("submit-dropped", decision);
       }
       return;
     }
     noteCommandSubmitSeen(seen, signal.request_id);
     if (decision === "submit") {
       pendingSubmitRef.current = null;
+      logClientEvent("submit-fired", signal.source);
       submitRef.current();
+    } else {
+      // duplicate/stale/empty: noted above so a retry is ignored, and the
+      // box keeps its text for a manual Send.
+      logClientEvent("submit-dropped", decision);
     }
   }, []);
   useEffect(() => subscribeCommandSubmitRequests(evaluateSubmitSignal), [
@@ -1917,6 +1935,7 @@ export function TerminalCommandControls({
       source: VOICE_ENDER_SOURCE,
     }).catch((error: unknown) => {
       // Leave the stripped text in the box so a manual Send still works.
+      logClientEvent("submit-dropped", "bridge-post-failed");
       console.debug("voice-ender bridge submit failed:", error);
     });
   };
@@ -2167,6 +2186,7 @@ export function TerminalCommandControls({
             expandingInput={expandingInput}
             enterNewline={enterNewline}
             controlsScalePercent={controlsScalePercent}
+            voiceSubmitEnabled={voiceSubmitEnabled}
             onKeyDown={onCommandTextareaKeyDown}
             onCompositionStart={onCommandCompositionStart}
             onCompositionEnd={onCommandCompositionEnd}

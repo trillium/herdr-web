@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import type { CompositionEvent, KeyboardEvent } from "react";
+import { logClientEvent } from "./clientLog";
 import { autosizeMobileCommandTextarea } from "./mobileCommandTextarea";
 import { randomId } from "./randomId";
+import {
+  matchFallbackTail,
+  VOICE_FALLBACK_GRACE_MS,
+} from "./voiceSubmitFallback";
+import {
+  makeTrackedEventSource,
+  observeEvalFetch,
+  VoiceStreamHealth,
+} from "./voiceStreamHealth";
 import {
   isEnderCancel,
   NEXT_TAB_VERB,
@@ -42,6 +52,12 @@ export interface ParlayInputProps {
   enterNewline: boolean;
   controlsScalePercent: number;
   /**
+   * User-facing voice-submit switch (Settings). Gates BOTH the parlay-input
+   * mount and the eval `voiceEnabled` flag. Defaults ON: with it off the box
+   * is a plain input and no eval voice traffic leaves the page.
+   */
+  voiceSubmitEnabled?: boolean;
+  /**
    * Stable per-box id used as the Parlay `streamId` (per-box isolation is
    * server-side by streamId — one streamId per input box). Falls back to a
    * per-mount random id when omitted.
@@ -68,6 +84,7 @@ export function ParlayInput({
   expandingInput,
   enterNewline,
   controlsScalePercent,
+  voiceSubmitEnabled = true,
   boxId,
   onKeyDown,
   onCompositionStart,
@@ -89,8 +106,31 @@ export function ParlayInput({
   // Advisory voice-ender countdown (armTimer): rendered only, never submits.
   const [countdown, setCountdown] = useState<Countdown | null>(null);
   const [nowMs, setNowMs] = useState(0);
+  // Stream health (task-qj0k1): the wrapper owns its SSE and reports no
+  // connection state, so track it from the outside — the local fallback may
+  // fire ONLY while this is flagged down.
+  const healthRef = useRef<VoiceStreamHealth | null>(null);
+  if (!healthRef.current) {
+    healthRef.current = new VoiceStreamHealth();
+  }
+  // Pending fallback watchdog per armed timer; cleared on resolve/unmount.
+  // Tracked separately from the displayed countdown: the countdown ticker
+  // auto-clears shortly past the deadline, but the fallback decision needs
+  // the armed timer until the server path resolves it or the watchdog fires.
+  const armedFallbackRef = useRef<{ timerId: string; requireTail?: string } | null>(null);
+  const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearFallbackTimer = () => {
+    if (fallbackTimerRef.current) {
+      clearTimeout(fallbackTimerRef.current);
+      fallbackTimerRef.current = null;
+    }
+    armedFallbackRef.current = null;
+  };
+  useEffect(() => clearFallbackTimer, []);
 
   const [node, setNode] = useState<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  // Element mirror for the submit path, which also fires from timeouts.
+  const nodeRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const valueRef = useRef(value);
   const onValueChangeRef = useRef(onValueChange);
   const onVoiceSubmitRef = useRef(onVoiceSubmit);
@@ -116,6 +156,7 @@ export function ParlayInput({
   const { device: deviceId, stream: streamId } = idsRef.current;
 
   const setCommandInputNode = (next: HTMLInputElement | HTMLTextAreaElement | null) => {
+    nodeRef.current = next;
     setNode(next);
     inputRef(next);
   };
@@ -145,15 +186,37 @@ export function ParlayInput({
     return () => clearInterval(timer);
   }, [countdown]);
 
+  // Stage stripped submit text through the live bridge path. Shared by the
+  // server submitNow and the local fallback so both face the same guard.
+  const stageAndSubmitRef = useRef<(text: string) => void>(() => {});
+  stageAndSubmitRef.current = (text: string) => {
+    const target = nodeRef.current;
+    setCountdown(null);
+    if (target) {
+      target.value = text;
+    }
+    valueRef.current = text;
+    onValueChangeRef.current(text);
+    if (disabledRef.current) {
+      return;
+    }
+    if (text.trim()) {
+      onVoiceSubmitRef.current(text);
+    }
+  };
+
   // The parlay-input eval loop. `parlayInput` owns the whole protocol: every
   // edit debounce-POSTs {streamId, version, text, cursor, reason:'input',
-  // voiceEnabled:true, platform:'herdr', device} to /api/chat/eval, and every
+  // voiceEnabled, platform:'herdr', device} to /api/chat/eval, and every
   // SSE input_action envelope is staleness/seq-checked before it touches the
   // box. submitNow's requireTail is re-verified against the LIVE buffer before
   // onSubmit fires; armTimer/cancelTimer are advisory countdown only.
+  //
+  // The mount is gated on the voice-submit toggle: with it off the box is a
+  // plain input and no eval voice traffic leaves the page.
   useEffect(() => {
     const mount = parlayInputFn;
-    if (!mount || !node) {
+    if (!mount || !node || !voiceSubmitEnabled) {
       return;
     }
     // Chrome surfaces a CSP block as an async `error` event, but WebKit throws
@@ -164,40 +227,97 @@ export function ParlayInput({
     // parlay being unavailable, which is a state this component already renders.
     // (parlay-input opens its owned SSE inside this call, so the constructor
     // throw surfaces here, not in a later event.)
+    const health = healthRef.current;
+    if (!health) {
+      return;
+    }
+    // Eval POST outcomes flip stream health and feed the client log; the
+    // platform tag the engine needs is injected underneath.
+    const observedFetch = observeEvalFetch(withHerdrPlatform(fetch.bind(window)), {
+      onEvalOk: () => {
+        health.recordEvalOk();
+        logClientEvent("eval-ok");
+      },
+      onEvalFail: (status) => {
+        if (health.recordEvalFail()) {
+          logClientEvent("sse-drop", `eval-${status}`);
+        }
+        logClientEvent("eval-fail", status);
+      },
+    });
+    // The wrapper opens its owned SSE through this constructor, so open and
+    // error transitions are visible here even though the wrapper reports no
+    // connection state of its own.
+    const TrackedEventSource = makeTrackedEventSource(globalThis.EventSource, health, {
+      onOpen: () => logClientEvent("sse-open"),
+      onError: () => logClientEvent("sse-drop"),
+    });
     try {
       return mount(node, {
         server: PARLAY_SERVER_URL,
         device: deviceId,
         streamId,
-        voiceEnabled: true,
-        fetch: withHerdrPlatform(fetch.bind(window)),
+        voiceEnabled: voiceSubmitEnabled,
+        fetch: observedFetch,
+        ...(TrackedEventSource ? { EventSource: TrackedEventSource } : {}),
         onSubmit: (text: string) => {
           // `text` is the buffer with the ender tail already stripped and
           // re-verified against the live element. Stage it synchronously —
           // DOM first so the bridge-path submit below always reads the live
           // buffer even if the React re-render has not flushed yet — then
           // submit the remainder via the live bridge path.
-          setCountdown(null);
-          node.value = text;
-          valueRef.current = text;
-          onValueChangeRef.current(text);
-          if (disabledRef.current) {
-            return;
-          }
-          if (text.trim()) {
-            onVoiceSubmitRef.current(text);
-          }
+          clearFallbackTimer();
+          stageAndSubmitRef.current(text);
         },
         onAction: (action: VoiceEnderAction) => {
           // Advisory countdown only — the authoritative 1s verify-hold timer
           // is server-side. This NEVER submits locally; the async submitNow
-          // (or its cancelTimer) arrives separately over the same SSE.
+          // (or its cancelTimer) arrives separately over the same SSE. The
+          // watchdog below is the SOLE local-submit path, and only while
+          // the stream is flagged down (task-qj0k1 backstop).
           const armed = parseEnderCountdown(action);
           if (armed) {
             setCountdown({ timerId: armed.timerId, deadlineMs: Date.now() + armed.fireInMs });
+            const requireTail =
+              typeof action.args?.requireTail === "string"
+                ? action.args.requireTail
+                : undefined;
+            clearFallbackTimer();
+            armedFallbackRef.current = { timerId: armed.timerId, requireTail };
+            const armedEntry = armedFallbackRef.current;
+            fallbackTimerRef.current = setTimeout(() => {
+              fallbackTimerRef.current = null;
+              // Stand down unless THIS arming is still unresolved...
+              if (armedFallbackRef.current !== armedEntry) {
+                return;
+              }
+              armedFallbackRef.current = null;
+              // ...and the stream is still flagged down (recovered => the
+              // server path owns the submit again).
+              if (!healthRef.current?.isDown()) {
+                return;
+              }
+              // Re-verify the tail against the LIVE buffer: a server submit
+              // that won first stages stripped text (tail gone) or clears
+              // the box, so this fails and the fallback stands down — never
+              // double-submit with the server path.
+              const live = nodeRef.current?.value ?? valueRef.current;
+              const stripped = matchFallbackTail(live, armedEntry.requireTail);
+              logClientEvent("fallback-engaged", armedEntry.requireTail ? "tail" : "phrase");
+              if (!stripped) {
+                setCountdown(null);
+                return;
+              }
+              if (disabledRef.current) {
+                logClientEvent("submit-dropped", "disabled");
+                return;
+              }
+              stageAndSubmitRef.current(stripped);
+            }, armed.fireInMs + VOICE_FALLBACK_GRACE_MS);
             return;
           }
           if (isEnderCancel(action)) {
+            clearFallbackTimer();
             setCountdown(null);
             return;
           }
@@ -232,10 +352,13 @@ export function ParlayInput({
       return;
     }
     // The mount closure reads everything mutable through refs, so the binding
-    // is intentionally created once per element.
-  }, [node]);
+    // is intentionally created once per element — except across voice-submit
+    // toggles, which mount/unmount the eval loop.
+  }, [node, voiceSubmitEnabled]);
 
-  const client = parlayStreamBlocked ? null : parlayInputFn;
+  // With the toggle off (or the stream blocked) the box is a plain input:
+  // no mount, no eval voice traffic.
+  const client = voiceSubmitEnabled && !parlayStreamBlocked ? parlayInputFn : null;
 
   const remainingMs = countdown ? Math.max(0, countdown.deadlineMs - nowMs) : 0;
   const countdownHint =

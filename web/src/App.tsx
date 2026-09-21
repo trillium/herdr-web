@@ -84,11 +84,13 @@ import {
   DEFAULT_MOBILE_CONTROLS_SCALE_PERCENT,
   DEFAULT_AGENT_FEATURES_IN_TABS,
   DEFAULT_MULTI_HOST_SPACE_SELECTION,
+  DEFAULT_VOICE_SUBMIT_ENABLED,
   parseContentInsetBottomPx,
   parseContentInsetTopPx,
   parseMobileControlsScalePercent,
   parseAgentFeaturesInTabs,
   parseMultiHostSpaceSelection,
+  parseVoiceSubmitEnabled,
 } from "./displayPrefs";
 import { LaunchDialog } from "./LaunchDialog";
 import { resolveLaunchSpec } from "./launch";
@@ -459,6 +461,7 @@ type DisplayPrefs = {
   mobileCommandEnterNewline: boolean;
   mobileCompactControls: boolean;
   mobileCommandFocusAfterSubmit: boolean;
+  voiceSubmitEnabled: boolean;
   theme: Theme;
 };
 type SharedNavigationPrefs = {
@@ -538,6 +541,7 @@ function readDisplayPrefs(): DisplayPrefs {
     mobileCommandEnterNewline: DEFAULT_MOBILE_COMMAND_ENTER_NEWLINE,
     mobileCompactControls: DEFAULT_MOBILE_COMPACT_CONTROLS,
     mobileCommandFocusAfterSubmit: DEFAULT_MOBILE_COMMAND_FOCUS_AFTER_SUBMIT,
+    voiceSubmitEnabled: DEFAULT_VOICE_SUBMIT_ENABLED,
     theme: DEFAULT_THEME,
   };
   try {
@@ -767,6 +771,10 @@ function parseDisplayPrefsValue(
     mobileCompactControls: parseMobileCompactControls(parsed.mobileCompactControls),
     mobileCommandFocusAfterSubmit: parseMobileCommandFocusAfterSubmit(
       parsed.mobileCommandFocusAfterSubmit,
+    ),
+    voiceSubmitEnabled: parseVoiceSubmitEnabled(
+      parsed.voiceSubmitEnabled,
+      fallback.voiceSubmitEnabled,
     ),
     theme: parseTheme(parsed.theme),
   };
@@ -1188,6 +1196,9 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
   const [mobileCommandFocusAfterSubmit, setMobileCommandFocusAfterSubmit] = useState(
     initialPrefs.mobileCommandFocusAfterSubmit,
   );
+  const [voiceSubmitEnabled, setVoiceSubmitEnabled] = useState(
+    initialPrefs.voiceSubmitEnabled,
+  );
   const [theme, setTheme] = useState(initialPrefs.theme);
   const [launchTarget, setLaunchTarget] = useState<ScopedLaunchTarget | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1300,6 +1311,7 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
       setMobileCommandEnterNewline(prefs.mobileCommandEnterNewline);
       setMobileCompactControls(prefs.mobileCompactControls);
       setMobileCommandFocusAfterSubmit(prefs.mobileCommandFocusAfterSubmit);
+      setVoiceSubmitEnabled(prefs.voiceSubmitEnabled);
       setTheme(prefs.theme);
       setDisplayPrefsLoaded(true);
       },
@@ -1895,6 +1907,7 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
       mobileCommandEnterNewline,
       mobileCompactControls,
       mobileCommandFocusAfterSubmit,
+      voiceSubmitEnabled,
       theme,
     });
   }, [
@@ -1938,6 +1951,7 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
     mobileCommandEnterNewline,
     mobileCompactControls,
     mobileCommandFocusAfterSubmit,
+    voiceSubmitEnabled,
     theme,
   ]);
 
@@ -4341,6 +4355,7 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
             mobileCommandExpandingInput={mobileCommandExpandingInput}
             mobileCommandEnterNewline={mobileCommandEnterNewline}
             mobileCommandFocusAfterSubmit={mobileCommandFocusAfterSubmit}
+            voiceSubmitEnabled={voiceSubmitEnabled}
             terminalInputTransport={terminalInputTransport}
             terminalInputBatchDelayMs={terminalInputBatchDelayMs}
             terminalOutputCoalesceMs={terminalOutputCoalesceMs}
@@ -4384,6 +4399,7 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
             mobileCommandExpandingInput={mobileCommandExpandingInput}
             mobileCommandEnterNewline={mobileCommandEnterNewline}
             mobileCommandFocusAfterSubmit={mobileCommandFocusAfterSubmit}
+            voiceSubmitEnabled={voiceSubmitEnabled}
             terminalInputTransport={terminalInputTransport}
             terminalInputBatchDelayMs={terminalInputBatchDelayMs}
             terminalOutputCoalesceMs={terminalOutputCoalesceMs}
@@ -4665,6 +4681,8 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
           onMobileCommandExpandingInput={setMobileCommandExpandingInput}
           mobileCommandEnterNewline={mobileCommandEnterNewline}
           mobileCommandFocusAfterSubmit={mobileCommandFocusAfterSubmit}
+          voiceSubmitEnabled={voiceSubmitEnabled}
+          onVoiceSubmitEnabled={setVoiceSubmitEnabled}
           onMobileCommandEnterNewline={setMobileCommandEnterNewline}
           onMobileCommandFocusAfterSubmit={setMobileCommandFocusAfterSubmit}
           showMobileKeyboardHideRefit={showMobileKeyboardHideRefit}
@@ -6157,6 +6175,7 @@ function SplitGrid({
   mobileCommandExpandingInput,
   mobileCommandEnterNewline,
   mobileCommandFocusAfterSubmit,
+  voiceSubmitEnabled,
   terminalInputTransport,
   terminalInputBatchDelayMs,
   terminalOutputCoalesceMs,
@@ -6194,6 +6213,7 @@ function SplitGrid({
   mobileCommandExpandingInput: boolean;
   mobileCommandEnterNewline: boolean;
   mobileCommandFocusAfterSubmit: boolean;
+  voiceSubmitEnabled: boolean;
   terminalInputTransport: TerminalInputTransport;
   terminalInputBatchDelayMs: number;
   terminalOutputCoalesceMs: number;
@@ -6274,6 +6294,7 @@ function SplitGrid({
               mobileCommandExpandingInput={mobileCommandExpandingInput}
               mobileCommandEnterNewline={mobileCommandEnterNewline}
               mobileCommandFocusAfterSubmit={mobileCommandFocusAfterSubmit}
+              voiceSubmitEnabled={voiceSubmitEnabled}
               terminalInputTransport={terminalInputTransport}
               terminalInputBatchDelayMs={terminalInputBatchDelayMs}
               terminalOutputCoalesceMs={terminalOutputCoalesceMs}

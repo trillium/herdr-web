@@ -1534,6 +1534,10 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
             post(command_submit_handler).options(preflight_handler),
         )
         .route(
+            "/api/client-log",
+            post(client_log_handler).options(preflight_handler),
+        )
+        .route(
             "/api/selection",
             post(selection_handler).options(preflight_handler),
         )
@@ -3408,6 +3412,91 @@ async fn command_submit_handler(
     })))
 }
 
+/// Client log pipeline: the phone is a black box, so the page beams small
+/// input-loop events (eval POST status, SSE connected/dropped, fallback
+/// engaged, submit fired/dropped with guard reason) here and the bridge
+/// appends them to its file log (`herdr-web.log`). Kinds are an allow-list
+/// and details are truncated; the page never sends box text, URLs, or tokens.
+/// Local-only like every other mutation route (never proxied to remotes).
+pub(crate) const CLIENT_LOG_TARGET: &str = "herdr_web_bridge::client";
+const MAX_CLIENT_LOG_EVENTS: usize = 32;
+const MAX_CLIENT_LOG_DETAIL_BYTES: usize = 160;
+const ALLOWED_CLIENT_LOG_KINDS: &[&str] = &[
+    "eval-ok",
+    "eval-fail",
+    "sse-open",
+    "sse-drop",
+    "fallback-engaged",
+    "submit-fired",
+    "submit-dropped",
+];
+
+#[derive(Debug, Deserialize)]
+struct ClientLogEvent {
+    kind: String,
+    #[serde(default)]
+    detail: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClientLogRequest {
+    #[serde(default)]
+    events: Vec<ClientLogEvent>,
+}
+
+fn validate_client_log_event(
+    event: &ClientLogEvent,
+) -> Result<(String, Option<String>), BridgeError> {
+    if !ALLOWED_CLIENT_LOG_KINDS.contains(&event.kind.as_str()) {
+        return Err(BridgeError::BadRequest(format!(
+            "unknown client-log kind: {}",
+            crate::conn_log::sanitize_client_log_token(&event.kind),
+        )));
+    }
+    let detail = event
+        .detail
+        .as_deref()
+        .map(|value| crate::conn_log::truncate_to_bytes(value, MAX_CLIENT_LOG_DETAIL_BYTES))
+        .filter(|value| !value.is_empty());
+    Ok((event.kind.clone(), detail))
+}
+
+/// One log line. `detail` carries statuses/guard reasons only — never box text.
+pub(crate) fn format_client_log_line(kind: &str, detail: Option<&str>) -> String {
+    match detail {
+        Some(detail) => format!("client kind={kind} detail={detail}"),
+        None => format!("client kind={kind}"),
+    }
+}
+
+async fn client_log_handler(
+    State(state): State<BridgeState>,
+    headers: HeaderMap,
+    Json(body): Json<ClientLogRequest>,
+) -> Result<Json<serde_json::Value>, BridgeError> {
+    ensure_allowed_request(&headers, &state.request_policy)?;
+    if body.events.is_empty() {
+        return Err(BridgeError::BadRequest("missing events".to_string()));
+    }
+    if body.events.len() > MAX_CLIENT_LOG_EVENTS {
+        return Err(BridgeError::BadRequest(format!(
+            "too many events: {}",
+            body.events.len()
+        )));
+    }
+    let mut received = 0;
+    for event in &body.events {
+        let (kind, detail) = validate_client_log_event(event)?;
+        tracing::info!(
+            target: CLIENT_LOG_TARGET,
+            "{}",
+            format_client_log_line(&kind, detail.as_deref())
+        );
+        received += 1;
+    }
+    Ok(Json(serde_json::json!({ "received": received })))
+}
+
 async fn upload_handler(
     State(state): State<BridgeState>,
     Query(query): Query<UploadQuery>,
@@ -4426,6 +4515,7 @@ fn rest_path_is_safe(rest: &str) -> bool {
 /// Blocked (anything not listed above, including):
 ///   - `command`           — executes arbitrary shell commands on the remote
 ///   - `command-submit`    — triggers command submission on the remote
+///   - `client-log`        — appends to the remote's log; meaningless as a proxy target
 ///   - `uploads`           — writes files to the remote filesystem
 ///   - `selection`         — sets terminal selection state
 ///   - `mobile-mode`       — sets a local-filesystem flag on the remote
@@ -7930,6 +8020,7 @@ mod tests {
     fn proxy_allow_list_rejects_blocked_paths() {
         assert!(!is_proxy_path_allowed("command"));
         assert!(!is_proxy_path_allowed("command-submit"));
+        assert!(!is_proxy_path_allowed("client-log"));
         assert!(!is_proxy_path_allowed("uploads"));
         assert!(!is_proxy_path_allowed("selection"));
         assert!(!is_proxy_path_allowed("mobile-mode"));
@@ -7937,6 +8028,50 @@ mod tests {
         assert!(!is_proxy_path_allowed("launcher-presets/launch"));
         assert!(!is_proxy_path_allowed("unknown-endpoint"));
         assert!(!is_proxy_path_allowed(""));
+    }
+
+    #[test]
+    fn client_log_target_is_stable_for_log_queries() {
+        assert_eq!(CLIENT_LOG_TARGET, "herdr_web_bridge::client");
+    }
+
+    #[test]
+    fn client_log_accepts_known_kinds_and_truncates_detail() {
+        let (kind, detail) = validate_client_log_event(&ClientLogEvent {
+            kind: "submit-dropped".to_string(),
+            detail: Some("wrong-pane".to_string()),
+        })
+        .expect("known kind validates");
+        assert_eq!(kind, "submit-dropped");
+        assert_eq!(detail.as_deref(), Some("wrong-pane"));
+        let line = format_client_log_line(&kind, detail.as_deref());
+        assert!(line.contains("kind=submit-dropped"));
+        assert!(line.contains("detail=wrong-pane"));
+
+        let long = "x".repeat(500);
+        let (_, detail) = validate_client_log_event(&ClientLogEvent {
+            kind: "eval-fail".to_string(),
+            detail: Some(long),
+        })
+        .expect("long detail truncates");
+        let detail = detail.expect("detail survives truncation");
+        assert!(detail.len() <= MAX_CLIENT_LOG_DETAIL_BYTES);
+        assert!(!detail.is_empty());
+    }
+
+    #[test]
+    fn client_log_rejects_unknown_kinds_without_leaking_bytes() {
+        let err = validate_client_log_event(&ClientLogEvent {
+            kind: "eval-ok\nINJECTED: yes".to_string(),
+            detail: None,
+        })
+        .expect_err("unknown kind rejects");
+        let message = err.to_string();
+        assert!(message.contains("unknown client-log kind"));
+        // The rejected token rides along for debuggability, but only as
+        // single-line printable ASCII — no control bytes, no newlines.
+        assert!(!message.contains('\n'));
+        assert!(message.chars().all(|ch| ch.is_ascii_graphic() || ch == ' '));
     }
 
     #[test]

@@ -3,6 +3,8 @@ export const DEFAULT_CONTENT_INSET_BOTTOM_PX = 0;
 export const DEFAULT_MOBILE_CONTROLS_SCALE_PERCENT = 100;
 export const DEFAULT_AGENT_FEATURES_IN_TABS = true;
 export const DEFAULT_MULTI_HOST_SPACE_SELECTION = true;
+/** Voice-submit switch default: ON (current parlay-input behavior preserved). */
+export const DEFAULT_VOICE_SUBMIT_ENABLED = true;
 
 export const MIN_CONTENT_INSET_TOP_PX = 0;
 export const MAX_CONTENT_INSET_TOP_PX = 96;
@@ -48,6 +50,13 @@ export function parseAgentFeaturesInTabs(
 export function parseMultiHostSpaceSelection(
   value: unknown,
   fallback = DEFAULT_MULTI_HOST_SPACE_SELECTION,
+) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+export function parseVoiceSubmitEnabled(
+  value: unknown,
+  fallback = DEFAULT_VOICE_SUBMIT_ENABLED,
 ) {
   return typeof value === "boolean" ? value : fallback;
 }

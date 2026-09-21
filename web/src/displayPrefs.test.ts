@@ -5,6 +5,7 @@ import {
   DEFAULT_MOBILE_CONTROLS_SCALE_PERCENT,
   DEFAULT_AGENT_FEATURES_IN_TABS,
   DEFAULT_MULTI_HOST_SPACE_SELECTION,
+  DEFAULT_VOICE_SUBMIT_ENABLED,
   MAX_CONTENT_INSET_BOTTOM_PX,
   MAX_CONTENT_INSET_TOP_PX,
   MAX_MOBILE_CONTROLS_SCALE_PERCENT,
@@ -14,6 +15,7 @@ import {
   parseMobileControlsScalePercent,
   parseAgentFeaturesInTabs,
   parseMultiHostSpaceSelection,
+  parseVoiceSubmitEnabled,
 } from "./displayPrefs";
 
 describe("display preferences", () => {
@@ -60,5 +62,13 @@ describe("display preferences", () => {
     expect(parseMultiHostSpaceSelection(undefined)).toBe(DEFAULT_MULTI_HOST_SPACE_SELECTION);
     expect(parseMultiHostSpaceSelection("false")).toBe(DEFAULT_MULTI_HOST_SPACE_SELECTION);
     expect(parseMultiHostSpaceSelection(undefined, false)).toBe(false);
+  });
+
+  it("parses voice submit and defaults it on", () => {
+    expect(parseVoiceSubmitEnabled(true)).toBe(true);
+    expect(parseVoiceSubmitEnabled(false)).toBe(false);
+    expect(parseVoiceSubmitEnabled(undefined)).toBe(DEFAULT_VOICE_SUBMIT_ENABLED);
+    expect(parseVoiceSubmitEnabled("false")).toBe(DEFAULT_VOICE_SUBMIT_ENABLED);
+    expect(parseVoiceSubmitEnabled(undefined, false)).toBe(false);
   });
 });

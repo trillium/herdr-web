@@ -93,6 +93,27 @@ no special action needed. (The remaining `web/local-deps/` symlink,
 `@parlay/client`, is still optional and gitignored; only the vendored
 `parlay-input` voice line-ender ships in every build.)
 
+### Voice-submit switch
+
+Settings → Terminal → Voice submit (default ON, persisted with the other display
+prefs) gates both the `parlay-input` mount and the eval `voiceEnabled` flag: with
+it off, every composer is a plain input and no eval voice traffic leaves the page.
+The default preserves the always-on behavior; the switch gives the off switch back
+plus a visible state.
+
+Two backstops keep a flaky voice path honest instead of silently dead:
+
+- **Client log pipeline.** The page beams input-loop events (eval POST status, SSE
+  connected/dropped, fallback engaged, submit fired/dropped with guard reason) to
+  `POST /api/client-log`, which the bridge appends to its file log (`herdr-web.log`).
+  Small and sampled, kinds are an allow-list, and details carry statuses/guard reasons
+  only — never box text.
+- **Client-side submit fallback.** When the server eval path/SSE drops, the box still
+  submits on the ender phrase locally. It fires ONLY while the stream is flagged down
+  and stands down the moment the stream recovers, the countdown resolves, or the tail
+  leaves the live buffer; the tail is re-verified against the live buffer before
+  firing, so it never double-submits with the server path.
+
 ## Vite dev server environment variables:
 
 - `HERDR_WEB_BRIDGE` — bridge URL the dev server proxies `/api` and `/ws` to. Defaults to
@@ -102,11 +123,53 @@ no special action needed. (The remaining `web/local-deps/` symlink,
   tunnel, or a reverse proxy. Set to `*` to allow any host. Unset by default (Vite's standard host
   restrictions apply).
 
+## Redeploying the live bridge static dir
+
+The running bridge serves a *copy* of `web/dist` from `~/.local/share/herdr-web/dist`
+— rebuilding alone changes nothing for live clients. Redeploy with deletion so stale
+content-hashed bundles cannot accumulate (a copy without cleanup leaves every old
+hash behind, and only `index.html`'s set is live):
+
+```bash
+npm run build:web
+rsync -a --delete web/dist/ ~/.local/share/herdr-web/dist/
+```
+
+No bridge restart is needed; assets are read from disk per request. To prune an
+already-deployed dir without a fresh sync, delete only hashed assets unreachable
+from `index.html` — reachability is transitive (bundles reference chunks, CSS
+references fonts), so a single grep pass is not enough; compute the closure:
+
+```bash
+cd ~/.local/share/herdr-web/dist
+python3 - <<'EOF'
+import os
+assets = {f"assets/{f}" for f in os.listdir("assets")}
+content = {f: open(f, encoding="utf-8", errors="ignore").read() for f in assets}
+index = open("index.html", encoding="utf-8", errors="ignore").read()
+live = {f for f in assets if os.path.basename(f) in index}
+changed = True
+while changed:
+    changed = False
+    for f in assets - live:
+        if any(os.path.basename(f) in content[g] for g in live):
+            live.add(f)
+            changed = True
+print("\n".join(sorted(assets - live)))
+EOF
+```
+
+Inspect the printed list, confirm none of them is named in `index.html` or in
+another live bundle, then delete just those files. Never delete `index.html`,
+logos, the manifest, or fonts a live CSS file references.
+
 The app expects these bridge routes:
 
 - `/api/capabilities`
 - `/api/snapshot`
 - `/api/command`
+- `/api/command-submit`
+- `/api/client-log`
 - `/api/launcher-presets`
 - `/api/launcher-presets/launch`
 - `/api/selection`
