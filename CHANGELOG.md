@@ -154,18 +154,18 @@
   `command-submit` event, and asserts the echoed `request_id`, printing per-leg timings.
   It proves box-event in, submit-command out (fanned to `/ws/ui-events` subscribers) as one
   runnable check.
-- Restored the user-facing voice-submit switch (Settings → Terminal → Voice submit,
+- Restored the user-facing voice-submit switch (Settings → Terminal → Voice submit (#52),
   default ON, persisted with the other display prefs): it gates both the `parlay-input`
   mount and the eval `voiceEnabled` flag, so Off renders a plain input and sends no eval
   voice traffic. The toggle gives the off switch back plus a visible state; current
   always-on behavior is preserved by the default.
-- Added the client log pipeline: the page beams input-loop events (eval POST status,
+- Added the client log pipeline (#52): the page beams input-loop events (eval POST status,
   SSE connected/dropped, fallback engaged, submit fired/dropped with guard reason) to
   a new `POST /api/client-log` bridge endpoint that appends them to the bridge file log.
   Small and sampled (eval-ok is sampled, repeats coalesce), kinds are an allow-list,
   and details carry statuses/guard reasons only — never box text — so the phone stops
   being a black box without widening what the log holds.
-- Added the client-side submit fallback (task-qj0k1 backstop): when the server eval
+- Added the client-side submit fallback (task-qj0k1 backstop, #52): when the server eval
   path/SSE drops, the box still submits on the ender phrase locally. It fires ONLY
   while the stream is flagged down (tracked from the outside, since the wrapper
   reports no connection state) and stands down the moment the stream recovers, the
@@ -184,7 +184,7 @@
   required a dotted DNS name, so it skipped all real `tailscale status` rows (short hostnames)
   and latched onto the Funnel footer URL including its `https://` scheme, producing a URL curl
   can never resolve. It now reads the short hostname column and skips footer lines.
-- Cleaned stale hashed bundles out of the live bridge static dir and documented the
+- Cleaned stale hashed bundles out of the live bridge static dir (#52) and documented the
   redeploy cleanup: content-hashed `web/dist` assets accumulate in
   `~/.local/share/herdr-web/dist` when deploys copy without deleting, so the redeploy
   procedure (web README) now syncs with deletion and prunes hashed assets no live file
