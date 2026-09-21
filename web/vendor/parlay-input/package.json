@@ -1,0 +1,17 @@
+{
+  "name": "parlay-input",
+  "version": "0.2.0",
+  "description": "Framework-agnostic DOM input wrapper for wiring a UI input to a parlay server (vendored prebuilt copy; see VENDOR.md)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "license": "MIT"
+}

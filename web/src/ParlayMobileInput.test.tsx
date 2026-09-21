@@ -5,11 +5,9 @@
  * wrapper: per-mount device isolation, stable per-box stream ids, and the
  * insecure-context mount that once crashed mobile Safari.
  *
- * `parlay-input` is an intentionally OPTIONAL, LOCAL-ONLY dependency: it only
- * resolves when the gitignored `web/local-deps/parlay-input` symlink is present
- * (see web/README.md), so the standard `npm ci` environment has no such module.
- * Skip the suite when the import rejects, mirroring the component's own
- * guarded import.
+ * `parlay-input` is a vendored `file:./vendor/parlay-input` dependency, so the
+ * REAL wrapper resolves in every environment. The suite still skips if the
+ * import rejects, mirroring the component's own guarded import.
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
