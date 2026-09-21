@@ -1,4 +1,6 @@
 dist/
+# Exception: the vendored prebuilt parlay-input copy must be committed.
+!vendor/**/dist/
 node_modules/
 *.tsbuildinfo
 local-deps/

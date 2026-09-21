@@ -26,11 +26,20 @@
   submit locally; the async `submitNow` re-verifies the ender tail ("send it" /
   "submit" / "submit that") against the live buffer, strips it, and submits
   the remainder through the live bridge path (`POST /api/command-submit` →
-  `herdr_web.command_submit_requested`). Requires the `web/local-deps/parlay-input`
-  symlink at build time (see `web/README.md`), `--allow-connect-origin` for the
+  `herdr_web.command_submit_requested`). Requires `--allow-connect-origin` for the
   Parlay server on the bridge, and `PARLAY_ALLOWED_ORIGINS` on the Parlay server
-  for Tailnet (`100.x`) page origins; without any of these the box stays a plain
+  for Tailnet (`100.x`) page origins; without either the box stays a plain
   input.
+
+- Bundled `parlay-input` into every production build by vendoring a prebuilt copy
+  (parlay `packages/input` 0.2.0) at `web/vendor/parlay-input`, referenced from
+  `web/package.json` as `file:./vendor/parlay-input`. Clean checkouts previously built
+  without the voice line-ender (the gitignored `web/local-deps/parlay-input` symlink
+  was absent, the specifier was externalized, and the voice box silently degraded to a
+  plain input with zero library markers in the bundle). A post-build guard
+  (`web/scripts/check-parlay-bundle.mjs`, wired into `npm run build`) now fails the
+  build if the wrapper's `api/chat/events` marker is missing from `web/dist`; refresh
+  steps live in `web/vendor/parlay-input/VENDOR.md`.
 
 - Added a server-sent submit trigger: `POST /api/command-submit {pane_id, terminal_id?,
   request_id?, source?}` fans a `herdr_web.command_submit_requested` event out on the

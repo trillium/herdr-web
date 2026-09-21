@@ -55,21 +55,20 @@ This is a lightweight internal onboarding note for agents working in this repo.
   `is_proxy_path_allowed()`. Only the paths in that list are forwarded; command-execution and upload
   endpoints are never proxied. Add new proxied paths there; do not widen the allow-list without
   review.
-- `parlay-input` (used by `web/src/ParlayInput.tsx` via `web/src/voiceEnder.ts`) is a permanently OPTIONAL, LOCAL-ONLY,
-  NEVER-PUBLISHED dependency. It is deliberately absent from `web/package.json` and
-  `web/package-lock.json` so `npm ci` never fetches it from a registry, and it resolves only via the
-  gitignored symlink `web/local-deps/parlay-input` (setup in `web/README.md`, including the
-  `bun run build` step — the wrapper ships no dist). Do not add it as a
-  registry dependency or commit the symlink. Two mechanisms keep it optional and must stay in sync:
-  the `parlayClientResolver` in `web/vite.config.ts` (resolves each optional local package's entry from its
-  own `package.json` `exports`/`module`/`main` when its symlink is present, for `vite dev`, tests,
-  and production alike) with `build.rolldownOptions.external`, which externalizes each specifier **only when its
-  symlink is absent** — with the symlink present the real package is bundled into `web/dist` so
-  parlay voice-submit works in the built app, which also means production output is
-  build-host-dependent; and the guarded `try { await import("parlay-input") }` in
-  `ParlayInput.tsx` that falls back to a plain input at runtime when the module is absent (the
-  externalized specifier never resolves). The type side is the single ambient shim
-  `web/types/parlay-input.d.ts` — do not reintroduce a duplicate under `web/src/`. Voice-box eval
+- `parlay-input` (used by `web/src/ParlayInput.tsx` via `web/src/voiceEnder.ts`) is a vendored,
+  always-bundled dependency: `web/vendor/parlay-input/` holds a prebuilt copy of parlay's
+  `packages/input` (refresh steps in `web/vendor/parlay-input/VENDOR.md`), referenced from
+  `web/package.json` as `"parlay-input": "file:./vendor/parlay-input"` so `npm ci` installs it on
+  every checkout. Do not externalize it in `web/vite.config.ts` and do not reintroduce the old
+  gitignored-symlink route — a build made without the wrapper silently shipped a voiceless plain
+  input. Two mechanisms keep it present and must stay in sync: unconditional bundling (the
+  specifier is never in `build.rolldownOptions.external`; that conditional-externalization
+  machinery now covers only the still-optional `@parlay/client`), and the post-build
+  `web/scripts/check-parlay-bundle.mjs` guard (wired into `npm run build`) that fails loudly when
+  the wrapper's `api/chat/events` marker is missing from `web/dist`. The guarded
+  `try { await import("parlay-input") }` in `ParlayInput.tsx` stays as a dev-only fallback with a
+  `console.warn` (never the prod path). Types ship with the vendored package — there is no
+  ambient shim. Voice-box eval
   traffic additionally needs `--allow-connect-origin http://<host>:4242` on the bridge and, for
   Tailnet (`100.x`) page origins, `PARLAY_ALLOWED_ORIGINS` on the parlay server — a `403` with no
   CORS headers means the origin was refused, not that the server is down.

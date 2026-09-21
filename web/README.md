@@ -45,19 +45,15 @@ loop through `parlay-input` (the zero-dependency DOM wrapper implementing the
 real REST up-channel + shared SSE down-channel) and degrades gracefully to a
 plain text input when parlay is unavailable. To enable voice line-ender submit
 (dictating a line ending with "send it" / "submit" / "submit that" auto-submits
-after the server's 1s verify hold), set up a local symlink to your parlay
-checkout and build the wrapper:
+after the server's 1s verify hold), no setup is needed: `parlay-input` ships
+vendored (`web/vendor/parlay-input`, a prebuilt copy of parlay's
+`packages/input` referenced via `"parlay-input": "file:./vendor/parlay-input"`)
+and is bundled into every dev, test, and production build. A post-build guard
+(`web/scripts/check-parlay-bundle.mjs`, wired into `npm run build`) fails the
+build if the wrapper's marker ever goes missing from the bundle.
 
-```bash
-mkdir -p web/local-deps
-ln -s /path/to/parlay/packages/input web/local-deps/parlay-input
-cd /path/to/parlay/packages/input && bun install && bun run build
-```
-
-`parlay-input` is intentionally NOT listed in `package.json`/`package-lock.json`
-(it is never published and never fetched from a registry). The Vite resolver in
-`vite.config.ts` picks up the symlink directly, so no reinstall is needed — just
-restart the dev server / rebuild after creating it.
+To refresh the vendored copy after an upstream parlay change, see
+`web/vendor/parlay-input/VENDOR.md`.
 
 Parlay requires the eval engine and server running:
 
@@ -92,10 +88,10 @@ Two serving prerequisites, both verified against the origin guard:
   server to the exact serving origin, e.g.
   `PARLAY_ALLOWED_ORIGINS=http://100.x.y.z:8787`.
 
-If the symlink is missing or stale, the app will still build and run with a plain text input —
-no special action needed. `web/local-deps/` is gitignored. Note that the symlink's presence is
-baked into `web/dist`: a production build made without it externalizes `parlay-input`, so the
-built app always falls back to the plain input. See [docs/packaging.md](../docs/packaging.md).
+If the Parlay server is unreachable at runtime, the box stays a plain text input —
+no special action needed. (The remaining `web/local-deps/` symlink,
+`@parlay/client`, is still optional and gitignored; only the vendored
+`parlay-input` voice line-ender ships in every build.)
 
 ## Vite dev server environment variables:
 

@@ -50,9 +50,10 @@ Install dependencies first:
 - the local `web/local-deps/parlay-client` symlink from [web/README.md](../web/README.md)
 
 `@parlay/client` is never installed by `npm ci`; it resolves only through that symlink at build
-time. The symlink therefore decides what ships: build with it and the real parlay client is bundled
-into `web/dist`, so voice-submit works in the artifact; build without it and the specifier is
-externalized, so the artifact permanently falls back to a plain text input. Build release tarballs
+time. (The voice line-ender wrapper `parlay-input` is separate: it is vendored at
+`web/vendor/parlay-input` and installed by `npm ci --prefix web` on every host, so it is
+bundled into `web/dist` unconditionally — no symlink needed. A post-build guard fails the
+build if its marker ever goes missing from the bundle.) Build release tarballs
 and APKs on a host that has the symlink.
 
 ```bash

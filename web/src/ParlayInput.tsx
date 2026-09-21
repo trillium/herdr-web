@@ -11,22 +11,22 @@ import {
   type VoiceEnderAction,
 } from "./voiceEnder";
 
-// `parlay-input` is an intentionally OPTIONAL, LOCAL-ONLY dependency. It
-// resolves only via the gitignored symlink `web/local-deps/parlay-input` (see
-// web/README.md); it is deliberately absent from package.json/package-lock.json
-// so `npm ci` never fetches it from a registry. This guarded dynamic import
-// must stay in a try/catch: externalization is CONDITIONAL on the symlink
-// (vite.config.ts `build.rolldownOptions.external`). With the symlink present
-// the real package is bundled and this import resolves in dev, test, and
-// production; with it absent the specifier is externalized, so the import
-// rejects at runtime and the component degrades to a plain input. Do NOT
-// convert this to a static top-level `import` or add a registry version.
+// `parlay-input` is a real `file:./vendor/parlay-input` dependency (vendored
+// prebuilt copy), so this import resolves in dev, test, and production on
+// every checkout. The guarded dynamic import stays in a try/catch so a broken
+// install degrades to a plain input in dev instead of a blank page — but that
+// fallback must never ship to prod: the post-build
+// `scripts/check-parlay-bundle.mjs` guard fails the build if the wrapper's
+// marker ever goes missing from the bundle again. Do NOT externalize
+// `parlay-input` in vite.config.ts.
 let parlayInputFn: typeof import("parlay-input").parlayInput | null = null;
 
 try {
   ({ parlayInput: parlayInputFn } = await import("parlay-input"));
-} catch {
+} catch (error) {
   // parlay-input unavailable; component will render as a plain input.
+  // This should only happen in dev with a broken install — never in prod.
+  console.warn("parlay-input unavailable, voice input disabled:", error);
 }
 
 export interface ParlayInputProps {
