@@ -3,6 +3,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  formatEnderMatchDetail,
   matchFallbackTail,
   stripRequiredTail,
   VOICE_FALLBACK_ENDER_PHRASES,
@@ -100,5 +101,44 @@ describe("matchFallbackTail (phrase backstop)", () => {
 
   it("requires a non-empty remainder", () => {
     expect(matchFallbackTail("submit")).toBeNull();
+  });
+});
+
+describe("formatEnderMatchDetail (flight-recorder trace)", () => {
+  it("traces tail, remainder, and verdict on one printable line", () => {
+    const detail = formatEnderMatchDetail({
+      source: "requireTail",
+      tail: "send it",
+      remainder: "take the trash out",
+      verdict: "verified",
+    });
+    expect(detail).toBe(
+      'src=requireTail tail="send it" remainder="take the trash out" verdict=verified',
+    );
+    expect(detail).toMatch(/^[ -~]*$/u);
+    expect(detail.length).toBeLessThanOrEqual(120);
+  });
+
+  it("marks a missing remainder stale with a dash", () => {
+    const detail = formatEnderMatchDetail({
+      source: "phrase",
+      tail: "submit",
+      remainder: null,
+      verdict: "stale",
+    });
+    expect(detail).toContain('remainder="-"');
+    expect(detail).toContain("verdict=stale");
+  });
+
+  it("truncates long previews to the tail and strips quotes", () => {
+    const detail = formatEnderMatchDetail({
+      source: "server",
+      tail: `please "run" it ${"x".repeat(200)}`,
+      remainder: `do the thing\nwith newline ${"y".repeat(200)}`,
+      verdict: "verified",
+    });
+    expect(detail).not.toContain('"run"');
+    expect(detail).not.toContain("\n");
+    expect(detail.length).toBeLessThanOrEqual(120);
   });
 });

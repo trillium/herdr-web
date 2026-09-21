@@ -18,6 +18,23 @@
 
 ### Added
 
+- Phone flight recorder (task-gu0ka): the voice loop now beams all 7 signals as
+  client-log beacons to `POST /api/client-log` — bundle hash + voice toggle on
+  page load and toggle change (`page-load` / `voice-toggle`); SSE stream autopsy
+  on every drop (`sse-drop` carries readyState, time-to-drop, error class,
+  messages between drops; `sse-open` carries downtime); eval round trips with
+  status, latency, and answered verb (`eval-ok` / `eval-fail`); ender-match traces
+  with buffer tail, matched phrase, stripped remainder, and re-verify verdict
+  (`ender-match`); submit attempts with bridge answers (`submit-ack`) plus the
+  guard verdict on every drop (`submit-fired` / `submit-dropped`); fallback
+  engaged/stand-down transitions with causes (`fallback-engaged` /
+  `fallback-standdown`); and sampled, size-capped, scrubbed `window.onerror` +
+  `unhandledrejection` capture (`console-error`). The bridge allow-lists the 6
+  new kinds and now sanitizes details server-side (printable ASCII,
+  byte-truncated). `scripts/voice-loop-trip.sh` covers all 14 kinds (including
+  main's `ender-result`) plus shape
+  rejections end to end.
+
 - Wired the voice box to the Parlay eval loop with `parlay-input` (task-ayazf):
   every composer change POSTs `{streamId, version, text, cursor, reason:'input',
   voiceEnabled:true, platform:'herdr'}` to the Parlay server `/api/chat/eval`

@@ -1,12 +1,21 @@
-// Client log pipeline: the phone is a black box. Page-side input-loop events
-// (eval POST status, SSE connected/dropped, fallback engaged, submit
-// fired/dropped with guard reason) are beamed to POST /api/client-log, where
-// the bridge appends them to its file log (`herdr-web.log`).
+// Client log pipeline: the phone is a black box. Page-side voice-loop
+// flight-recorder events are beamed to POST /api/client-log, where the
+// bridge appends them to its file log (`herdr-web.log`). Seven signals:
+// (1) page-load / voice-toggle carry the bundle hash + voice toggle state;
+// (2) sse-open / sse-drop carry a stream autopsy (readyState, time-to-drop,
+// error class, messages received between drops); (3) eval-ok / eval-fail
+// carry status, latency, and answered verb per round trip; (4) ender-match
+// traces the ender tail, matched phrase, stripped remainder, and re-verify
+// verdict; (5) submit-fired / submit-dropped / submit-ack trace the submit
+// attempt (guard verdict on every drop, bridge answer on every post);
+// (6) fallback-engaged / fallback-standdown bracket the local fallback with
+// causes; (7) console-error beams window.onerror + unhandledrejection.
 //
 // Small and sampled: eval-ok is sampled, everything else fires on transition
-// only, identical lines coalesce, and the queue is bounded. No PII: kinds are
-// an allow-list and details carry statuses/guard reasons only — never box
-// text, never URLs, never tokens.
+// only, identical lines coalesce, and the queue is bounded. Ender-match
+// tails and console messages are truncated previews of the user's own box —
+// statuses, guard reasons, and counters everywhere else; never URLs, never
+// tokens.
 //
 // `ender-result` carries the harden-step detail vocabulary (fixed strings
 // only, never buffer text):
@@ -26,9 +35,15 @@ export type ClientLogKind =
   | "sse-open"
   | "sse-drop"
   | "fallback-engaged"
+  | "fallback-standdown"
   | "submit-fired"
   | "submit-dropped"
-  | "ender-result";
+  | "submit-ack"
+  | "ender-match"
+  | "ender-result"
+  | "page-load"
+  | "voice-toggle"
+  | "console-error";
 
 const CLIENT_LOG_KINDS: readonly string[] = [
   "eval-ok",
@@ -36,9 +51,15 @@ const CLIENT_LOG_KINDS: readonly string[] = [
   "sse-open",
   "sse-drop",
   "fallback-engaged",
+  "fallback-standdown",
   "submit-fired",
   "submit-dropped",
+  "submit-ack",
+  "ender-match",
   "ender-result",
+  "page-load",
+  "voice-toggle",
+  "console-error",
 ];
 
 export type ClientLogEvent = {

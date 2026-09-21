@@ -151,12 +151,12 @@ describe("voice-ender bridge submit", () => {
     // Staged synchronously into the live element so the bridge-path submit
     // reads it even before the React re-render flushes.
     expect(commandField(container).value).toBe("dictated command");
-    // Submitted via the live bridge path, never directly into the terminal.
-    expect(fetchImpl).toHaveBeenCalledExactlyOnceWith(
-      "/api/command-submit",
-      expect.objectContaining({ method: "POST" }),
-    );
-    const postedInit = fetchImpl.mock.calls[0]?.[1] as { body: string } | undefined;
+    // Submitted via the live bridge path, never directly into the terminal —
+    // alongside the flight-recorder beacons (ender-match fires first from
+    // onSubmit, submit-ack once the bridge answers).
+    const submitCall = fetchImpl.mock.calls.find(([url]) => url === "/api/command-submit");
+    expect(submitCall?.[1]).toEqual(expect.objectContaining({ method: "POST" }));
+    const postedInit = submitCall?.[1] as { body: string } | undefined;
     if (!postedInit) {
       throw new Error("command-submit was never POSTed");
     }
@@ -170,6 +170,13 @@ describe("voice-ender bridge submit", () => {
 
     await emitSignal({ pane_id: "pane-a", request_id: posted.request_id, ts: Date.now() });
     expect(onSubmitCommand).toHaveBeenCalledExactlyOnceWith("dictated command");
+
+    // Flight-recorder trace: the bridge answer (submit-ack) beams via the
+    // client log (mocked here); the onSubmit payload remainder is traced as
+    // ender-match by ParlayInput, covered in ParlayInput.test.tsx.
+    await act(async () => {});
+    const ackCall = logClientEventMock.mock.calls.find(([kind]) => kind === "submit-ack");
+    expect(ackCall?.[1]).toEqual(expect.stringContaining("status=200"));
   });
 });
 
