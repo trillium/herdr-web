@@ -69,6 +69,7 @@ async function renderInput(props?: {
   onValueChange?: (next: string) => void;
   boxId?: string;
   value?: string;
+  voiceSubmitEnabled?: boolean;
 }) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -86,6 +87,7 @@ async function renderInput(props?: {
         expandingInput={false}
         enterNewline={false}
         controlsScalePercent={100}
+        voiceSubmitEnabled={props?.voiceSubmitEnabled}
         boxId={props?.boxId}
         inputRef={() => {}}
       />,
@@ -249,5 +251,139 @@ describe("ParlayInput when the event stream is blocked", () => {
     const input = container.querySelector("input");
     expect(input).not.toBeNull();
     expect(input?.value).toBe("hello");
+  });
+});
+
+describe("ParlayInput voice-submit toggle", () => {
+  it("mounts with voiceEnabled:true by default (current behavior preserved)", async () => {
+    await renderInput();
+    expect(options().voiceEnabled).toBe(true);
+  });
+
+  it("skips the parlay-input mount entirely when the toggle is off", async () => {
+    const container = await renderInput({ voiceSubmitEnabled: false });
+    // No eval loop: the wrapper is never mounted, so no voice traffic exists.
+    expect(capturedOptions).toBeNull();
+    // The box stays a usable plain input.
+    expect(container.querySelector("input.term-native-input")).not.toBeNull();
+  });
+});
+
+/**
+ * Local submit fallback (task-qj0k1 backstop): fires ONLY while the stream is
+ * flagged down, stands down on recovery or when the server path wins first.
+ */
+describe("ParlayInput local submit fallback", () => {
+  class FakeEventSource extends EventTarget {
+    url: string | URL;
+    constructor(url: string | URL) {
+      super();
+      this.url = url;
+    }
+    close() {}
+  }
+  let sources: FakeEventSource[];
+
+  beforeEach(() => {
+    sources = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.useFakeTimers();
+    mountImpl = (_element, opts) => {
+      const Ctor = (opts as { EventSource?: new (url: string | URL) => EventSource })
+        .EventSource;
+      if (Ctor) {
+        // `new` on the tracked factory yields the listener-carrying instance.
+        sources.push(new Ctor("http://host:4242/api/chat/events?device=d") as unknown as FakeEventSource);
+      }
+      return () => {};
+    };
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    mountImpl = null;
+  });
+
+  function arm(timerId: string, requireTail?: string) {
+    act(() => {
+      options().onAction({
+        verb: "armTimer",
+        args: { timerId, fireInMs: 1000, ...(requireTail ? { requireTail } : {}) },
+      });
+    });
+  }
+
+  it("fires locally on the ender tail while the stream is down", async () => {
+    const onVoiceSubmit = vi.fn();
+    await renderInput({ onVoiceSubmit, value: "take the trash out send it" });
+    expect(sources).toHaveLength(1);
+    // Drop the stream: error with no reopen.
+    act(() => {
+      sources[0]!.dispatchEvent(new Event("error"));
+    });
+    arm("t-1", "send it");
+    await act(async () => {
+      vi.advanceTimersByTime(1000 + 2000 + 500);
+    });
+    expect(onVoiceSubmit).toHaveBeenCalledExactlyOnceWith("take the trash out");
+  });
+
+  it("stands down while the stream is healthy", async () => {
+    const onVoiceSubmit = vi.fn();
+    await renderInput({ onVoiceSubmit, value: "take the trash out send it" });
+    arm("t-1", "send it");
+    await act(async () => {
+      vi.advanceTimersByTime(1000 + 2000 + 500);
+    });
+    expect(onVoiceSubmit).not.toHaveBeenCalled();
+  });
+
+  it("stands down when the stream recovers before the deadline", async () => {
+    const onVoiceSubmit = vi.fn();
+    await renderInput({ onVoiceSubmit, value: "take the trash out send it" });
+    act(() => {
+      sources[0]!.dispatchEvent(new Event("error"));
+    });
+    arm("t-1", "send it");
+    // Recover mid-hold: the server path owns the submit again.
+    act(() => {
+      sources[0]!.dispatchEvent(new Event("open"));
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1000 + 2000 + 500);
+    });
+    expect(onVoiceSubmit).not.toHaveBeenCalled();
+  });
+
+  it("never double-submits when the server path wins first", async () => {
+    const onVoiceSubmit = vi.fn();
+    await renderInput({ onVoiceSubmit, value: "take the trash out send it" });
+    act(() => {
+      sources[0]!.dispatchEvent(new Event("error"));
+    });
+    arm("t-1", "send it");
+    // A late submitNow for the same arming stages stripped text first: the
+    // tail is gone, so the watchdog re-verify fails and it stands down.
+    act(() => {
+      options().onSubmit("take the trash out");
+    });
+    expect(onVoiceSubmit).toHaveBeenCalledExactlyOnceWith("take the trash out");
+    await act(async () => {
+      vi.advanceTimersByTime(1000 + 2000 + 500);
+    });
+    expect(onVoiceSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("stands down when the tail is gone from the live buffer", async () => {
+    const onVoiceSubmit = vi.fn();
+    await renderInput({ onVoiceSubmit, value: "never mind, typing something else" });
+    act(() => {
+      sources[0]!.dispatchEvent(new Event("error"));
+    });
+    arm("t-1", "send it");
+    await act(async () => {
+      vi.advanceTimersByTime(1000 + 2000 + 500);
+    });
+    expect(onVoiceSubmit).not.toHaveBeenCalled();
   });
 });

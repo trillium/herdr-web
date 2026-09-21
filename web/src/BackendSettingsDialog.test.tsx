@@ -183,6 +183,29 @@ describe("BackendSettingsDialog terminal accessibility", () => {
     expect(onChange).toHaveBeenCalledWith(true);
     expect(on?.getAttribute("aria-pressed")).toBe("true");
   });
+
+  it("offers the voice-submit switch in the Terminal area, defaulting on", async () => {
+    const onChange = vi.fn();
+    const { container } = await render(<VoiceSubmitSettingsHarness onChange={onChange} />);
+    const terminalTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+    ).find((button) => button.textContent?.includes("Terminal"));
+    if (!terminalTab) {
+      throw new Error("missing Terminal settings tab");
+    }
+
+    await act(async () => terminalTab.click());
+    const group = requiredElement<HTMLElement>(
+      container,
+      '[role="group"][aria-label="Voice submit"]',
+    );
+    const [off, on] = Array.from(group.querySelectorAll<HTMLButtonElement>("button"));
+    expect(on?.getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => off?.click());
+    expect(onChange).toHaveBeenCalledWith(false);
+    expect(off?.getAttribute("aria-pressed")).toBe("true");
+  });
 });
 
 describe("BackendSettingsDialog build stamp", () => {
@@ -269,6 +292,21 @@ function UploadSettingsHarness({ onChange }: { onChange: (enabled: boolean) => v
   );
 }
 
+function VoiceSubmitSettingsHarness({ onChange }: { onChange: (enabled: boolean) => void }) {
+  const [voiceSubmitEnabled, setVoiceSubmitEnabled] = useState(true);
+  return (
+    <BackendSettingsDialog
+      {...settingsProps()}
+      showMobileTerminalSettings={false}
+      voiceSubmitEnabled={voiceSubmitEnabled}
+      onVoiceSubmitEnabled={(enabled) => {
+        onChange(enabled);
+        setVoiceSubmitEnabled(enabled);
+      }}
+    />
+  );
+}
+
 function ComposerSettingsHarness({
   onComposerChange,
   onEnterNewlineChange,
@@ -347,6 +385,8 @@ function settingsProps() {
     mobileCommandFocusAfterSubmit: false,
     onMobileCommandFocusAfterSubmit: vi.fn(),
     onMobileCommandEnterNewline: vi.fn(),
+    voiceSubmitEnabled: true,
+    onVoiceSubmitEnabled: vi.fn(),
     showMobileKeyboardHideRefit: true,
     mobileKeyboardHideRefit: true,
     onMobileKeyboardHideRefit: vi.fn(),

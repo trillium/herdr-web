@@ -113,6 +113,8 @@ type Props = {
   mobileCommandFocusAfterSubmit: boolean;
   onMobileCommandEnterNewline: (enabled: boolean) => void;
   onMobileCommandFocusAfterSubmit: (enabled: boolean) => void;
+  voiceSubmitEnabled: boolean;
+  onVoiceSubmitEnabled: (enabled: boolean) => void;
   showMobileKeyboardHideRefit: boolean;
   mobileKeyboardHideRefit: boolean;
   onMobileKeyboardHideRefit: (enabled: boolean) => void;
@@ -179,6 +181,8 @@ export function BackendSettingsDialog({
   mobileCommandFocusAfterSubmit,
   onMobileCommandEnterNewline,
   onMobileCommandFocusAfterSubmit,
+  voiceSubmitEnabled,
+  onVoiceSubmitEnabled,
   showMobileKeyboardHideRefit,
   mobileKeyboardHideRefit,
   onMobileKeyboardHideRefit,
@@ -859,6 +863,34 @@ export function BackendSettingsDialog({
                     ) : null}
                   </>
                 ) : null}
+                <div className="settings-label">Voice input</div>
+                <div className="settings-row">
+                  <span title="Dictate a line ending with 'send it' to auto-submit after the server verify hold. Off renders a plain input and sends no eval voice traffic.">
+                    Voice submit
+                  </span>
+                  <div
+                    className="segmented-control"
+                    role="group"
+                    aria-label="Voice submit"
+                  >
+                    <button
+                      type="button"
+                      data-on={!voiceSubmitEnabled}
+                      aria-pressed={!voiceSubmitEnabled}
+                      onClick={() => onVoiceSubmitEnabled(false)}
+                    >
+                      Off
+                    </button>
+                    <button
+                      type="button"
+                      data-on={voiceSubmitEnabled}
+                      aria-pressed={voiceSubmitEnabled}
+                      onClick={() => onVoiceSubmitEnabled(true)}
+                    >
+                      On
+                    </button>
+                  </div>
+                </div>
                 <div className="settings-label">Accessibility</div>
                 <div className="settings-row">
                   <span title="Expose the visible terminal contents as screen-reader text; may add processing during heavy output">

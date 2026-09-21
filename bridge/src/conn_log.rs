@@ -115,6 +115,19 @@ pub(crate) fn ua_family(raw: Option<&str>) -> &'static str {
     "desktop-browser"
 }
 
+/// Sanitize an opaque client token for safe inclusion in an error message:
+/// printable ASCII only, truncated. Used for values the page sent that failed
+/// validation, so the rejection itself can never leak control bytes.
+pub(crate) fn sanitize_client_log_token(value: &str) -> String {
+    truncate_to_bytes(
+        &value
+            .chars()
+            .filter(|ch| ch.is_ascii_graphic() || *ch == ' ')
+            .collect::<String>(),
+        64,
+    )
+}
+
 /// Strip query string and fragment, truncate to a byte boundary. Paths never
 /// carry tokens in this bridge, and query strings are dropped regardless.
 pub(crate) fn sanitize_path(path: &str) -> String {
@@ -123,7 +136,7 @@ pub(crate) fn sanitize_path(path: &str) -> String {
     truncate_to_bytes(bare, MAX_PATH_BYTES)
 }
 
-fn truncate_to_bytes(value: &str, max_bytes: usize) -> String {
+pub(crate) fn truncate_to_bytes(value: &str, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value.to_string();
     }
@@ -401,6 +414,16 @@ mod tests {
         );
         assert_eq!(ua_family(None), "unknown");
         assert_eq!(ua_family(Some("")), "unknown");
+    }
+
+    #[test]
+    fn sanitize_client_log_token_strips_control_bytes() {
+        assert_eq!(sanitize_client_log_token("eval-ok"), "eval-ok");
+        assert_eq!(
+            sanitize_client_log_token("bad\nkind\u{7}here"),
+            "badkindhere"
+        );
+        assert!(sanitize_client_log_token(&"y".repeat(500)).len() <= 64);
     }
 
     #[test]
