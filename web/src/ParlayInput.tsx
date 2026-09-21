@@ -74,6 +74,25 @@ type Countdown = {
   deadlineMs: number;
 };
 
+/** Minimal envelope shape the wrapper hands to `onApply(result, env)`. */
+type VoiceEnderApplyEnv = {
+  actions?: { verb?: string; args?: { requireTail?: string } }[];
+};
+
+/** EventSource readyState at error time -> client-log drop reason. */
+function sseDropReason(readyState?: number): string {
+  switch (readyState) {
+    case 0:
+      return "es-connecting";
+    case 1:
+      return "es-open";
+    case 2:
+      return "es-closed";
+    default:
+      return "es-error";
+  }
+}
+
 export function ParlayInput({
   value,
   onValueChange,
@@ -188,6 +207,8 @@ export function ParlayInput({
 
   // Stage stripped submit text through the live bridge path. Shared by the
   // server submitNow and the local fallback so both face the same guard.
+  // Drops here mirror the decideCommandSubmit vocabulary (not-ready/empty)
+  // so every lost submit carries its reason in the client log.
   const stageAndSubmitRef = useRef<(text: string) => void>(() => {});
   stageAndSubmitRef.current = (text: string) => {
     const target = nodeRef.current;
@@ -198,12 +219,19 @@ export function ParlayInput({
     valueRef.current = text;
     onValueChangeRef.current(text);
     if (disabledRef.current) {
+      logClientEvent("submit-dropped", "not-ready");
       return;
     }
-    if (text.trim()) {
-      onVoiceSubmitRef.current(text);
+    if (!text.trim()) {
+      logClientEvent("submit-dropped", "empty");
+      return;
     }
+    onVoiceSubmitRef.current(text);
   };
+  // Set when the wrapper's submitNow fires onSubmit inside an envelope;
+  // consumed by onApply to record the server tail re-verify outcome. Both
+  // fire synchronously inside one applyEnvelope, so the pairing is exact.
+  const serverSubmitFiredRef = useRef(false);
 
   // The parlay-input eval loop. `parlayInput` owns the whole protocol: every
   // edit debounce-POSTs {streamId, version, text, cursor, reason:'input',
@@ -250,7 +278,7 @@ export function ParlayInput({
     // connection state of its own.
     const TrackedEventSource = makeTrackedEventSource(globalThis.EventSource, health, {
       onOpen: () => logClientEvent("sse-open"),
-      onError: () => logClientEvent("sse-drop"),
+      onError: (readyState) => logClientEvent("sse-drop", sseDropReason(readyState)),
     });
     try {
       return mount(node, {
@@ -266,6 +294,7 @@ export function ParlayInput({
           // DOM first so the bridge-path submit below always reads the live
           // buffer even if the React re-render has not flushed yet — then
           // submit the remainder via the live bridge path.
+          serverSubmitFiredRef.current = true;
           clearFallbackTimer();
           stageAndSubmitRef.current(text);
         },
@@ -282,6 +311,7 @@ export function ParlayInput({
               typeof action.args?.requireTail === "string"
                 ? action.args.requireTail
                 : undefined;
+            logClientEvent("ender-result", requireTail ? "armed-require-tail" : "armed");
             clearFallbackTimer();
             armedFallbackRef.current = { timerId: armed.timerId, requireTail };
             const armedEntry = armedFallbackRef.current;
@@ -295,6 +325,7 @@ export function ParlayInput({
               // ...and the stream is still flagged down (recovered => the
               // server path owns the submit again).
               if (!healthRef.current?.isDown()) {
+                logClientEvent("ender-result", "fallback-stood-down");
                 return;
               }
               // Re-verify the tail against the LIVE buffer: a server submit
@@ -303,11 +334,12 @@ export function ParlayInput({
               // double-submit with the server path.
               const live = nodeRef.current?.value ?? valueRef.current;
               const stripped = matchFallbackTail(live, armedEntry.requireTail);
-              logClientEvent("fallback-engaged", armedEntry.requireTail ? "tail" : "phrase");
               if (!stripped) {
+                logClientEvent("ender-result", "fallback-no-tail");
                 setCountdown(null);
                 return;
               }
+              logClientEvent("fallback-engaged", armedEntry.requireTail ? "tail" : "phrase");
               if (disabledRef.current) {
                 logClientEvent("submit-dropped", "disabled");
                 return;
@@ -319,6 +351,7 @@ export function ParlayInput({
           if (isEnderCancel(action)) {
             clearFallbackTimer();
             setCountdown(null);
+            logClientEvent("ender-result", "cancelled");
             return;
           }
           if (action.verb === NEXT_TAB_VERB) {
@@ -332,7 +365,7 @@ export function ParlayInput({
           // Host-unknown verbs (pickers, navigation, speech, hints): ignore,
           // never wedge the input.
         },
-        onApply: () => {
+        onApply: (result: string, env?: VoiceEnderApplyEnv) => {
           // Server-applied buffer verbs (setText/clear/replaceRange) write the
           // DOM node directly; mirror the live value back into React state so
           // the controlled input never desyncs from its element.
@@ -341,6 +374,40 @@ export function ParlayInput({
             valueRef.current = live;
             onValueChangeRef.current(live);
           }
+          // Ender-match detail for the client log: the wrapper reports no
+          // connection state and no match verdicts of its own, so reconstruct
+          // them here from the apply outcome. submitNow envelopes resolve
+          // against the flag onSubmit set synchronously above (tail-ok vs
+          // only-ender vs moved-past-the-tail); every other non-applied
+          // outcome logs verbatim. Plain applied envelopes stay silent.
+          const fired = serverSubmitFiredRef.current;
+          serverSubmitFiredRef.current = false;
+          const verbs = env?.actions?.map((entry) => entry?.verb) ?? [];
+          if (verbs.includes("submitNow")) {
+            const submitNow = env?.actions?.find((entry) => entry?.verb === "submitNow");
+            const hasTail =
+              typeof submitNow?.args?.requireTail === "string" &&
+              submitNow.args.requireTail.length > 0;
+            if (result !== "applied") {
+              logClientEvent("ender-result", "submitnow-tail-stale");
+            } else if (fired && hasTail) {
+              logClientEvent("ender-result", "submitnow-tail-ok");
+            } else if (fired) {
+              logClientEvent("ender-result", "submitnow-applied");
+            } else {
+              logClientEvent("ender-result", "submitnow-only-ender");
+            }
+            return;
+          }
+          if (result === "applied") {
+            return;
+          }
+          if (result === "resync" || result === "rejected-protocol") {
+            logClientEvent("ender-result", result);
+            return;
+          }
+          const verb = verbs.find((entry) => typeof entry === "string" && entry.length > 0);
+          logClientEvent("ender-result", `${verb ?? "action"}-${result}`);
         },
         onError: (error: unknown) => {
           console.debug("parlay voice input error:", error);

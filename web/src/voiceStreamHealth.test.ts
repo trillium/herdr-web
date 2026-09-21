@@ -26,6 +26,7 @@ describe("VoiceStreamHealth", () => {
 
 class FakeEventSource extends EventTarget {
   url: string | URL;
+  readyState = 0;
   constructor(url: string | URL) {
     super();
     this.url = url;
@@ -47,9 +48,12 @@ describe("makeTrackedEventSource", () => {
     expect((source as unknown as FakeEventSource).url).toBe(
       "http://x:4242/api/chat/events?device=d",
     );
+    (source as unknown as FakeEventSource).readyState = 2;
     source.dispatchEvent(new Event("error"));
     expect(health.isDown()).toBe(true);
     expect(hooks.onError).toHaveBeenCalledTimes(1);
+    // The drop reason (EventSource readyState) rides along for the log.
+    expect(hooks.onError).toHaveBeenCalledWith(2);
     source.dispatchEvent(new Event("input_action"));
     expect(health.isDown()).toBe(false);
     expect(hooks.onMessage).toHaveBeenCalledTimes(1);

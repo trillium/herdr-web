@@ -23,11 +23,18 @@ type ParlayInputOptions = {
   streamId: string;
   voiceEnabled: boolean;
   fetch: (url: string, init?: unknown) => Promise<unknown>;
+  EventSource?: new (url: string | URL) => EventSource;
   onSubmit: (text: string) => void;
   onAction: (action: { verb: string; args?: Record<string, unknown> }) => void;
-  onApply: () => void;
+  onApply: (result: string, env?: unknown) => void;
   onError: (error: unknown) => void;
 };
+
+// The client log is a beacon, not behavior: observe it, never hit the network.
+const { logClientEventMock } = vi.hoisted(() => ({ logClientEventMock: vi.fn() }));
+vi.mock("./clientLog", () => ({
+  logClientEvent: (...args: unknown[]) => logClientEventMock(...args),
+}));
 let capturedOptions: ParlayInputOptions | null = null;
 let mountImpl: ((element: Element, options: ParlayInputOptions) => () => void) | null = null;
 vi.mock("parlay-input", () => ({
@@ -49,6 +56,7 @@ beforeEach(() => {
     true;
   capturedOptions = null;
   mountImpl = null;
+  logClientEventMock.mockClear();
 });
 
 afterEach(async () => {
@@ -276,6 +284,7 @@ describe("ParlayInput voice-submit toggle", () => {
 describe("ParlayInput local submit fallback", () => {
   class FakeEventSource extends EventTarget {
     url: string | URL;
+    readyState = 2;
     constructor(url: string | URL) {
       super();
       this.url = url;
@@ -385,5 +394,136 @@ describe("ParlayInput local submit fallback", () => {
       vi.advanceTimersByTime(1000 + 2000 + 500);
     });
     expect(onVoiceSubmit).not.toHaveBeenCalled();
+  });
+
+  it("engages on an eval kill, not just an SSE error", async () => {
+    const fetchImpl = vi.fn(async (): Promise<unknown> => {
+      throw new Error("parlay down");
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    const onVoiceSubmit = vi.fn();
+    await renderInput({ onVoiceSubmit, value: "take the trash out send it" });
+    // Kill the server path through the eval POST (SSE untouched).
+    await act(async () => {
+      await options()
+        .fetch("http://host:4242/api/chat/eval", { method: "POST", body: "{}" })
+        .catch(() => {});
+    });
+    arm("t-1", "send it");
+    await act(async () => {
+      vi.advanceTimersByTime(1000 + 2000 + 500);
+    });
+    expect(onVoiceSubmit).toHaveBeenCalledExactlyOnceWith("take the trash out");
+    expect(logClientEventMock).toHaveBeenCalledWith("fallback-engaged", "tail");
+  });
+
+  it("stands down when eval recovers before the deadline", async () => {
+    let evalUp = false;
+    const fetchImpl = vi.fn(async (): Promise<unknown> => {
+      if (!evalUp) {
+        throw new Error("parlay down");
+      }
+      return new Response("{}");
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    const onVoiceSubmit = vi.fn();
+    await renderInput({ onVoiceSubmit, value: "take the trash out send it" });
+    await act(async () => {
+      await options()
+        .fetch("http://host:4242/api/chat/eval", { method: "POST", body: "{}" })
+        .catch(() => {});
+    });
+    arm("t-1", "send it");
+    // The eval path comes back mid-hold: the server owns the submit again.
+    evalUp = true;
+    await act(async () => {
+      await options().fetch("http://host:4242/api/chat/eval", {
+        method: "POST",
+        body: "{}",
+      });
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1000 + 2000 + 500);
+    });
+    expect(onVoiceSubmit).not.toHaveBeenCalled();
+    expect(logClientEventMock).toHaveBeenCalledWith(
+      "ender-result",
+      "fallback-stood-down",
+    );
+  });
+});
+
+describe("ParlayInput client-log detail", () => {
+  it("logs the sse-drop reason from the EventSource readyState", async () => {
+    class ClosedSource extends EventTarget {
+      readyState = 2;
+      constructor(public url: string | URL) {
+        super();
+      }
+      close() {}
+    }
+    vi.stubGlobal("EventSource", ClosedSource);
+    const created: EventSource[] = [];
+    mountImpl = (_element, opts) => {
+      if (opts.EventSource) {
+        created.push(new opts.EventSource("http://host:4242/api/chat/events?device=d"));
+      }
+      return () => {};
+    };
+    await renderInput();
+    expect(created).toHaveLength(1);
+    act(() => {
+      created[0]!.dispatchEvent(new Event("error"));
+    });
+    // readyState 2 (closed/gave-up) rides along as the drop reason.
+    expect(logClientEventMock).toHaveBeenCalledWith("sse-drop", "es-closed");
+  });
+
+  it("logs advisory arm/cancel verbs with their tail shape", async () => {
+    await renderInput();
+    act(() => {
+      options().onAction({ verb: "armTimer", args: { timerId: "t-1", requireTail: "send it" } });
+    });
+    expect(logClientEventMock).toHaveBeenCalledWith("ender-result", "armed-require-tail");
+    act(() => {
+      options().onAction({ verb: "armTimer", args: { timerId: "t-2" } });
+    });
+    expect(logClientEventMock).toHaveBeenCalledWith("ender-result", "armed");
+    act(() => {
+      options().onAction({ verb: "cancelTimer", args: { timerId: "t-2" } });
+    });
+    expect(logClientEventMock).toHaveBeenCalledWith("ender-result", "cancelled");
+  });
+
+  it("logs the server tail re-verify outcome per submitNow envelope", async () => {
+    const onVoiceSubmit = vi.fn();
+    await renderInput({ onVoiceSubmit, value: "take the trash out send it" });
+    const submitNowTail = {
+      actions: [{ verb: "submitNow", args: { requireTail: "send it" } }],
+    };
+    // Tail verified: onSubmit fired inside the envelope, then applied.
+    act(() => {
+      options().onSubmit("take the trash out");
+    });
+    act(() => {
+      options().onApply("applied", submitNowTail);
+    });
+    expect(logClientEventMock).toHaveBeenCalledWith("ender-result", "submitnow-tail-ok");
+    // Buffer moved past the tail: the wrapper rejects the envelope.
+    act(() => {
+      options().onApply("rejected-stale", submitNowTail);
+    });
+    expect(logClientEventMock).toHaveBeenCalledWith("ender-result", "submitnow-tail-stale");
+    // Buffer was only the ender: applied with nothing to submit.
+    act(() => {
+      options().onApply("applied", submitNowTail);
+    });
+    expect(logClientEventMock).toHaveBeenCalledWith("ender-result", "submitnow-only-ender");
+    // Quiet paths stay quiet: plain applied envelopes never log.
+    logClientEventMock.mockClear();
+    act(() => {
+      options().onApply("applied", { actions: [{ verb: "setText" }] });
+    });
+    expect(logClientEventMock).not.toHaveBeenCalled();
   });
 });
