@@ -171,7 +171,7 @@
   reports no connection state) and stands down the moment the stream recovers, the
   countdown resolves, or the tail leaves the live buffer — and the tail re-verify
   against the live buffer means it can never double-submit with the server path.
-- Hardened the herdr-web half of the voice loop: beacon detail, tolerant tails, and a
+- Hardened the herdr-web half of the voice loop (#53): beacon detail, tolerant tails, and a
   fallback proof. The client log gains an `ender-result` kind (advisory arm/cancel,
   server tail re-verify outcomes, fallback no-tail/stand-down), `sse-drop` carries the
   EventSource readyState at error time, stale `submit-dropped` verdicts carry the
