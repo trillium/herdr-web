@@ -171,20 +171,12 @@ describe("voice-ender bridge submit", () => {
     await emitSignal({ pane_id: "pane-a", request_id: posted.request_id, ts: Date.now() });
     expect(onSubmitCommand).toHaveBeenCalledExactlyOnceWith("dictated command");
 
-    // Flight-recorder trace: the ender-match (stripped remainder + verdict)
-    // and the bridge answer (submit-ack) both beamed to /api/client-log.
+    // Flight-recorder trace: the bridge answer (submit-ack) beams via the
+    // client log (mocked here); the onSubmit payload remainder is traced as
+    // ender-match by ParlayInput, covered in ParlayInput.test.tsx.
     await act(async () => {});
-    const beaconKinds = fetchImpl.mock.calls
-      .filter(([url]) => url === "/api/client-log")
-      .flatMap(([, init]) =>
-        (
-          JSON.parse((init as unknown as { body: string }).body) as {
-            events: { kind: string; detail?: string }[];
-          }
-        ).events.map((event) => event.kind),
-      );
-    expect(beaconKinds).toContain("ender-match");
-    expect(beaconKinds).toContain("submit-ack");
+    const ackCall = logClientEventMock.mock.calls.find(([kind]) => kind === "submit-ack");
+    expect(ackCall?.[1]).toEqual(expect.stringContaining("status=200"));
   });
 });
 

@@ -475,8 +475,11 @@ describe("ParlayInput client-log detail", () => {
     act(() => {
       created[0]!.dispatchEvent(new Event("error"));
     });
-    // readyState 2 (closed/gave-up) rides along as the drop reason.
-    expect(logClientEventMock).toHaveBeenCalledWith("sse-drop", "es-closed");
+    // readyState 2 (closed/gave-up) rides along as the drop reason, after
+    // the stream autopsy (readyState, time-to-drop, messages between drops).
+    const dropCall = logClientEventMock.mock.calls.find(([kind]) => kind === "sse-drop");
+    expect(dropCall?.[1]).toEqual(expect.stringContaining("rs=2"));
+    expect(dropCall?.[1]).toEqual(expect.stringContaining("es-closed"));
   });
 
   it("logs advisory arm/cancel verbs with their tail shape", async () => {

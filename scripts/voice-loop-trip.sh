@@ -16,7 +16,7 @@
 #                  web/src/commandSubmitEvent.test.tsx).
 #   client-log     every flight-recorder beacon kind validates end to end
 #                  (received=14, including main's `ender-result`) and malformed
-#                  empty events, oversized batch).
+#                  shapes 400 (unknown kind, empty events, oversized batch).
 #
 # Usage: scripts/voice-loop-trip.sh [bridge-base-url]   (default http://localhost:8787)
 # Exit 0 = trip complete; 1 = any leg failed.
