@@ -1932,16 +1932,36 @@ export function TerminalCommandControls({
     if (node) {
       node.value = text;
     }
+    // Submit attempt trace (task-gu0ka signal 5): the onSubmit payload
+    // (length — the stripped text itself is traced as ender-match by
+    // ParlayInput) plus the bridge answer on every POST. The guard verdict
+    // on every drop is logged by the broadcast listener below
+    // (submit-fired / submit-dropped with the decideCommandSubmit reason).
+    const requestId = randomId();
+    const payloadLen = text.length;
     void postVoiceCommandSubmit(fetch, {
       paneId,
       terminalId: terminalId ?? null,
-      requestId: randomId(),
+      requestId,
       source: VOICE_ENDER_SOURCE,
-    }).catch((error: unknown) => {
-      // Leave the stripped text in the box so a manual Send still works.
-      logClientEvent("submit-dropped", "bridge-post-failed");
-      console.debug("voice-ender bridge submit failed:", error);
-    });
+    })
+      .then((answer) => {
+        logClientEvent(
+          "submit-ack",
+          `req=${requestId} status=200 echo=${answer.request_id === requestId ? "ok" : "mismatch"} len=${payloadLen}`,
+        );
+      })
+      .catch((error: unknown) => {
+        // Leave the stripped text in the box so a manual Send still works.
+        const digits =
+          error instanceof Error ? error.message.replace(/[^0-9]/g, "").slice(0, 3) : "";
+        logClientEvent(
+          "submit-ack",
+          `req=${requestId} status=${digits || "network"} len=${payloadLen}`,
+        );
+        logClientEvent("submit-dropped", "bridge-post-failed");
+        console.debug("voice-ender bridge submit failed:", error);
+      });
   };
   const onCommandCompositionStart = () => {
     composingRef.current = true;

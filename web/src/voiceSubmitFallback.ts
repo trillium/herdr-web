@@ -93,6 +93,38 @@ export function stripRequiredTail(liveValue: string, requireTail: string): strin
   return stripTrailingTail(liveValue, splitTailWords(requireTail));
 }
 
+/** Re-verify outcome for the flight-recorder ender-match trace. */
+export type EnderMatchVerdict = "verified" | "stale" | "empty";
+
+/** Where the matched tail came from: server-armed, local phrase, or wrapper. */
+export type EnderMatchSource = "requireTail" | "phrase" | "server";
+
+const MAX_TRACE_PREVIEW_CHARS = 30;
+
+function tracePreview(value: string): string {
+  const flat = value.replace(/\s+/g, " ").trim();
+  const tail = flat.length > MAX_TRACE_PREVIEW_CHARS
+    ? flat.slice(-MAX_TRACE_PREVIEW_CHARS)
+    : flat;
+  return tail.replace(/"/g, "'");
+}
+
+/**
+ * Flight-recorder ender-match trace (task-gu0ka signal 4): buffer tail,
+ * matched phrase, stripped remainder, and re-verify verdict in one
+ * printable-ASCII line sized for the 120-char client log cap. Previews are
+ * truncated tails of the user's own voice box — the diagnostic the phone
+ * loop needs when a submit silently never fires.
+ */
+export function formatEnderMatchDetail(input: {
+  source: EnderMatchSource;
+  tail: string;
+  remainder: string | null;
+  verdict: EnderMatchVerdict;
+}): string {
+  const remainder = input.remainder === null ? "-" : tracePreview(input.remainder);
+  return `src=${input.source} tail="${tracePreview(input.tail)}" remainder="${remainder}" verdict=${input.verdict}`;
+}
 function stripFallbackPhrase(liveValue: string): string | null {
   for (const phrase of VOICE_FALLBACK_ENDER_PHRASES) {
     const stripped = stripTrailingTail(liveValue, splitTailWords(phrase));

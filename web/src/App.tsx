@@ -75,6 +75,8 @@ import type { ActivityLogEntry } from "./activity";
 import { BackendSettingsDialog } from "./BackendSettingsDialog";
 import { useBridge } from "./bridge";
 import type { BridgeId, BridgeRuntime } from "./bridge";
+import { WEB_BUILD_STAMP } from "./buildStamp";
+import { logClientEvent } from "./clientLog";
 import { createCommands, createdPaneId } from "./commands";
 import type { LaunchSpec, PaneFocusDirection, SplitDirection } from "./commands";
 import { isConnectionResultCurrent } from "./connectionState";
@@ -1958,6 +1960,27 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
   useEffect(() => {
     applyTheme(document, theme);
   }, [theme]);
+
+  // Flight recorder signal 1 (task-gu0ka): bundle hash + voice toggle
+  // state, reported once on page load and on every toggle change, so a
+  // phone log always answers "which bundle, was voice on?". The toggle
+  // effect skips its first run — page-load already reported that state.
+  const voiceToggleLoggedRef = useRef(false);
+  useEffect(() => {
+    logClientEvent(
+      "page-load",
+      `sha=${WEB_BUILD_STAMP.sha} voice=${voiceSubmitEnabled ? "on" : "off"}`,
+    );
+    // Page-load only; StrictMode double-invokes effects in dev, and the
+    // beacon coalesces the identical duplicate.
+  }, []);
+  useEffect(() => {
+    if (!voiceToggleLoggedRef.current) {
+      voiceToggleLoggedRef.current = true;
+      return;
+    }
+    logClientEvent("voice-toggle", `voice=${voiceSubmitEnabled ? "on" : "off"}`);
+  }, [voiceSubmitEnabled]);
 
   useEffect(() => {
     if (!mobileKeyboardHideRefit || !showMobileKeyboardHideRefit) {

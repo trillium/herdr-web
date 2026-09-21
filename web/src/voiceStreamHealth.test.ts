@@ -3,6 +3,8 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import {
+  extractEvalVerbs,
+  formatEvalTrip,
   makeTrackedEventSource,
   observeEvalFetch,
   VoiceStreamHealth,
@@ -83,9 +85,15 @@ describe("observeEvalFetch", () => {
 
     const seen = await wrapped("http://h:4242/api/chat/eval", { method: "POST", body: "{}" });
     expect(seen).toBe(ok);
-    expect(hooks.onEvalOk).toHaveBeenCalledWith(200);
+    expect(hooks.onEvalOk).toHaveBeenCalledWith(
+      200,
+      expect.objectContaining({ status: "200", verbs: [] }),
+    );
     await wrapped("http://h:4242/api/chat/eval", { method: "POST", body: "{}" });
-    expect(hooks.onEvalFail).toHaveBeenCalledWith("403");
+    expect(hooks.onEvalFail).toHaveBeenCalledWith(
+      "403",
+      expect.objectContaining({ status: "403" }),
+    );
     // Non-eval traffic is untouched and unobserved.
     await wrapped("http://h:4242/api/chat/send", { method: "POST", body: "{}" });
     expect(hooks.onEvalOk).toHaveBeenCalledTimes(1);
@@ -94,18 +102,97 @@ describe("observeEvalFetch", () => {
   });
 
   it("reports network throws as failures and rethrows", async () => {
-    const fetchImpl = vi.fn(
-      async (url: string, init?: { method?: string; body?: string }): Promise<Response> => {
-        void url;
-        void init;
-        throw new TypeError("blocked");
-      },
-    );
+    type EvalFetch = (
+      url: string,
+      init?: { method?: string; body?: string },
+    ) => Promise<Response>;
+    const fetchImpl = vi.fn<EvalFetch>(async () => {
+      throw new TypeError("blocked");
+    });
     const hooks = { onEvalOk: vi.fn(), onEvalFail: vi.fn() };
     const wrapped = observeEvalFetch(fetchImpl, hooks);
     await expect(
       wrapped("http://h:4242/api/chat/eval", { method: "POST", body: "{}" }),
     ).rejects.toThrow("blocked");
-    expect(hooks.onEvalFail).toHaveBeenCalledWith("network");
+    expect(hooks.onEvalFail).toHaveBeenCalledWith(
+      "network",
+      expect.objectContaining({ status: "network", verbs: [] }),
+    );
+  });
+
+  it("reports latency and answered verbs per round trip", async () => {
+    const body = JSON.stringify({ actions: [{ verb: "submitNow" }, { verb: "armTimer" }] });
+    type EvalFetch = (
+      url: string,
+      init?: { method?: string; body?: string },
+    ) => Promise<Response>;
+    const fetchImpl = vi.fn<EvalFetch>(async () => new Response(body, { status: 200 }));
+    const hooks = { onEvalOk: vi.fn(), onEvalFail: vi.fn() };
+    const wrapped = observeEvalFetch(fetchImpl, hooks);
+    const seen = await wrapped("http://h:4242/api/chat/eval", {
+      method: "POST",
+      body: "{}",
+    });
+    // The original response is untouched and still readable.
+    expect(await seen.json()).toEqual({
+      actions: [{ verb: "submitNow" }, { verb: "armTimer" }],
+    });
+    expect(hooks.onEvalOk).toHaveBeenCalledWith(
+      200,
+      expect.objectContaining({ status: "200", verbs: ["submitNow", "armTimer"] }),
+    );
+    const trip = (hooks.onEvalOk.mock.calls[0] as unknown as [number, { latencyMs: number }])[1];
+    expect(trip.latencyMs).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("stream autopsy", () => {
+  it("reports readyState, time-to-drop, and messages between drops", () => {
+    let now = 1_000_000;
+    const health = new VoiceStreamHealth(() => now);
+    health.recordSseOpen();
+    now += 5_000;
+    health.recordSseMessage();
+    health.recordSseMessage();
+    now += 500;
+    const autopsy = health.autopsyOnDrop(2);
+    expect(autopsy).toBe("rs=2 age=5500ms msgs=2 err=error-event");
+    expect(autopsy).toMatch(/^[ -~]*$/u);
+  });
+
+  it("reports downtime since the last drop on reopen", () => {
+    let now = 1_000_000;
+    const health = new VoiceStreamHealth(() => now);
+    expect(health.downtimeMs()).toBe(0);
+    health.recordSseError();
+    now += 3_000;
+    expect(health.downtimeMs()).toBe(3000);
+  });
+});
+
+describe("extractEvalVerbs / formatEvalTrip", () => {
+  it("pulls verbs from actions arrays and top-level verbs", () => {
+    expect(extractEvalVerbs({ actions: [{ verb: "submitNow" }] })).toEqual(["submitNow"]);
+    expect(extractEvalVerbs({ verb: "armTimer" })).toEqual(["armTimer"]);
+    expect(extractEvalVerbs({})).toEqual([]);
+    expect(extractEvalVerbs(null)).toEqual([]);
+    expect(extractEvalVerbs({ actions: "nope" })).toEqual([]);
+  });
+
+  it("rejects verb-shaped injections and caps the count", () => {
+    expect(extractEvalVerbs({ actions: [{ verb: "do evil();" }] })).toEqual([]);
+    expect(
+      extractEvalVerbs({
+        actions: [{ verb: "a" }, { verb: "b" }, { verb: "c" }, { verb: "d" }],
+      }),
+    ).toEqual(["a", "b", "c"]);
+  });
+
+  it("formats one printable round-trip line", () => {
+    const line = formatEvalTrip({ status: "200", latencyMs: 42.7, verbs: ["submitNow"] });
+    expect(line).toBe("status=200 latency=43ms verbs=submitNow");
+    expect(formatEvalTrip({ status: "network", latencyMs: 5, verbs: [] })).toContain(
+      "verbs=none",
+    );
   });
 });

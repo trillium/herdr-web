@@ -151,12 +151,12 @@ describe("voice-ender bridge submit", () => {
     // Staged synchronously into the live element so the bridge-path submit
     // reads it even before the React re-render flushes.
     expect(commandField(container).value).toBe("dictated command");
-    // Submitted via the live bridge path, never directly into the terminal.
-    expect(fetchImpl).toHaveBeenCalledExactlyOnceWith(
-      "/api/command-submit",
-      expect.objectContaining({ method: "POST" }),
-    );
-    const postedInit = fetchImpl.mock.calls[0]?.[1] as { body: string } | undefined;
+    // Submitted via the live bridge path, never directly into the terminal —
+    // alongside the flight-recorder beacons (ender-match fires first from
+    // onSubmit, submit-ack once the bridge answers).
+    const submitCall = fetchImpl.mock.calls.find(([url]) => url === "/api/command-submit");
+    expect(submitCall?.[1]).toEqual(expect.objectContaining({ method: "POST" }));
+    const postedInit = submitCall?.[1] as { body: string } | undefined;
     if (!postedInit) {
       throw new Error("command-submit was never POSTed");
     }
@@ -170,6 +170,21 @@ describe("voice-ender bridge submit", () => {
 
     await emitSignal({ pane_id: "pane-a", request_id: posted.request_id, ts: Date.now() });
     expect(onSubmitCommand).toHaveBeenCalledExactlyOnceWith("dictated command");
+
+    // Flight-recorder trace: the ender-match (stripped remainder + verdict)
+    // and the bridge answer (submit-ack) both beamed to /api/client-log.
+    await act(async () => {});
+    const beaconKinds = fetchImpl.mock.calls
+      .filter(([url]) => url === "/api/client-log")
+      .flatMap(([, init]) =>
+        (
+          JSON.parse((init as unknown as { body: string }).body) as {
+            events: { kind: string; detail?: string }[];
+          }
+        ).events.map((event) => event.kind),
+      );
+    expect(beaconKinds).toContain("ender-match");
+    expect(beaconKinds).toContain("submit-ack");
   });
 });
 

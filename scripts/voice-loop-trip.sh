@@ -14,6 +14,9 @@
 #                  as the request_id in the 200 response. Subscribed composers submit
 #                  their drafts off that event (client side covered by
 #                  web/src/commandSubmitEvent.test.tsx).
+#   client-log     every flight-recorder beacon kind validates end to end
+#                  (received=14, including main's `ender-result`) and malformed
+#                  empty events, oversized batch).
 #
 # Usage: scripts/voice-loop-trip.sh [bridge-base-url]   (default http://localhost:8787)
 # Exit 0 = trip complete; 1 = any leg failed.
@@ -92,6 +95,50 @@ if [ -n "$pane_id" ]; then
     fi
   fi
 fi
+
+# --- client-log flight-recorder beacons (task-gu0ka): every beacon kind
+# the page can send must validate end to end, and malformed shapes must 400.
+# (Brief names this leg voice-submit-e2e.sh; the repo's e2e trip script is
+# this file, so beacon coverage lives here.)
+t0=$(now_ms)
+kinds="eval-ok eval-fail sse-open sse-drop fallback-engaged fallback-standdown submit-fired submit-dropped submit-ack ender-match ender-result page-load voice-toggle console-error"
+events_body=""
+for kind in $kinds; do
+  events_body="$events_body$(jq -n --arg k "$kind" '{kind:$k,detail:("trip-probe "+$k)}')\n"
+done
+client_log_payload=$(printf '%b' "$events_body" | jq -s '{events:.}')
+client_log_response=$(curl -fsS -m 5 -X POST -H 'Content-Type: application/json' -d "$client_log_payload" \
+  "$BASE/api/client-log" 2>/dev/null)
+t1=$(now_ms)
+if [ -z "$client_log_response" ]; then
+  echo "  FAIL client-log: endpoint unreachable in $(leg_ms "$t0" "$t1")ms"
+  fail=1
+else
+  received=$(printf '%s' "$client_log_response" | jq -r '.received // empty' 2>/dev/null)
+  if [ "$received" = "14" ]; then
+    echo "  PASS client-log ($(leg_ms "$t0" "$t1")ms): all 14 flight-recorder kinds accepted (received=14)"
+  else
+    echo "  FAIL client-log ($(leg_ms "$t0" "$t1")ms): expected received=14, got ${received:-none} ($client_log_response)"
+    fail=1
+  fi
+fi
+
+# Malformed shapes must 400: unknown kind, empty events, oversized batch.
+check_client_log_reject() {
+  local name="$1" payload="$2"
+  local code
+  code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "$payload" "$BASE/api/client-log" 2>/dev/null)
+  if [ "$code" = "400" ]; then
+    echo "  PASS client-log/$name: rejected with 400"
+  else
+    echo "  FAIL client-log/$name: expected HTTP 400, got ${code:-unreachable}"
+    fail=1
+  fi
+}
+check_client_log_reject "unknown-kind" '{"events":[{"kind":"nope-not-a-kind"}]}'
+check_client_log_reject "empty-events" '{"events":[]}'
+too_many=$(jq -n '[range(33) | {kind:"sse-drop"}] | {events:.}')
+check_client_log_reject "too-many-events" "$too_many"
 
 if [ "$fail" -eq 0 ]; then
   echo "TRIP OK: box-event in, submit-command out"

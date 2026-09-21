@@ -4,10 +4,12 @@ import { logClientEvent } from "./clientLog";
 import { autosizeMobileCommandTextarea } from "./mobileCommandTextarea";
 import { randomId } from "./randomId";
 import {
+  formatEnderMatchDetail,
   matchFallbackTail,
   VOICE_FALLBACK_GRACE_MS,
 } from "./voiceSubmitFallback";
 import {
+  formatEvalTrip,
   makeTrackedEventSource,
   observeEvalFetch,
   VoiceStreamHealth,
@@ -259,26 +261,38 @@ export function ParlayInput({
     if (!health) {
       return;
     }
-    // Eval POST outcomes flip stream health and feed the client log; the
-    // platform tag the engine needs is injected underneath.
+    // Eval POST outcomes flip stream health and feed the client log;
+    // round trips carry status, latency, and answered verb per batch, and
+    // drops carry a stream autopsy (readyState, time-to-drop, error class,
+    // messages between drops). The platform tag the engine needs is
+    // injected underneath.
     const observedFetch = observeEvalFetch(withHerdrPlatform(fetch.bind(window)), {
-      onEvalOk: () => {
+      onEvalOk: (status, trip) => {
         health.recordEvalOk();
-        logClientEvent("eval-ok");
+        logClientEvent("eval-ok", trip ? formatEvalTrip(trip) : String(status));
       },
-      onEvalFail: (status) => {
+      onEvalFail: (status, trip) => {
         if (health.recordEvalFail()) {
           logClientEvent("sse-drop", `eval-${status}`);
         }
-        logClientEvent("eval-fail", status);
+        logClientEvent("eval-fail", trip ? formatEvalTrip(trip) : status);
       },
     });
     // The wrapper opens its owned SSE through this constructor, so open and
     // error transitions are visible here even though the wrapper reports no
     // connection state of its own.
     const TrackedEventSource = makeTrackedEventSource(globalThis.EventSource, health, {
-      onOpen: () => logClientEvent("sse-open"),
-      onError: (readyState) => logClientEvent("sse-drop", sseDropReason(readyState)),
+      onOpen: () => {
+        const downtime = health.downtimeMs();
+        logClientEvent("sse-open", downtime > 0 ? `downtime=${downtime}ms` : "open");
+      },
+      onError: (readyState) => {
+        // One line, both drop vocabularies: the stream autopsy (readyState,
+        // time-to-drop, error class, messages between drops) plus the
+        // harden-step reason (es-connecting/es-open/es-closed/es-error).
+        const autopsy = health.autopsyOnDrop(readyState ?? -1);
+        logClientEvent("sse-drop", `${autopsy} ${sseDropReason(readyState)}`);
+      },
     });
     try {
       return mount(node, {
@@ -295,6 +309,16 @@ export function ParlayInput({
           // buffer even if the React re-render has not flushed yet — then
           // submit the remainder via the live bridge path.
           serverSubmitFiredRef.current = true;
+          const armed = armedFallbackRef.current;
+          logClientEvent(
+            "ender-match",
+            formatEnderMatchDetail({
+              source: armed?.requireTail ? "requireTail" : "server",
+              tail: armed?.requireTail ?? "",
+              remainder: text,
+              verdict: text.trim() ? "verified" : "empty",
+            }),
+          );
           clearFallbackTimer();
           stageAndSubmitRef.current(text);
         },
@@ -319,6 +343,7 @@ export function ParlayInput({
               fallbackTimerRef.current = null;
               // Stand down unless THIS arming is still unresolved...
               if (armedFallbackRef.current !== armedEntry) {
+                logClientEvent("fallback-standdown", "cause=superseded");
                 return;
               }
               armedFallbackRef.current = null;
@@ -326,6 +351,7 @@ export function ParlayInput({
               // server path owns the submit again).
               if (!healthRef.current?.isDown()) {
                 logClientEvent("ender-result", "fallback-stood-down");
+                logClientEvent("fallback-standdown", "cause=recovered");
                 return;
               }
               // Re-verify the tail against the LIVE buffer: a server submit
@@ -333,15 +359,37 @@ export function ParlayInput({
               // the box, so this fails and the fallback stands down — never
               // double-submit with the server path.
               const live = nodeRef.current?.value ?? valueRef.current;
+              const tailSource = armedEntry.requireTail ? "requireTail" : "phrase";
+              const tail = armedEntry.requireTail ?? live;
               const stripped = matchFallbackTail(live, armedEntry.requireTail);
               if (!stripped) {
                 logClientEvent("ender-result", "fallback-no-tail");
+                logClientEvent(
+                  "ender-match",
+                  formatEnderMatchDetail({
+                    source: tailSource,
+                    tail,
+                    remainder: null,
+                    verdict: "stale",
+                  }),
+                );
+                logClientEvent("fallback-standdown", "cause=tail-gone");
                 setCountdown(null);
                 return;
               }
+              logClientEvent(
+                "ender-match",
+                formatEnderMatchDetail({
+                  source: tailSource,
+                  tail,
+                  remainder: stripped,
+                  verdict: "verified",
+                }),
+              );
               logClientEvent("fallback-engaged", armedEntry.requireTail ? "tail" : "phrase");
               if (disabledRef.current) {
                 logClientEvent("submit-dropped", "disabled");
+                logClientEvent("fallback-standdown", "cause=disabled");
                 return;
               }
               stageAndSubmitRef.current(stripped);
@@ -350,6 +398,7 @@ export function ParlayInput({
           }
           if (isEnderCancel(action)) {
             clearFallbackTimer();
+            logClientEvent("fallback-standdown", "cause=cancel");
             setCountdown(null);
             logClientEvent("ender-result", "cancelled");
             return;

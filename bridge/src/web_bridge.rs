@@ -3413,10 +3413,14 @@ async fn command_submit_handler(
 }
 
 /// Client log pipeline: the phone is a black box, so the page beams small
-/// input-loop events (eval POST status, SSE connected/dropped, fallback
-/// engaged, submit fired/dropped with guard reason) here and the bridge
-/// appends them to its file log (`herdr-web.log`). Kinds are an allow-list
-/// and details are truncated; the page never sends box text, URLs, or tokens.
+/// voice-loop flight-recorder events (task-gu0ka: page-load bundle hash +
+/// voice toggle, SSE stream autopsy, eval round trips with latency + verbs,
+/// ender-match traces, submit attempts with bridge answers + guard verdicts,
+/// fallback engaged/stand-down with causes, sampled console errors) here and
+/// the bridge appends them to its file log (`herdr-web.log`). Kinds are an
+/// allow-list and details are sanitized server-side (printable ASCII,
+/// byte-truncated) so a hostile client cannot smuggle control bytes or
+/// multi-line injections into the log; the page never sends URLs or tokens.
 /// Local-only like every other mutation route (never proxied to remotes).
 pub(crate) const CLIENT_LOG_TARGET: &str = "herdr_web_bridge::client";
 const MAX_CLIENT_LOG_EVENTS: usize = 32;
@@ -3427,9 +3431,15 @@ const ALLOWED_CLIENT_LOG_KINDS: &[&str] = &[
     "sse-open",
     "sse-drop",
     "fallback-engaged",
+    "fallback-standdown",
     "submit-fired",
     "submit-dropped",
+    "submit-ack",
+    "ender-match",
     "ender-result",
+    "page-load",
+    "voice-toggle",
+    "console-error",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -3457,7 +3467,19 @@ fn validate_client_log_event(
     let detail = event
         .detail
         .as_deref()
-        .map(|value| crate::conn_log::truncate_to_bytes(value, MAX_CLIENT_LOG_DETAIL_BYTES))
+        // Server-side shape validation: a hostile client can bypass the
+        // page's sanitize, so strip everything but single-line printable
+        // ASCII here before the byte-truncate — control bytes and newlines
+        // must never reach the file log.
+        .map(|value| {
+            crate::conn_log::truncate_to_bytes(
+                &value
+                    .chars()
+                    .filter(|ch| ch.is_ascii_graphic() || *ch == ' ')
+                    .collect::<String>(),
+                MAX_CLIENT_LOG_DETAIL_BYTES,
+            )
+        })
         .filter(|value| !value.is_empty());
     Ok((event.kind.clone(), detail))
 }
@@ -8081,6 +8103,50 @@ mod tests {
             assert_eq!(kind, "ender-result");
             assert_eq!(seen.as_deref(), Some(detail));
         }
+    }
+
+    #[test]
+    fn client_log_accepts_all_flight_recorder_kinds() {
+        // task-gu0ka: every beacon kind the page can send must validate.
+        for kind in ALLOWED_CLIENT_LOG_KINDS {
+            let (seen, _) = validate_client_log_event(&ClientLogEvent {
+                kind: kind.to_string(),
+                detail: Some("probe".to_string()),
+            })
+            .unwrap_or_else(|_| panic!("flight-recorder kind validates: {kind}"));
+            assert_eq!(&seen, kind);
+        }
+        assert!(ALLOWED_CLIENT_LOG_KINDS.contains(&"page-load"));
+        assert!(ALLOWED_CLIENT_LOG_KINDS.contains(&"voice-toggle"));
+        assert!(ALLOWED_CLIENT_LOG_KINDS.contains(&"ender-match"));
+        assert!(ALLOWED_CLIENT_LOG_KINDS.contains(&"ender-result"));
+        assert!(ALLOWED_CLIENT_LOG_KINDS.contains(&"submit-ack"));
+        assert!(ALLOWED_CLIENT_LOG_KINDS.contains(&"fallback-standdown"));
+        assert!(ALLOWED_CLIENT_LOG_KINDS.contains(&"console-error"));
+    }
+
+    #[test]
+    fn client_log_strips_control_bytes_from_detail_server_side() {
+        // A hostile client can bypass the page sanitize; the bridge must
+        // still keep control bytes and newlines out of the file log.
+        let (_, detail) = validate_client_log_event(&ClientLogEvent {
+            kind: "console-error".to_string(),
+            detail: Some("src=onerror msg=\"boom\nINJECTED: yes\u{7}tab\there\"".to_string()),
+        })
+        .expect("console-error validates");
+        let detail = detail.expect("detail survives sanitization");
+        assert!(!detail.contains('\n'));
+        assert!(!detail.contains('\t'));
+        assert!(!detail.contains('\u{7}'));
+        assert!(detail.contains("boom"));
+        assert!(detail.len() <= MAX_CLIENT_LOG_DETAIL_BYTES);
+
+        let (_, empty) = validate_client_log_event(&ClientLogEvent {
+            kind: "sse-drop".to_string(),
+            detail: Some("\n\u{0}\t".to_string()),
+        })
+        .expect("all-control detail validates");
+        assert!(empty.is_none());
     }
 
     #[test]

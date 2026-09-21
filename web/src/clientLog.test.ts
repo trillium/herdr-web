@@ -97,6 +97,43 @@ describe("ClientLogBeacon", () => {
     expect(detail).toContain("599-");
   });
 
+  it("accepts every flight-recorder beacon kind", async () => {
+    const { beacon, fetchImpl, advance } = makeBeacon();
+    const kinds = [
+      "eval-ok",
+      "eval-fail",
+      "sse-open",
+      "sse-drop",
+      "fallback-engaged",
+      "fallback-standdown",
+      "submit-fired",
+      "submit-dropped",
+      "submit-ack",
+      "ender-match",
+      "ender-result",
+      "page-load",
+      "voice-toggle",
+      "console-error",
+    ] as const;
+    for (const kind of kinds) {
+      // Bypass the eval-ok sampler so every kind posts exactly once.
+      for (let i = 0; i < 20; i++) {
+        beacon.log(kind, `probe-${kind}`);
+      }
+      advance(11_000);
+    }
+    await Promise.resolve();
+    const posted = (fetchImpl.mock.calls as unknown as [string, Record<string, unknown>][]).flatMap(
+      ([, init]) =>
+        (JSON.parse(init["body"] as string) as {
+          events: { kind: string }[];
+        }).events,
+    );
+    for (const kind of kinds) {
+      expect(posted.map((event) => event.kind)).toContain(kind);
+    }
+  });
+
   it("never throws when the network fails", async () => {
     const failing = new ClientLogBeacon(async () => {
       throw new Error("down");
