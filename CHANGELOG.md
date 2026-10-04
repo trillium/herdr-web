@@ -19,7 +19,9 @@
 ### Added
 
 - Follow-on reply send option in the command composer (desktop and mobile): a new button next to
-  Send submits the composer text with Pi's follow-on key (Alt-Enter) instead of a plain Enter steer.
+  Send submits the composer text with Pi's follow-on key (Alt-Enter) instead of a plain Enter steer;
+  with an empty composer it sends Alt-Enter alone, like Send does for plain Enter
+  ([#55](https://github.com/trillium/herdr-web/pull/55)).
 
 - Phone flight recorder (task-gu0ka): the voice loop now beams all 7 signals as
   client-log beacons to `POST /api/client-log` — bundle hash + voice toggle on

@@ -177,10 +177,9 @@ describe("TerminalCommandControls", () => {
     const button = container.querySelector<HTMLButtonElement>(
       'button[aria-label="Send as follow-on reply"]',
     );
-    expect(button?.disabled).toBe(true);
+    expect(button?.disabled).toBe(false);
 
     await setCommandValue(commandField(container), "queue this");
-    expect(button?.disabled).toBe(false);
     await act(async () => {
       button?.click();
     });
@@ -188,6 +187,16 @@ describe("TerminalCommandControls", () => {
     expect(onFollowOnCommand).toHaveBeenCalledExactlyOnceWith("queue this");
     expect(onSubmitCommand).not.toHaveBeenCalled();
     expect(commandField(container).value).toBe("");
+  });
+
+  it("sends Alt-Enter alone from an empty composer", async () => {
+    const { container, onFollowOnCommand } = await renderControls(true);
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Send as follow-on reply"]')
+        ?.click();
+    });
+    expect(onFollowOnCommand).toHaveBeenCalledExactlyOnceWith("");
   });
 
   it("continues submitting an empty command as Enter", async () => {

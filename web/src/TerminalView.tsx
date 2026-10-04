@@ -1864,7 +1864,7 @@ export function TerminalCommandControls({
     onSubmitCommand(command);
   };
   const followOn = () => {
-    if (!onFollowOnCommand || value.length === 0) {
+    if (!onFollowOnCommand) {
       return;
     }
     focusAfterSubmitRef.current = !mobileControls || mobileFocusAfterSubmit;
@@ -2245,9 +2245,9 @@ export function TerminalCommandControls({
           <button
             className="term-send term-follow-on-command"
             type="button"
-            disabled={disabled || value.length === 0}
+            disabled={disabled}
             aria-label="Send as follow-on reply"
-            title="Follow-on reply (Alt-Enter)"
+            title={value.length > 0 ? "Follow-on reply (Alt-Enter)" : "Alt-Enter"}
             onClick={followOn}
           >
             <CornerDownRight size={20} />
