@@ -228,6 +228,9 @@
 
 ### Removed
 
+- Removed the C-c and C-d buttons from the terminal quick-key strip (Tab stays)
+  ([#55](https://github.com/trillium/herdr-web/pull/55)).
+
 ## [0.6.0] - 2026-09-07
 
 ### Breaking Changes

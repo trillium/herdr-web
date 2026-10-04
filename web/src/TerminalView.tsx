@@ -2295,8 +2295,6 @@ type TerminalKey = {
 
 const COMMON_KEYS: TerminalKey[] = [
   { label: "Tab", data: "\t" },
-  { label: "C-c", data: "\x03" },
-  { label: "C-d", data: "\x04" },
 ];
 
 const ESC_KEY: TerminalKey = { label: "Esc", data: "\x1B" };

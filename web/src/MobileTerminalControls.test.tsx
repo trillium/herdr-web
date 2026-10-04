@@ -189,6 +189,16 @@ describe("TerminalCommandControls", () => {
     expect(commandField(container).value).toBe("");
   });
 
+  it("keeps Tab but hides C-c and C-d in the quick key strip", async () => {
+    const { container } = await renderControls(true);
+    const labels = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".term-key-group .term-key"),
+    ).map((button) => button.textContent);
+    expect(labels).toContain("Tab");
+    expect(labels).not.toContain("C-c");
+    expect(labels).not.toContain("C-d");
+  });
+
   it("sends Alt-Enter alone from an empty composer", async () => {
     const { container, onFollowOnCommand } = await renderControls(true);
     await act(async () => {
