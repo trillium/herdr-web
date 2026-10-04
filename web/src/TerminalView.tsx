@@ -7,6 +7,7 @@ import {
   Keyboard,
   Link,
   Paperclip,
+  CornerDownRight,
   Send,
   Smartphone,
   SkipForward,
@@ -1672,6 +1673,7 @@ export function TerminalView({
           onUpload={openFilePicker}
           onStageCommand={(command) => enqueueTerminalInput([command])}
           onSubmitCommand={(command) => enqueueTerminalInput([command, "\r"])}
+          onFollowOnCommand={(command) => enqueueTerminalInput([command, FOLLOW_ON_KEY])}
           onNextAgentPane={onNextAgentPane}
           pinned={pinned}
           onPaneCycle={onPaneCycle}
@@ -1778,6 +1780,7 @@ export function TerminalCommandControls({
   onUpload,
   onStageCommand,
   onSubmitCommand,
+  onFollowOnCommand,
   onNextAgentPane,
   onPrevAgentPane,
   pinned,
@@ -1807,6 +1810,8 @@ export function TerminalCommandControls({
   onUpload: () => void;
   onStageCommand: (command: string) => void;
   onSubmitCommand: (command: string) => void;
+  /** Submit the composer text as a follow-on (Pi's Alt-Enter) instead of a plain Enter steer. */
+  onFollowOnCommand?: (command: string) => void;
   onNextAgentPane: () => void;
   onPrevAgentPane: () => void;
   pinned: boolean;
@@ -1857,6 +1862,16 @@ export function TerminalCommandControls({
     const command = commandInputRef.current?.value ?? value;
     clearCommandInput();
     onSubmitCommand(command);
+  };
+  const followOn = () => {
+    if (!onFollowOnCommand) {
+      return;
+    }
+    focusAfterSubmitRef.current = !mobileControls || mobileFocusAfterSubmit;
+    // Read the live node for the same race-free reason as submit().
+    const command = commandInputRef.current?.value ?? value;
+    clearCommandInput();
+    onFollowOnCommand(command);
   };
   const stage = () => {
     if (value.length === 0) {
@@ -2226,6 +2241,18 @@ export function TerminalCommandControls({
         >
           <TextCursorInput size={20} />
         </button>
+        {onFollowOnCommand ? (
+          <button
+            className="term-send term-follow-on-command"
+            type="button"
+            disabled={disabled}
+            aria-label="Send as follow-on reply"
+            title={value.length > 0 ? "Follow-on reply (Alt-Enter)" : "Alt-Enter"}
+            onClick={followOn}
+          >
+            <CornerDownRight size={20} />
+          </button>
+        ) : null}
         <button
           className="term-send"
           type="submit"
@@ -2257,6 +2284,9 @@ export function isCommandComposerSubmitShortcut(
     : event.ctrlKey && !event.metaKey;
 }
 
+/** Pi's follow-on key: Alt-Enter (ESC then CR) queues the text as a follow-on rather than steering. */
+export const FOLLOW_ON_KEY = "\x1b\r";
+
 type TerminalKey = {
   label: string;
   data: string;
@@ -2265,8 +2295,6 @@ type TerminalKey = {
 
 const COMMON_KEYS: TerminalKey[] = [
   { label: "Tab", data: "\t" },
-  { label: "C-c", data: "\x03" },
-  { label: "C-d", data: "\x04" },
 ];
 
 const ESC_KEY: TerminalKey = { label: "Esc", data: "\x1B" };

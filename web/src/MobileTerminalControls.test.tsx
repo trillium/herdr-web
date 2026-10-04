@@ -172,6 +172,43 @@ describe("TerminalCommandControls", () => {
     });
   }
 
+  it("sends the composer text as a follow-on reply without a plain submit", async () => {
+    const { container, onFollowOnCommand, onSubmitCommand } = await renderControls(true);
+    const button = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Send as follow-on reply"]',
+    );
+    expect(button?.disabled).toBe(false);
+
+    await setCommandValue(commandField(container), "queue this");
+    await act(async () => {
+      button?.click();
+    });
+
+    expect(onFollowOnCommand).toHaveBeenCalledExactlyOnceWith("queue this");
+    expect(onSubmitCommand).not.toHaveBeenCalled();
+    expect(commandField(container).value).toBe("");
+  });
+
+  it("keeps Tab but hides C-c and C-d in the quick key strip", async () => {
+    const { container } = await renderControls(true);
+    const labels = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".term-key-group .term-key"),
+    ).map((button) => button.textContent);
+    expect(labels).toContain("Tab");
+    expect(labels).not.toContain("C-c");
+    expect(labels).not.toContain("C-d");
+  });
+
+  it("sends Alt-Enter alone from an empty composer", async () => {
+    const { container, onFollowOnCommand } = await renderControls(true);
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Send as follow-on reply"]')
+        ?.click();
+    });
+    expect(onFollowOnCommand).toHaveBeenCalledExactlyOnceWith("");
+  });
+
   it("continues submitting an empty command as Enter", async () => {
     const { container, onSubmitCommand } = await renderControls(false);
 
@@ -350,6 +387,7 @@ async function renderControls(
   const commandInputRef = createRef<HTMLInputElement | HTMLTextAreaElement>();
   const onSubmitCommand = vi.fn();
   const onStageCommand = vi.fn();
+  const onFollowOnCommand = vi.fn();
   const onTerminalFocus = vi.fn();
 
   const drafts = createCommandDraftStore();
@@ -385,6 +423,7 @@ async function renderControls(
             onUpload={vi.fn()}
             onStageCommand={onStageCommand}
             onSubmitCommand={onSubmitCommand}
+            onFollowOnCommand={onFollowOnCommand}
           /> : null}
         </CommandDraftContext.Provider>,
       );
@@ -398,6 +437,7 @@ async function renderControls(
     commandInputRef,
     container,
     onStageCommand,
+    onFollowOnCommand,
     onSubmitCommand,
     onTerminalFocus,
   };
