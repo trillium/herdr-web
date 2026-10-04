@@ -2234,7 +2234,8 @@ button {
   color: var(--blue);
 }
 
-.term-stage-command {
+.term-stage-command,
+.term-follow-on-command {
   background: var(--surface0);
   color: var(--subtext1);
 }

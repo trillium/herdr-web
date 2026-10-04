@@ -18,6 +18,9 @@
 
 ### Added
 
+- Follow-on reply send option in the command composer (desktop and mobile): a new button next to
+  Send submits the composer text with Pi's follow-on key (Alt-Enter) instead of a plain Enter steer.
+
 - Phone flight recorder (task-gu0ka): the voice loop now beams all 7 signals as
   client-log beacons to `POST /api/client-log` — bundle hash + voice toggle on
   page load and toggle change (`page-load` / `voice-toggle`); SSE stream autopsy

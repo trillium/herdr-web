@@ -172,6 +172,24 @@ describe("TerminalCommandControls", () => {
     });
   }
 
+  it("sends the composer text as a follow-on reply without a plain submit", async () => {
+    const { container, onFollowOnCommand, onSubmitCommand } = await renderControls(true);
+    const button = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Send as follow-on reply"]',
+    );
+    expect(button?.disabled).toBe(true);
+
+    await setCommandValue(commandField(container), "queue this");
+    expect(button?.disabled).toBe(false);
+    await act(async () => {
+      button?.click();
+    });
+
+    expect(onFollowOnCommand).toHaveBeenCalledExactlyOnceWith("queue this");
+    expect(onSubmitCommand).not.toHaveBeenCalled();
+    expect(commandField(container).value).toBe("");
+  });
+
   it("continues submitting an empty command as Enter", async () => {
     const { container, onSubmitCommand } = await renderControls(false);
 
@@ -350,6 +368,7 @@ async function renderControls(
   const commandInputRef = createRef<HTMLInputElement | HTMLTextAreaElement>();
   const onSubmitCommand = vi.fn();
   const onStageCommand = vi.fn();
+  const onFollowOnCommand = vi.fn();
   const onTerminalFocus = vi.fn();
 
   const drafts = createCommandDraftStore();
@@ -385,6 +404,7 @@ async function renderControls(
             onUpload={vi.fn()}
             onStageCommand={onStageCommand}
             onSubmitCommand={onSubmitCommand}
+            onFollowOnCommand={onFollowOnCommand}
           /> : null}
         </CommandDraftContext.Provider>,
       );
@@ -398,6 +418,7 @@ async function renderControls(
     commandInputRef,
     container,
     onStageCommand,
+    onFollowOnCommand,
     onSubmitCommand,
     onTerminalFocus,
   };
