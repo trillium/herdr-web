@@ -2089,6 +2089,32 @@ button {
   gap: var(--mobile-control-gap);
 }
 
+/* Keep the desktop composer as one row. The phone breakpoint turns these
+   structural wrappers into a toolbar plus a full-width input row. */
+.term-composer-toolbar,
+.term-composer-input {
+  display: contents;
+}
+
+/* Desktop still flattens the wrappers via display: contents, but the DOM order
+   is toolbar-before-input (the phone needs the toolbar above the input), so the
+   row would render [keys][Stage][Follow-on][Send][input]. Restore the previous
+   desktop item order: [keys][input][voice-countdown][Stage][Follow-on][Send]. */
+@media (min-width: 821px) {
+  .term-input-row .term-key {
+    order: 1;
+  }
+  .term-input-row .term-native-input {
+    order: 2;
+  }
+  .term-input-row .term-voice-countdown {
+    order: 3;
+  }
+  .term-input-row .term-send {
+    order: 4;
+  }
+}
+
 .term-key-strip[hidden] {
   display: none;
 }
@@ -2245,13 +2271,59 @@ button {
    send target so the composer fits a phone viewport and thumb input. */
 @media (max-width: 820px) {
   .terminal-mobile-controls {
-    --mobile-key-height: calc(36px * var(--mobile-controls-scale));
-    --mobile-key-min-width: calc(40px * var(--mobile-controls-scale));
-    --mobile-key-icon-width: calc(40px * var(--mobile-controls-scale));
-    --mobile-input-row-height: calc(44px * var(--mobile-controls-scale));
-    --mobile-send-width: calc(48px * var(--mobile-controls-scale));
+    /* Every composer control remains a 44px target even when the Display
+       control-scale preference is reduced. */
+    --mobile-key-height: max(44px, calc(36px * var(--mobile-controls-scale)));
+    --mobile-key-min-width: max(44px, calc(40px * var(--mobile-controls-scale)));
+    --mobile-key-icon-width: max(44px, calc(40px * var(--mobile-controls-scale)));
+    --mobile-input-row-height: max(44px, calc(44px * var(--mobile-controls-scale)));
+    --mobile-send-width: max(44px, calc(48px * var(--mobile-controls-scale)));
     padding: calc(8px * var(--mobile-controls-scale)) max(10px, env(safe-area-inset-right))
       calc(9px * var(--mobile-controls-scale)) max(10px, env(safe-area-inset-left));
+  }
+
+  .term-key-panel {
+    grid-template-columns: repeat(5, minmax(44px, 1fr));
+  }
+
+  .term-input-row {
+    height: auto;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .term-composer-toolbar {
+    display: flex;
+    width: 100%;
+    gap: var(--mobile-control-gap);
+  }
+
+  .term-composer-toolbar .term-key,
+  .term-composer-toolbar .term-send {
+    width: auto;
+    min-width: 44px;
+    flex: 1 1 0;
+  }
+
+  .term-composer-input {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--mobile-control-gap);
+  }
+
+  .term-composer-input .term-native-input {
+    width: 100%;
+    flex: 0 0 auto;
+    /* Keep the non-expanding single-line input a 44px target too: flex-basis
+       auto plus the intrinsic ~18-20px input height would otherwise collapse
+       it below the row's 44px floor. */
+    min-height: var(--mobile-input-row-height);
+  }
+
+  .term-native-input[data-expanding="true"] {
+    max-height: min(34vh, calc(var(--mobile-input-row-height) * 4));
   }
 }
 
