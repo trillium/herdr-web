@@ -2096,6 +2096,25 @@ button {
   display: contents;
 }
 
+/* Desktop still flattens the wrappers via display: contents, but the DOM order
+   is toolbar-before-input (the phone needs the toolbar above the input), so the
+   row would render [keys][Stage][Follow-on][Send][input]. Restore the previous
+   desktop item order: [keys][input][voice-countdown][Stage][Follow-on][Send]. */
+@media (min-width: 821px) {
+  .term-input-row .term-key {
+    order: 1;
+  }
+  .term-input-row .term-native-input {
+    order: 2;
+  }
+  .term-input-row .term-voice-countdown {
+    order: 3;
+  }
+  .term-input-row .term-send {
+    order: 4;
+  }
+}
+
 .term-key-strip[hidden] {
   display: none;
 }
@@ -2297,6 +2316,10 @@ button {
   .term-composer-input .term-native-input {
     width: 100%;
     flex: 0 0 auto;
+    /* Keep the non-expanding single-line input a 44px target too: flex-basis
+       auto plus the intrinsic ~18-20px input height would otherwise collapse
+       it below the row's 44px floor. */
+    min-height: var(--mobile-input-row-height);
   }
 
   .term-native-input[data-expanding="true"] {
