@@ -39,11 +39,19 @@ describe("composer mobile sizing", () => {
     );
     expect(small.length).toBeGreaterThan(0);
     const rules = small.join("\n");
-    // Taller input row and roomier keys/send target for a phone viewport.
-    expect(rules).toMatch(/--mobile-input-row-height:\s*calc\(44px/);
-    expect(rules).toMatch(/--mobile-key-height:\s*calc\(36px/);
-    expect(rules).toMatch(/--mobile-send-width:\s*calc\(48px/);
+    // Phone controls retain a 44px target despite a reduced user scale.
+    expect(rules).toMatch(/--mobile-input-row-height:\s*max\(44px/);
+    expect(rules).toMatch(/--mobile-key-height:\s*max\(44px/);
+    expect(rules).toMatch(/--mobile-send-width:\s*max\(44px/);
     expect(rules).toMatch(/padding:/);
+  });
+
+  it("lays out a toolbar above a full-width input and caps auto-growth near four lines", () => {
+    const small = mediaBlocks("@media (max-width: 820px)").join("\n");
+    expect(small).toMatch(/\.term-input-row\s*\{[^}]*flex-direction:\s*column/);
+    expect(small).toMatch(/\.term-composer-toolbar\s*\{[^}]*width:\s*100%/);
+    expect(small).toMatch(/\.term-composer-input\s*\{[^}]*width:\s*100%/);
+    expect(small).toMatch(/\.term-native-input\[data-expanding="true"\]\s*\{[^}]*\*\s*4/);
   });
 
   it("sizes touch glyphs for thumbs while fitting the button grid", () => {

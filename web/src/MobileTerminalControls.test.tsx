@@ -1,4 +1,5 @@
 import { CommandDraftContext, createCommandDraftStore } from "./commandDrafts";
+import { DEFAULT_MOBILE_COMPACT_CONTROLS } from "./mobileTerminalPrefs";
 /**
  * @vitest-environment jsdom
  */
@@ -199,6 +200,38 @@ describe("TerminalCommandControls", () => {
     expect(labels).not.toContain("C-d");
   });
 
+  it("keeps terminal keys collapsed until the toolbar keyboard toggle opens them", async () => {
+    expect(DEFAULT_MOBILE_COMPACT_CONTROLS).toBe(true);
+    const { container, onCompactControlsChange } = await renderControls(true, {
+      compactControls: true,
+    });
+    const toolbar = container.querySelector<HTMLElement>(".term-composer-toolbar");
+    const inputRow = container.querySelector<HTMLElement>(".term-composer-input");
+    const toggle = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Show terminal keys"]',
+    );
+
+    expect(container.querySelector(".term-key-strip")).toBeNull();
+    expect(toolbar?.nextElementSibling).toBe(inputRow);
+    expect(commandField(container)).toBeInstanceOf(HTMLTextAreaElement);
+    expect(commandField(container).getAttribute("rows")).toBe("1");
+
+    await act(async () => toggle?.click());
+    expect(onCompactControlsChange).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it("puts the full-width multiline input below one composer toolbar row", async () => {
+    const { container } = await renderControls(true);
+    const form = container.querySelector(".term-input-row");
+    const toolbar = container.querySelector(".term-composer-toolbar");
+    const inputRow = container.querySelector(".term-composer-input");
+
+    expect(form?.children).toHaveLength(2);
+    expect(form?.firstElementChild).toBe(toolbar);
+    expect(form?.lastElementChild).toBe(inputRow);
+    expect(inputRow?.querySelector(".term-native-input")).toBe(commandField(container));
+  });
+
   it("sends Alt-Enter alone from an empty composer", async () => {
     const { container, onFollowOnCommand } = await renderControls(true);
     await act(async () => {
@@ -378,7 +411,12 @@ describe("TerminalCommandControls", () => {
 
 async function renderControls(
   expandingInput: boolean,
-  options: { enterNewline?: boolean; mobileControls?: boolean; mobileFocusAfterSubmit?: boolean } = {},
+  options: {
+    enterNewline?: boolean;
+    mobileControls?: boolean;
+    mobileFocusAfterSubmit?: boolean;
+    compactControls?: boolean;
+  } = {},
 ) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -389,6 +427,7 @@ async function renderControls(
   const onStageCommand = vi.fn();
   const onFollowOnCommand = vi.fn();
   const onTerminalFocus = vi.fn();
+  const onCompactControlsChange = vi.fn();
 
   const drafts = createCommandDraftStore();
   const renderPane = async (bridgeId = "bridge-a", paneId = "pane-a", visible = true, disabled = false) => {
@@ -407,8 +446,8 @@ async function renderControls(
             mobileControls={options.mobileControls ?? true}
             mobileFocusAfterSubmit={options.mobileFocusAfterSubmit}
             controlsScalePercent={100}
-            compactControls={false}
-            onCompactControlsChange={vi.fn()}
+            compactControls={options.compactControls ?? false}
+            onCompactControlsChange={onCompactControlsChange}
             mobileModeActive={false}
             onToggleMobileMode={vi.fn()}
             onNextAgentPane={vi.fn()}
@@ -440,6 +479,7 @@ async function renderControls(
     onFollowOnCommand,
     onSubmitCommand,
     onTerminalFocus,
+    onCompactControlsChange,
   };
 }
 
