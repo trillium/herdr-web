@@ -126,7 +126,6 @@ export function ParlayInput({
   const [parlayStreamBlocked, setParlayStreamBlocked] = useState(false);
   // Advisory voice-ender countdown (armTimer): rendered only, never submits.
   const [countdown, setCountdown] = useState<Countdown | null>(null);
-  const [nowMs, setNowMs] = useState(0);
   // Stream health (task-qj0k1): the wrapper owns its SSE and reports no
   // connection state, so track it from the outside — the local fallback may
   // fire ONLY while this is flagged down.
@@ -195,14 +194,10 @@ export function ParlayInput({
     if (!countdown) {
       return;
     }
-    setNowMs(Date.now());
     const timer = setInterval(() => {
-      const now = Date.now();
-      if (now - countdown.deadlineMs > 500) {
+      if (Date.now() - countdown.deadlineMs > 500) {
         setCountdown(null);
-        return;
       }
-      setNowMs(now);
     }, 100);
     return () => clearInterval(timer);
   }, [countdown]);
@@ -476,13 +471,10 @@ export function ParlayInput({
   // no mount, no eval voice traffic.
   const client = voiceSubmitEnabled && !parlayStreamBlocked ? parlayInputFn : null;
 
-  const remainingMs = countdown ? Math.max(0, countdown.deadlineMs - nowMs) : 0;
-  const countdownHint =
-    countdown && client ? (
-      <span className="term-voice-countdown" role="status" aria-live="polite">
-        Sending in {Math.max(1, Math.ceil(remainingMs / 1000))}s…
-      </span>
-    ) : null;
+  // Countdown is a purely visual cue (background tint on the input) so that
+  // showing/clearing it can never shift layout.
+  const sending = Boolean(countdown && client);
+  const voiceInputClass = sending ? "term-native-input term-native-input--sending mono" : "term-native-input mono";
 
   const handleChange = (next: string) => {
     // Report to React only — `parlay-input` listens for the same DOM input
@@ -538,7 +530,7 @@ export function ParlayInput({
       <>
         <textarea
           ref={setCommandInputNode}
-          className="term-native-input mono"
+          className={voiceInputClass}
           rows={1}
           data-expanding="true"
           autoCapitalize="none"
@@ -553,7 +545,6 @@ export function ParlayInput({
           onCompositionStart={onCompositionStart}
           onCompositionEnd={onCompositionEnd}
         />
-        {countdownHint}
       </>
     );
   }
@@ -561,7 +552,7 @@ export function ParlayInput({
     <>
       <input
         ref={setCommandInputNode}
-        className="term-native-input mono"
+        className={voiceInputClass}
         type="text"
         autoCapitalize="none"
         autoComplete="off"
@@ -574,7 +565,6 @@ export function ParlayInput({
         onCompositionStart={onCompositionStart}
         onCompositionEnd={onCompositionEnd}
       />
-      {countdownHint}
     </>
   );
 }
