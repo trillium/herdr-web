@@ -163,7 +163,7 @@ describe("ParlayInput parlay-input wiring", () => {
 });
 
 describe("ParlayInput advisory countdown", () => {
-  it("renders armTimer as a countdown and never submits locally", async () => {
+  it("tints the input on armTimer and never submits locally", async () => {
     const fetchImpl = vi.fn(async () => new Response("{}"));
     vi.stubGlobal("fetch", fetchImpl);
     const container = await renderInput();
@@ -172,9 +172,10 @@ describe("ParlayInput advisory countdown", () => {
       options().onAction({ verb: "armTimer", args: { timerId: "t-1", fireInMs: 1000 } });
     });
 
-    const status = container.querySelector('[role="status"]');
-    expect(status).not.toBeNull();
-    expect(status?.textContent).toMatch(/sending in \d+s…/iu);
+    // Visual cue only: a class on the input, no text/DOM added to the layout.
+    expect(container.querySelector("input.term-native-input--sending")).not.toBeNull();
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(container.textContent).not.toMatch(/sending in/iu);
     // Advisory only: no submission may leave this box for an armTimer.
     expect(fetchImpl).not.toHaveBeenCalledWith("/api/command-submit", expect.anything());
   });
@@ -185,12 +186,12 @@ describe("ParlayInput advisory countdown", () => {
     act(() => {
       options().onAction({ verb: "armTimer", args: { timerId: "t-1", fireInMs: 1000 } });
     });
-    expect(container.querySelector('[role="status"]')).not.toBeNull();
+    expect(container.querySelector(".term-native-input--sending")).not.toBeNull();
 
     act(() => {
       options().onAction({ verb: "cancelTimer", args: { timerId: "t-1" } });
     });
-    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(container.querySelector(".term-native-input--sending")).toBeNull();
   });
 
   it("ignores host-unknown verbs without wedging the input", async () => {
@@ -201,7 +202,7 @@ describe("ParlayInput advisory countdown", () => {
       options().onAction({ verb: "openChannelPicker", args: { channels: ["a"] } });
     });
 
-    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(container.querySelector(".term-native-input--sending")).toBeNull();
     expect(onNextAgent).not.toHaveBeenCalled();
     expect(container.querySelector("input.term-native-input")).not.toBeNull();
   });

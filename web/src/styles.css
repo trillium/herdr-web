@@ -2107,9 +2107,6 @@ button {
   .term-input-row .term-native-input {
     order: 2;
   }
-  .term-input-row .term-voice-countdown {
-    order: 3;
-  }
   .term-input-row .term-send {
     order: 4;
   }
@@ -2243,14 +2240,11 @@ button {
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
-/* Advisory voice line-ender countdown (parlay armTimer): rendered only, the
-   authoritative submit timer is server-side and this never submits. */
-.term-voice-countdown {
-  flex: 0 0 auto;
-  align-self: center;
-  font-size: 12px;
-  color: var(--subtext1);
-  white-space: nowrap;
+/* Advisory voice line-ender countdown (parlay armTimer): a background tint only,
+   so it never changes layout. The authoritative submit timer is server-side. */
+.term-native-input--sending {
+  background: color-mix(in srgb, var(--blue) 22%, var(--crust));
+  border-color: color-mix(in srgb, var(--blue) 60%, var(--line));
 }
 
 .term-send {

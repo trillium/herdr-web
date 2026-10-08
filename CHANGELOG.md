@@ -207,7 +207,10 @@
   (companion to the live-target `scripts/voice-loop-trip.sh`). The voice toggle
   parser is pinned for every stored state (on/off/missing/corrupt). Redeploy picks
   the new bundle up through the documented `--delete` sync.
+
 ### Changed
+
+- Voice line-ender countdown no longer shows a "Sending in Ns…" text hint (which shifted the layout); the input box background tints for the countdown instead.
 
 ### Fixed
 
