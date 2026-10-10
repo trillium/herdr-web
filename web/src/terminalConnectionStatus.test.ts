@@ -4,6 +4,7 @@ import {
   TERMINAL_CONNECTION_OVERLAY_DELAY_MS,
   isNonRetryableTerminalClose,
   isTerminalAttachConflictClose,
+  isTerminalKickClearStateClose,
   parseTerminalCloseReason,
   terminalConnectionCopy,
   terminalConnectionOverlayDelayMs,
@@ -67,5 +68,12 @@ describe("terminalConnectionStatus", () => {
     expect(terminalConnectionOverlayDelayMs("error", true)).toBe(0);
     expect(terminalConnectionOverlayDelayMs("attached", true)).toBe(0);
     expect(terminalConnectionOverlayDelayMs("idle", true)).toBe(0);
+  });
+
+  it("lets a kicked device reconnect, resetting only when asked", () => {
+    expect(isNonRetryableTerminalClose("kicked")).toBe(false);
+    expect(isNonRetryableTerminalClose("kicked: clear saved state")).toBe(false);
+    expect(isTerminalKickClearStateClose("kicked")).toBe(false);
+    expect(isTerminalKickClearStateClose("kicked: clear saved state")).toBe(true);
   });
 });

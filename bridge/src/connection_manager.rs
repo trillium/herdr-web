@@ -28,6 +28,9 @@ pub struct ConnectionManager {
     active_connections: Arc<Mutex<HashMap<String, Vec<TerminalConnection>>>>,
     preferences: Arc<Mutex<ConnectionPreferences>>,
     preferences_path: std::path::PathBuf,
+    /// One-shot kick signal per live client; the value is "also clear the
+    /// device's saved pane state". Removed when the client leaves or is kicked.
+    kick_signals: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
 }
 
 impl ConnectionManager {
@@ -37,7 +40,28 @@ impl ConnectionManager {
             active_connections: Arc::new(Mutex::new(HashMap::new())),
             preferences: Arc::new(Mutex::new(preferences)),
             preferences_path,
+            kick_signals: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Arms a kick signal for a live client. The socket loop owns the receiver
+    /// and closes the connection when it fires; the client may simply reconnect.
+    pub fn register_kick(&self, client_id: &str) -> tokio::sync::oneshot::Receiver<bool> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if let Ok(mut signals) = self.kick_signals.lock() {
+            signals.insert(client_id.to_string(), tx);
+        }
+        rx
+    }
+
+    /// Force-disconnects a client. Returns false when it is not connected.
+    pub fn kick(&self, client_id: &str, clear_state: bool) -> Result<bool, String> {
+        let sender = self
+            .kick_signals
+            .lock()
+            .map_err(|e| e.to_string())?
+            .remove(client_id);
+        Ok(sender.is_some_and(|tx| tx.send(clear_state).is_ok()))
     }
 
     pub fn register_connection(
@@ -92,6 +116,9 @@ impl ConnectionManager {
     }
 
     pub fn unregister_connection(&self, terminal_id: &str, client_id: &str) -> Result<(), String> {
+        if let Ok(mut signals) = self.kick_signals.lock() {
+            signals.remove(client_id);
+        }
         let mut connections = self.active_connections.lock().map_err(|e| e.to_string())?;
         if let Some(conns) = connections.get_mut(terminal_id) {
             conns.retain(|c| c.client_id != client_id);
@@ -203,6 +230,37 @@ impl Clone for ConnectionManager {
             active_connections: Arc::clone(&self.active_connections),
             preferences: Arc::clone(&self.preferences),
             preferences_path: self.preferences_path.clone(),
+            kick_signals: Arc::clone(&self.kick_signals),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manager() -> ConnectionManager {
+        ConnectionManager::new(std::env::temp_dir().join(format!(
+            "herdr-web-kick-test-{}.json",
+            std::process::id()
+        )))
+    }
+
+    #[test]
+    fn kick_fires_the_armed_signal_once_and_carries_clear_state() {
+        let manager = manager();
+        let mut rx = manager.register_kick("c1");
+        assert_eq!(manager.kick("c1", true), Ok(true));
+        assert_eq!(rx.try_recv(), Ok(true));
+        assert_eq!(manager.kick("c1", true), Ok(false));
+    }
+
+    #[test]
+    fn kick_of_an_unknown_or_departed_client_reports_not_connected() {
+        let manager = manager();
+        assert_eq!(manager.kick("nobody", false), Ok(false));
+        let _rx = manager.register_kick("c2");
+        manager.unregister_connection("t", "c2").unwrap();
+        assert_eq!(manager.kick("c2", false), Ok(false));
     }
 }

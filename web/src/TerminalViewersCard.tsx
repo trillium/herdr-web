@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import type { BridgeHttpUrl } from "./bridgeApi";
-import { getConnectionsForTerminal, type TerminalConnection } from "./connectionManager";
+import {
+  getConnectionsForTerminal,
+  kickConnection,
+  type TerminalConnection,
+} from "./connectionManager";
 
 const VIEWERS_POLL_INTERVAL_MS = 2000;
 
@@ -46,6 +50,11 @@ export function terminalViewersDetail(connections: TerminalConnection[], limit =
  * websocket path ever enforced that, and the phone that rendered the warning
  * was in fact attached the whole time.
  *
+ * The pill expands into a per-device list so the operator can kick a device
+ * (force-disconnect). The kicked page is free to reconnect; "Kick + reset"
+ * additionally makes it forget its saved pane state, which is what mangles the
+ * UI on every other device when it is stale.
+ *
  * The nickname and priority endpoints in `connectionManager` stay in place for
  * other clients of the bridge API; this view simply does not drive them.
  */
@@ -55,6 +64,21 @@ export default function TerminalViewersCard({
   onConnectionsChange,
 }: Props) {
   const [connections, setConnections] = useState<TerminalConnection[]>([]);
+  const [expanded, setExpanded] = useState(false);
+  const [kickError, setKickError] = useState<string | null>(null);
+
+  async function kick(clientId: string, clearState: boolean) {
+    if (!httpUrl) {
+      return;
+    }
+    try {
+      await kickConnection(httpUrl, clientId, clearState);
+      setKickError(null);
+      setConnections((current) => current.filter((entry) => entry.client_id !== clientId));
+    } catch (error) {
+      setKickError(error instanceof Error ? error.message : "Failed to kick device");
+    }
+  }
 
   useEffect(() => {
     if (!httpUrl) {
@@ -96,9 +120,37 @@ export default function TerminalViewersCard({
 
   const detail = terminalViewersDetail(connections);
   return (
-    <div className="terminal-viewers" role="status" aria-live="polite">
-      <span className="terminal-viewers-count">{terminalViewersLabel(connections.length)}</span>
-      {detail ? <span className="terminal-viewers-names">{detail}</span> : null}
+    <div className="terminal-viewers-card">
+      <div className="terminal-viewers" role="status" aria-live="polite">
+        <span className="terminal-viewers-count">{terminalViewersLabel(connections.length)}</span>
+        {detail ? <span className="terminal-viewers-names">{detail}</span> : null}
+        <button
+          type="button"
+          className="terminal-viewers-toggle"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? "Done" : "Manage"}
+        </button>
+      </div>
+      {expanded ? (
+        <ul className="terminal-viewers-list">
+          {connections.map((connection) => (
+            <li key={connection.client_id} className="terminal-viewers-row">
+              <span className="terminal-viewers-names">
+                {connection.nickname || connection.client_id}
+              </span>
+              <button type="button" onClick={() => void kick(connection.client_id, false)}>
+                Kick
+              </button>
+              <button type="button" onClick={() => void kick(connection.client_id, true)}>
+                Kick + reset
+              </button>
+            </li>
+          ))}
+          {kickError ? <li className="terminal-viewers-error">{kickError}</li> : null}
+        </ul>
+      ) : null}
     </div>
   );
 }

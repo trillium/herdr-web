@@ -1497,6 +1497,10 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
         .route(
             "/api/terminal-connections/{terminal_id}/nickname",
             post(set_connection_nickname_handler).options(preflight_handler),
+        )
+        .route(
+            "/api/terminal-connections/kick",
+            post(kick_connection_handler).options(preflight_handler),
         );
     let app = Router::new()
         .merge(agent_activity_routes)
@@ -3699,6 +3703,30 @@ async fn set_connection_priority_handler(
     Ok(Json(serde_json::json!({"status": "ok"})))
 }
 
+#[derive(Debug, Deserialize)]
+struct KickConnectionRequest {
+    client_id: String,
+    /// Also tell the device to drop its saved pane/navigation state.
+    #[serde(default)]
+    clear_state: bool,
+}
+
+/// Force-disconnects one terminal websocket client. Nothing blocks a reconnect;
+/// the page just lands back in a fresh attach (optionally with its saved pane
+/// state wiped, which only the device itself can do, so it is told to).
+async fn kick_connection_handler(
+    State(state): State<BridgeState>,
+    headers: HeaderMap,
+    Json(req): Json<KickConnectionRequest>,
+) -> Result<Json<serde_json::Value>, BridgeError> {
+    ensure_allowed_request(&headers, &state.request_policy)?;
+    let kicked = state
+        .connection_manager
+        .kick(&req.client_id, req.clear_state)
+        .map_err(BridgeError::Protocol)?;
+    Ok(Json(serde_json::json!({"status": "ok", "kicked": kicked})))
+}
+
 async fn set_connection_nickname_handler(
     State(state): State<BridgeState>,
     headers: HeaderMap,
@@ -5032,6 +5060,7 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
     {
         debug!("Failed to register connection: {}", e);
     }
+    let mut kick_rx = state.connection_manager.register_kick(&client_id);
 
     let write_tx = session.write_tx.clone();
     // Snapshot the buffered output and subscribe atomically, so this client
@@ -5076,6 +5105,12 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
                         break;
                     }
                 }
+                Ok(clear_state) = &mut kick_rx => {
+                    let _ = ws_sender
+                        .send(Message::Text(close_message(kick_reason(clear_state)).into()))
+                        .await;
+                    break;
+                }
                 Some(message) = ws_receiver.next() => {
                     if !handle_terminal_client_message(&write_tx, &sizes, message) {
                         break;
@@ -5108,6 +5143,12 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
                     {
                         break;
                     }
+                }
+                Ok(clear_state) = &mut kick_rx => {
+                    let _ = ws_sender
+                        .send(Message::Text(close_message(kick_reason(clear_state)).into()))
+                        .await;
+                    break;
                 }
                 Some(message) = ws_receiver.next() => {
                     if !handle_terminal_client_message(&write_tx, &sizes, message) {
@@ -5543,6 +5584,14 @@ fn event_may_close_terminal_session(event: &str) -> bool {
     event.contains("workspace.closed")
         || event.contains("tab.closed")
         || event.contains("pane.closed")
+}
+
+fn kick_reason(clear_state: bool) -> &'static str {
+    if clear_state {
+        "kicked: clear saved state"
+    } else {
+        "kicked"
+    }
 }
 
 fn close_message(reason: &str) -> String {
