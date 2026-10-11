@@ -214,6 +214,9 @@
 
 ### Fixed
 
+- Mobile: terminal text no longer renders under the iOS status bar / Dynamic Island; the app shell now
+  honors `env(safe-area-inset-top)` (the manual top inset acts as a minimum).
+
 - Restored mobile sizing for the input composer: a small-viewport breakpoint gives the
   composer bar a taller input row, roomier keys, and a wider send target on phone
   viewports (desktop keeps the 34px grid), and the touch glyphs grow to a comfortable
