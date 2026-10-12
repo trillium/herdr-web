@@ -240,10 +240,9 @@ mod tests {
     use super::*;
 
     fn manager() -> ConnectionManager {
-        ConnectionManager::new(std::env::temp_dir().join(format!(
-            "herdr-web-kick-test-{}.json",
-            std::process::id()
-        )))
+        ConnectionManager::new(
+            std::env::temp_dir().join(format!("herdr-web-kick-test-{}.json", std::process::id())),
+        )
     }
 
     #[test]
