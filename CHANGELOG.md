@@ -18,6 +18,13 @@
 
 ### Added
 
+- Kick a connected device: the terminal viewers pill now has a Manage list with per-device
+  "Kick" (force-disconnect; the device may reconnect) and "Kick + reset" (also clears that
+  device's saved pane/navigation state so stale panes stop mangling the UI everywhere).
+  Bridge: `POST /api/terminal-connections/kick {client_id, clear_state}`. Presence is the
+  bridge's own terminal-connection registry rather than Parlay `/api/chat/clients`, which has
+  no kick or per-terminal identity.
+
 - Follow-on reply send option in the command composer (desktop and mobile): a new button next to
   Send submits the composer text with Pi's follow-on key (Alt-Enter) instead of a plain Enter steer;
   with an empty composer it sends Alt-Enter alone, like Send does for plain Enter

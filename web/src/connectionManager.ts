@@ -83,3 +83,25 @@ export async function setConnectionNickname(
     throw new Error(await apiErrorMessage(response) ?? `Failed to set nickname`);
   }
 }
+
+/**
+ * Force-disconnects one connected device. Reconnecting stays allowed; with
+ * `clearState` the device is also told to drop its saved pane/navigation state
+ * (only the device can, since that state lives in its own storage).
+ */
+export async function kickConnection(
+  httpUrl: BridgeHttpUrl,
+  clientId: string,
+  clearState: boolean,
+): Promise<boolean> {
+  const response = await fetchWithTimeout(httpUrl('/api/terminal-connections/kick'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_id: clientId, clear_state: clearState }),
+  });
+  if (!response.ok) {
+    throw new Error(await apiErrorMessage(response) ?? `Failed to kick device`);
+  }
+  const body = (await response.json()) as { kicked?: unknown };
+  return body.kicked === true;
+}

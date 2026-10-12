@@ -107,6 +107,29 @@ describe("TerminalViewersCard", () => {
       connection("b", "iphone-mobile"),
     ]);
     expect(container.textContent).not.toMatch(/conflict|priority|active/i);
-    expect(container.querySelectorAll("button")).toHaveLength(0);
+    expect(container.querySelectorAll("button")).toHaveLength(1);
+  });
+
+  it("kicks a device from the expanded list, optionally resetting its saved panes", async () => {
+    const container = await render([
+      connection("a", "mac-desktop"),
+      connection("b", "iphone-mobile"),
+    ]);
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".terminal-viewers-toggle")!.click();
+    });
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: "ok", kicked: true })));
+    const resetButtons = [...container.querySelectorAll("button")].filter(
+      (button) => button.textContent === "Kick + reset",
+    );
+    await act(async () => {
+      resetButtons[1].click();
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("http://bridge/api/terminal-connections/kick");
+    expect(JSON.parse(String(init?.body))).toEqual({ client_id: "b", clear_state: true });
+    expect(container.textContent).not.toContain("iphone-mobile");
   });
 });

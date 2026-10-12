@@ -228,6 +228,7 @@ import {
   workspaceReorderRoots,
 } from "./workspaceReorder";
 import type { WorkspaceReorderDirection } from "./workspaceReorder";
+import { LEGACY_DISPLAY_PREFS_KEY, SHARED_NAVIGATION_PREFS_KEY } from "./savedPaneState";
 
 const NoteMarkdownPreview = lazy(() => import("./NoteMarkdownPreview"));
 
@@ -488,8 +489,6 @@ const HIDDEN_PANE_CELL_STYLE: CSSProperties = {
   display: "none",
 };
 const DISPLAY_PREFS_KEY = "herdr.mobileWeb.displayPrefs.v2";
-const SHARED_NAVIGATION_PREFS_KEY = "herdr.mobileWeb.sharedNavigation.v1";
-const LEGACY_DISPLAY_PREFS_KEY = "herdr.mobileWeb.displayPrefs.v1";
 const MOBILE_SIDEBAR_HISTORY_KEY = "herdrWebMobileSidebar";
 const MOBILE_DETAIL_HISTORY_KEY = "herdrWebMobileDetail";
 const DEFAULT_SIDEBAR_WIDTH = 320;

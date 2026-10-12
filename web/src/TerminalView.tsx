@@ -40,10 +40,12 @@ import { randomId } from "./randomId";
 import { logClientEvent } from "./clientLog";
 import { postVoiceCommandSubmit, VOICE_ENDER_SOURCE } from "./voiceEnder";
 import { addNativeResumeHandler } from "./native";
+import { clearSavedPaneState } from "./savedPaneState";
 import { shellQuote } from "./shell";
 import {
   isNonRetryableTerminalClose,
   isTerminalAttachConflictClose,
+  isTerminalKickClearStateClose,
   MAX_TERMINAL_ATTACH_CONFLICT_RETRIES,
   parseTerminalCloseReason,
   terminalConnectionCopy,
@@ -1026,6 +1028,12 @@ export function TerminalView({
         socket = null;
         if (lastCloseReason) {
           console.warn("terminal websocket closed", lastCloseReason);
+        }
+        if (isTerminalKickClearStateClose(lastCloseReason)) {
+          // Operator asked this device to forget its saved panes. Reconnecting
+          // is still allowed, but from a clean slate, so reload after clearing.
+          void clearSavedPaneState().finally(() => window.location.reload());
+          return;
         }
         if (
           isTerminalAttachConflictClose(lastCloseReason) &&

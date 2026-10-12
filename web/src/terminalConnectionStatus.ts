@@ -23,6 +23,14 @@ export function isTerminalAttachConflictClose(reason: string | null) {
   return reason !== null && reason.includes("already has an attached client");
 }
 
+/**
+ * A plain kick needs no handling: it is a retryable close, so the page just
+ * reconnects. Only the "reset" variant makes the device clear its pane state.
+ */
+export function isTerminalKickClearStateClose(reason: string | null) {
+  return reason === "kicked: clear saved state";
+}
+
 export function isNonRetryableTerminalClose(reason: string | null) {
   return (
     reason !== null &&
