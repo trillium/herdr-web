@@ -9,6 +9,7 @@
 set -u
 BASE="${1:-http://localhost:8787}"
 fail=0
+LOG_TAIL_LINES="${DOCTOR_LOG_TAIL_LINES:-200}"
 
 pass() { printf '  \033[32mPASS\033[0m %s\n' "$1"; }
 warn() { printf '  \033[33mWARN\033[0m %s\n' "$1"; }
@@ -68,7 +69,7 @@ else
   failf "no index served at $BASE/"
 fi
 
-echo ==" daemon socket"
+echo "== daemon socket"
 SOCK="${HERDR_SOCK:-$HOME/.config/herdr/herdr.sock}"
 if [ -S "$SOCK" ]; then pass "socket present: $SOCK"; else failf "daemon socket missing: $SOCK"; fi
 
@@ -79,7 +80,7 @@ if [ -z "$REMS" ]; then
 fi
 for r in $REMS; do
   code=$(curl -sS -m 4 -o /dev/null -w '%{http_code}' "$r/api/capabilities" 2>/dev/null)
-  name=${r#http://}; name=${name%%:*}
+  name=${r#http://}; name=${name#https://}; name=${name%%:*}
   if [ "$code" = "200" ]; then
     pass "remote $name reachable (200)"
   else
@@ -87,13 +88,14 @@ for r in $REMS; do
   fi
 done
 
-echo "== recent bridge log errors"
+echo "== recent bridge log errors (last $LOG_TAIL_LINES lines)"
 for LOG in "$HOME/.local/share/herdr-web/bridge.log" /tmp/hwb.log; do
   [ -f "$LOG" ] || continue
-  n=$(grep -icE 'error|panic' "$LOG" 2>/dev/null)
+  recent=$(tail -n "$LOG_TAIL_LINES" "$LOG" 2>/dev/null)
+  n=$(printf '%s\n' "$recent" | grep -icE 'error|panic')
   if [ "${n:-0}" -gt 0 ]; then
-    warn "$LOG has $n error-ish lines; last:"
-    grep -iE 'error|panic' "$LOG" | tail -1 | cut -c1-160
+    warn "$LOG has $n error-ish lines in last $LOG_TAIL_LINES; last:"
+    printf '%s\n' "$recent" | grep -iE 'error|panic' | tail -1 | cut -c1-160
   else
     echo "  $LOG: clean"
   fi
