@@ -187,7 +187,7 @@ button {
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr) 0;
   width: 100%;
   height: 100%;
-  padding-block: var(--content-inset-top) var(--content-inset-bottom);
+  padding-block: max(var(--content-inset-top), env(safe-area-inset-top)) var(--content-inset-bottom);
   overflow: hidden;
   background: var(--app-bg);
   transition: grid-template-columns 200ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -3483,10 +3483,10 @@ button {
   .sidebar,
   .stage {
     position: fixed;
-    top: var(--content-inset-top);
+    top: max(var(--content-inset-top), env(safe-area-inset-top));
     left: 0;
     width: 100vw;
-    height: calc(100dvh - var(--content-inset-top) - var(--content-inset-bottom));
+    height: calc(100dvh - max(var(--content-inset-top), env(safe-area-inset-top)) - var(--content-inset-bottom));
     flex: none;
     transition: transform 260ms cubic-bezier(0.4, 0, 0.2, 1);
   }
@@ -3567,10 +3567,10 @@ button {
 .app[data-compact="true"] .sidebar,
 .app[data-compact="true"] .stage {
   position: fixed;
-  top: var(--content-inset-top);
+  top: max(var(--content-inset-top), env(safe-area-inset-top));
   left: 0;
   width: 100vw;
-  height: calc(100dvh - var(--content-inset-top) - var(--content-inset-bottom));
+  height: calc(100dvh - max(var(--content-inset-top), env(safe-area-inset-top)) - var(--content-inset-bottom));
   flex: none;
   transition: transform 260ms cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -3603,11 +3603,11 @@ button {
 .notes-surface[data-compact="true"] {
   position: fixed;
   z-index: 5;
-  top: var(--content-inset-top);
+  top: max(var(--content-inset-top), env(safe-area-inset-top));
   left: 0;
   right: auto;
   width: 100vw;
-  height: calc(100dvh - var(--content-inset-top) - var(--content-inset-bottom));
+  height: calc(100dvh - max(var(--content-inset-top), env(safe-area-inset-top)) - var(--content-inset-bottom));
   border-left: 0;
   box-shadow: none;
 }
