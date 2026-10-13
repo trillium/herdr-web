@@ -1538,6 +1538,10 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
             post(command_submit_handler).options(preflight_handler),
         )
         .route(
+            "/api/focus-next-agent",
+            post(focus_next_agent_handler).options(preflight_handler),
+        )
+        .route(
             "/api/client-log",
             post(client_log_handler).options(preflight_handler),
         )
@@ -2355,6 +2359,14 @@ struct CommandRequest {
 #[derive(Debug, Deserialize)]
 struct SelectionRequest {
     pane_id: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct FocusNextAgentRequest {
+    #[serde(default)]
+    request_id: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3416,6 +3428,42 @@ async fn command_submit_handler(
     })))
 }
 
+/// External "focus the next agent pane" trigger (e.g. parlay emitting a bare "next").
+///
+/// Carries no pane: each connected client advances from the pane *it* has selected, so the
+/// bridge only fans a `herdr_web.focus_next_agent_requested` event out on `ui_event_tx`. The body
+/// is optional (`{}` or empty); `request_id` lets clients drop duplicate deliveries.
+async fn focus_next_agent_handler(
+    State(state): State<BridgeState>,
+    headers: HeaderMap,
+    body: Option<Json<FocusNextAgentRequest>>,
+) -> Result<Json<serde_json::Value>, BridgeError> {
+    ensure_allowed_request(&headers, &state.request_policy)?;
+    let body = body.map(|Json(body)| body).unwrap_or_default();
+    let request_id = body
+        .request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let source = body
+        .source
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("parlay");
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    broadcast_focus_next_agent_requested(&state.ui_event_tx, &request_id, source, ts_ms);
+    Ok(Json(serde_json::json!({
+        "request_id": request_id,
+        "ts": ts_ms,
+    })))
+}
+
 /// Client log pipeline: the phone is a black box, so the page beams small
 /// voice-loop flight-recorder events (task-gu0ka: page-load bundle hash +
 /// voice toggle, SSE stream autopsy, eval round trips with latency + verbs,
@@ -4402,6 +4450,25 @@ fn broadcast_notes_changed(state: &BridgeState, note_id: Option<&str>, revision:
         payload["revision"] = serde_json::json!(revision);
     }
     let _ = state.ui_event_tx.send(payload.to_string());
+}
+
+fn focus_next_agent_event_payload(request_id: &str, source: &str, ts_ms: u64) -> String {
+    serde_json::json!({
+        "type": "herdr_web.focus_next_agent_requested",
+        "request_id": request_id,
+        "source": source,
+        "ts": ts_ms,
+    })
+    .to_string()
+}
+
+fn broadcast_focus_next_agent_requested(
+    ui_event_tx: &tokio::sync::broadcast::Sender<String>,
+    request_id: &str,
+    source: &str,
+    ts_ms: u64,
+) {
+    let _ = ui_event_tx.send(focus_next_agent_event_payload(request_id, source, ts_ms));
 }
 
 fn command_submit_event_payload(
@@ -8092,6 +8159,7 @@ mod tests {
     fn proxy_allow_list_rejects_blocked_paths() {
         assert!(!is_proxy_path_allowed("command"));
         assert!(!is_proxy_path_allowed("command-submit"));
+        assert!(!is_proxy_path_allowed("focus-next-agent"));
         assert!(!is_proxy_path_allowed("client-log"));
         assert!(!is_proxy_path_allowed("uploads"));
         assert!(!is_proxy_path_allowed("selection"));
@@ -8287,6 +8355,34 @@ mod tests {
             parsed.get("source").and_then(serde_json::Value::as_str),
             Some("voice-loop-trip")
         );
+    }
+
+    #[test]
+    fn focus_next_agent_broadcast_reaches_subscribers() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+        broadcast_focus_next_agent_requested(&tx, "req-next-1", "parlay", 42);
+        let raw = rx
+            .try_recv()
+            .expect("subscriber should receive the focus-next event");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&raw).expect("broadcast payload should be valid JSON");
+        assert_eq!(
+            parsed.get("type").and_then(serde_json::Value::as_str),
+            Some("herdr_web.focus_next_agent_requested")
+        );
+        assert_eq!(
+            parsed.get("request_id").and_then(serde_json::Value::as_str),
+            Some("req-next-1")
+        );
+        assert_eq!(
+            parsed.get("source").and_then(serde_json::Value::as_str),
+            Some("parlay")
+        );
+        assert_eq!(
+            parsed.get("ts").and_then(serde_json::Value::as_u64),
+            Some(42)
+        );
+        assert!(parsed.get("pane_id").is_none());
     }
 
     #[test]

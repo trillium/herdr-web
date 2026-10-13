@@ -161,6 +161,12 @@ import {
 } from "./overlayFocus";
 import { createSnapshotRefreshController } from "./refreshCoordinator";
 import { emitCommandSubmitRequest, parseCommandSubmitSignal } from "./commandSubmit";
+import {
+  consumeFocusNextAgentSignal,
+  emitFocusNextAgentRequest,
+  parseFocusNextAgentSignal,
+  subscribeFocusNextAgentRequests,
+} from "./focusNextAgent";
 import { TerminalView } from "./TerminalView";
 import {
   DEFAULT_TERMINAL_SCREEN_READER_TEXT,
@@ -2709,6 +2715,22 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
     return true;
   };
 
+  // External trigger (POST /api/focus-next-agent, e.g. parlay's "next"): advance this client's
+  // selection to the next agent pane. The ref keeps the subscription stable while the handler
+  // closes over fresh render state.
+  const focusNextAgentRef = useRef<() => void>(() => {});
+  focusNextAgentRef.current = () => {
+    focusAdjacentAgentPane(1);
+  };
+  useEffect(() => {
+    const seenRequestIds = new Set<string>();
+    return subscribeFocusNextAgentRequests((signal) => {
+      if (consumeFocusNextAgentSignal(signal, seenRequestIds, Date.now()) === "focus") {
+        focusNextAgentRef.current();
+      }
+    });
+  }, []);
+
   // The mobile pin-cycle button hops between agents without opening the
   // sidebar. Tap cycles; long-press switches which pool it walks.
   const [paneCycleMode, setPaneCycleMode] = useState<"pin" | "all">("pin");
@@ -5017,6 +5039,11 @@ export function BridgeConnectionController({
         }
         if (isAgentPinsChangedEvent(event)) {
           onAgentPinsChangedRef.current(runtime.id);
+          return;
+        }
+        const focusNextSignal = parseFocusNextAgentSignal(event.data);
+        if (focusNextSignal) {
+          emitFocusNextAgentRequest(focusNextSignal);
           return;
         }
         const submitSignal = parseCommandSubmitSignal(event.data);
