@@ -24,7 +24,8 @@
   default). The page does not open a terminal. Send stays disabled when no pane is focused,
   and the bridge rejects a send whose pane is no longer the focused one. Deploy needs a
   rebuilt bridge binary (the new route and commands are not in the running process) plus
-  `npm run build:web` and `rsync -a --delete web/dist/ ~/.local/share/herdr-web/dist/`.
+  `npm run build:web` and `rsync -a --delete web/dist/ ~/.local/share/herdr-web/dist/`
+  ([#62](https://github.com/trillium/herdr-web/pull/62)).
 
 - Kick a connected device: the terminal viewers pill now has a Manage list with per-device
   "Kick" (force-disconnect; the device may reconnect) and "Kick + reset" (also clears that
