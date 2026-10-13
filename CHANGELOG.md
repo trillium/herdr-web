@@ -18,6 +18,10 @@
 
 ### Added
 
+- `POST /api/focus-next-agent`: external trigger (for parlay's bare "next") that moves every
+  connected client to its next agent pane, wrapping after the last. Broadcast as
+  `herdr_web.focus_next_agent_requested` on `/ws/ui-events`; see README "Focus-next agent trigger".
+
 - Kick a connected device: the terminal viewers pill now has a Manage list with per-device
   "Kick" (force-disconnect; the device may reconnect) and "Kick + reset" (also clears that
   device's saved pane/navigation state so stale panes stop mangling the UI everywhere).

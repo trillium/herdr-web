@@ -409,6 +409,9 @@ The bridge exposes:
 - `GET /api/snapshot`: workspaces, tabs, panes, layouts, shared web selection, and configured
   remote bridges
 - `POST /api/command`: allow-listed workspace/tab/pane commands
+- `POST /api/focus-next-agent`: external trigger that moves every connected client to its next agent
+  pane, wrapping after the last (body optional: `{"request_id"?, "source"?}`; see
+  [Focus-next trigger](#focus-next-agent-trigger))
 - `POST /api/selection`: bridge-owned selected pane for syncing browser clients
 - `GET /api/notes` and `POST /api/notes...`: bridge-owned pane notes
 - `GET /api/agent-activity`: bridge-tracked agent status transition activity
@@ -455,6 +458,25 @@ off in Display settings to keep each open tab's pane selection in that tab's in-
 The Sync setting is shared by every tab on the same browser origin; no pane selection is stored per
 tab. Navigation with sync off still uses the same Herdr session: terminal input, structural
 commands, and workspace, tab, and pane changes remain shared.
+
+### Focus-next agent trigger
+
+External tools (e.g. parlay emitting a bare "next") move focus to the next agent pane with:
+
+```sh
+curl -X POST http://127.0.0.1:8787/api/focus-next-agent
+# optional JSON body; send it with Content-Type: application/json
+curl -X POST -H 'Content-Type: application/json' \
+  -d '{"request_id":"<unique id>","source":"parlay"}' \
+  http://127.0.0.1:8787/api/focus-next-agent
+```
+
+The bridge replies `{"request_id","ts"}` and broadcasts
+`{"type":"herdr_web.focus_next_agent_requested","request_id","source","ts"}` on `/ws/ui-events`.
+Each connected client then advances from its own selected pane to the next visible agent pane in
+the sidebar order (same as ArrowDown / the mobile "next agent" command), wrapping after the last.
+Clients drop events older than 5s and repeated `request_id`s, so retry with the same id. The
+endpoint is local-only (same origin policy as `/api/command-submit`, never proxied to remotes).
 
 ## Vendoring Strategy
 
