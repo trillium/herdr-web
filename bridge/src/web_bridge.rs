@@ -8378,7 +8378,10 @@ mod tests {
             parsed.get("source").and_then(serde_json::Value::as_str),
             Some("parlay")
         );
-        assert_eq!(parsed.get("ts").and_then(serde_json::Value::as_u64), Some(42));
+        assert_eq!(
+            parsed.get("ts").and_then(serde_json::Value::as_u64),
+            Some(42)
+        );
         assert!(parsed.get("pane_id").is_none());
     }
 
