@@ -33,6 +33,8 @@ navigation, multi-client viewing, mobile input controls, and synchronized pane s
 - Image and file uploads from the terminal toolbar, paste, or drag/drop, with uploaded paths inserted
   into the active terminal input.
 - Context menus for renaming, closing, splitting, and moving panes between tabs or spaces.
+- A send-only page at `/send` that shows Herdr's focused pane and inserts text into it
+  without opening a terminal.
 
 ## Screenshots
 
