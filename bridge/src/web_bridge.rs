@@ -43,10 +43,11 @@ use tracing::{debug, info, warn};
 use herdr_compat::api::client::{ApiClient, ApiClientError};
 use herdr_compat::api::schema::{
     AgentInfo, AgentStartParams, AgentStatus, AgentTarget, EmptyParams, EventsSubscribeParams,
-    LayoutApplyParams, LayoutExportParams, Method, PaneInfo, PaneLayoutSnapshot, PaneListParams,
-    PaneMoveDestination, PaneSplitParams, PaneTarget, Request, ResponseResult, SessionSnapshot,
-    SplitDirection, Subscription, SubscriptionEventData, SubscriptionEventEnvelope,
-    SubscriptionEventKind, TabCreateParams, TabInfo, TabListParams, TabTarget, WorkspaceInfo,
+    LayoutApplyParams, LayoutExportParams, Method, PaneCurrentParams, PaneInfo, PaneLayoutSnapshot,
+    PaneListParams, PaneMoveDestination, PaneSplitParams, PaneTarget, Request, ResponseResult,
+    SessionSnapshot, SplitDirection, Subscription, SubscriptionEventData,
+    SubscriptionEventEnvelope, SubscriptionEventKind, TabCreateParams, TabInfo, TabListParams,
+    TabTarget, WorkspaceInfo,
 };
 use herdr_compat::protocol::{
     self, AttachScrollDirection, AttachScrollSource, ClientMessage, RenderEncoding, ServerMessage,
@@ -80,6 +81,7 @@ const DEFAULT_STATIC_DIR: &str = "web/dist";
 const MIN_HERDR_VERSION: (u64, u64, u64) = (0, 9, 0);
 const MIN_HERDR_VERSION_LABEL: &str = "0.9.0";
 const MAX_UPLOAD_BYTES: usize = 25 * 1024 * 1024;
+const MAX_FOCUSED_PANE_SEND_BYTES: usize = 64 * 1024;
 const MAX_NOTES_REQUEST_BYTES: usize = 512 * 1024;
 const MAX_TERMINAL_INPUT_CHUNK_BYTES: usize = 768 * 1024;
 const MAX_QUEUED_TERMINAL_INPUT_BYTES: usize = 8 * 1024 * 1024;
@@ -1502,6 +1504,7 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
             "/api/terminal-connections/kick",
             post(kick_connection_handler).options(preflight_handler),
         );
+    let send_index = options.static_dir.join("index.html");
     let app = Router::new()
         .merge(agent_activity_routes)
         .merge(agent_pins_routes)
@@ -1563,6 +1566,8 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
             "/ws/remote/{bridge_id}/terminal",
             get(remote_terminal_ws_handler),
         )
+        .route("/send", send_page_route(send_index.clone()))
+        .route("/send/", send_page_route(send_index))
         .fallback_service(
             ServiceBuilder::new()
                 .layer(middleware::from_fn(add_static_cache_headers))
@@ -1586,6 +1591,28 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .await
+}
+
+fn send_page_route(index: PathBuf) -> axum::routing::MethodRouter<BridgeState> {
+    get(move || {
+        let index = index.clone();
+        async move { send_index_response(index).await }
+    })
+}
+
+async fn send_index_response(path: PathBuf) -> Response {
+    let bytes = match tokio::task::spawn_blocking(move || std::fs::read(path)).await {
+        Ok(Ok(bytes)) => bytes,
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    (
+        [
+            (CONTENT_TYPE, "text/html; charset=utf-8"),
+            (CACHE_CONTROL, "no-cache"),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 async fn add_security_headers(
@@ -1928,6 +1955,11 @@ const ALLOWED_COMMANDS: &[&str] = &[
     "pane.focus_direction",
     // Narrow live pane moves: new tab or new workspace destinations only.
     "pane.move",
+    // Send-only page. Text is delivered to the focused pane; send_input may
+    // only append the Enter key. Arbitrary keys stay on pane.send_keys, which
+    // is not in this list.
+    "pane.send_text",
+    "pane.send_input",
 ];
 
 fn ensure_allowed_request(headers: &HeaderMap, policy: &RequestPolicy) -> Result<(), BridgeError> {
@@ -2328,9 +2360,89 @@ fn validate_web_command(method: &Method) -> Result<(), BridgeError> {
             }
             validate_optional_label(&params.label, "pane.rename label")?;
         }
+        Method::PaneSendText(params) => {
+            validate_focused_pane_send_text(&params.pane_id, &params.text)?;
+        }
+        Method::PaneSendInput(params) => {
+            validate_focused_pane_send_text(&params.pane_id, &params.text)?;
+            if params.keys.len() != 1 || params.keys[0] != "Enter" {
+                return Err(BridgeError::BadRequest(
+                    "pane.send_input through herdr-web only accepts keys [\"Enter\"]".to_string(),
+                ));
+            }
+        }
         _ => {}
     }
     Ok(())
+}
+
+fn validate_focused_pane_send_text(pane_id: &str, text: &str) -> Result<(), BridgeError> {
+    if pane_id.trim().is_empty() {
+        return Err(BridgeError::BadRequest("pane_id is required".to_string()));
+    }
+    if text.is_empty() {
+        return Err(BridgeError::BadRequest("text is required".to_string()));
+    }
+    if text.len() > MAX_FOCUSED_PANE_SEND_BYTES {
+        return Err(BridgeError::BadRequest(
+            "text must be at most 65536 bytes".to_string(),
+        ));
+    }
+    if text.contains('\0') {
+        return Err(BridgeError::BadRequest(
+            "text must not contain NUL".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// `Some(pane_id)` when this command inserts text and must name the focused pane.
+fn focused_send_pane_id(method: &Method) -> Option<&str> {
+    match method {
+        Method::PaneSendText(params) => Some(params.pane_id.as_str()),
+        Method::PaneSendInput(params) => Some(params.pane_id.as_str()),
+        _ => None,
+    }
+}
+
+fn require_focused_pane_target(
+    focused_pane_id: Option<&str>,
+    requested_pane_id: &str,
+) -> Result<(), BridgeError> {
+    match focused_pane_id {
+        Some(focused) if focused == requested_pane_id => Ok(()),
+        Some(_) => Err(BridgeError::BadRequest(
+            "send target is not the focused pane".to_string(),
+        )),
+        None => Err(BridgeError::BadRequest("no pane is focused".to_string())),
+    }
+}
+
+fn current_focused_pane_id(api: &ApiClient) -> Result<Option<String>, BridgeError> {
+    match api_request(
+        api,
+        "herdr-web:pane-current",
+        Method::PaneCurrent(PaneCurrentParams::default()),
+    ) {
+        Ok(ResponseResult::PaneCurrent { pane }) if pane.focused => Ok(Some(pane.pane_id)),
+        Ok(ResponseResult::PaneCurrent { .. }) => Ok(None),
+        Ok(other) => Err(BridgeError::Protocol(format!(
+            "unexpected response: {other:?}"
+        ))),
+        Err(BridgeError::Api(ApiClientError::ErrorResponse(response)))
+            if response.error.code == "pane_not_found" =>
+        {
+            Ok(None)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn ensure_send_targets_focused_pane(api: &ApiClient, method: &Method) -> Result<(), BridgeError> {
+    let Some(pane_id) = focused_send_pane_id(method) else {
+        return Ok(());
+    };
+    require_focused_pane_target(current_focused_pane_id(api)?.as_deref(), pane_id)
 }
 
 fn validate_optional_label(label: &Option<String>, field: &str) -> Result<(), BridgeError> {
@@ -2535,6 +2647,7 @@ async fn command_handler(
 
     let api = state.api.clone();
     let response = tokio::task::spawn_blocking(move || {
+        ensure_send_targets_focused_pane(&api, &request.method)?;
         fill_clear_rename_labels(&api, &mut request.method)?;
         Ok::<_, BridgeError>(api.request(request)?)
     })
@@ -7170,13 +7283,70 @@ mod tests {
         assert!(ALLOWED_COMMANDS.contains(&"pane.rename"));
         assert!(!ALLOWED_COMMANDS.contains(&"server.stop"));
         assert!(!ALLOWED_COMMANDS.contains(&"pane.send_keys"));
-        assert!(!ALLOWED_COMMANDS.contains(&"pane.send_input"));
+        assert!(ALLOWED_COMMANDS.contains(&"pane.send_text"));
+        assert!(ALLOWED_COMMANDS.contains(&"pane.send_input"));
         assert!(ALLOWED_COMMANDS.contains(&"workspace.move_block"));
         // pane.split is intentionally allowed so the web client can create splits.
         assert!(ALLOWED_COMMANDS.contains(&"pane.split"));
         assert!(ALLOWED_COMMANDS.contains(&"pane.focus_direction"));
         assert!(ALLOWED_COMMANDS.contains(&"pane.move"));
         assert!(!ALLOWED_COMMANDS.contains(&"agent.start"));
+    }
+
+    #[test]
+    fn focused_pane_send_accepts_text_and_enter_only() {
+        let text = parse_command(
+            "pane.send_text",
+            serde_json::json!({ "pane_id": "pane-1", "text": "echo ok" }),
+        );
+        assert!(validate_web_command(&text).is_ok());
+
+        let entered = parse_command(
+            "pane.send_input",
+            serde_json::json!({ "pane_id": "pane-1", "text": "echo ok", "keys": ["Enter"] }),
+        );
+        assert!(validate_web_command(&entered).is_ok());
+    }
+
+    #[test]
+    fn focused_pane_send_rejects_empty_text_other_keys_and_unfocused_targets() {
+        let empty = parse_command(
+            "pane.send_text",
+            serde_json::json!({ "pane_id": "pane-1", "text": "" }),
+        );
+        assert!(validate_web_command(&empty).is_err());
+
+        let nul = parse_command(
+            "pane.send_text",
+            serde_json::json!({ "pane_id": "pane-1", "text": "a\u{0000}b" }),
+        );
+        assert!(validate_web_command(&nul).is_err());
+
+        let too_long = parse_command(
+            "pane.send_text",
+            serde_json::json!({ "pane_id": "pane-1", "text": "x".repeat(MAX_FOCUSED_PANE_SEND_BYTES + 1) }),
+        );
+        assert!(validate_web_command(&too_long).is_err());
+
+        let keys = parse_command(
+            "pane.send_input",
+            serde_json::json!({ "pane_id": "pane-1", "text": "echo ok", "keys": ["ctrl+c"] }),
+        );
+        assert!(validate_web_command(&keys).is_err());
+
+        assert!(require_focused_pane_target(Some("pane-1"), "pane-1").is_ok());
+        assert!(require_focused_pane_target(Some("pane-2"), "pane-1").is_err());
+        assert!(require_focused_pane_target(None, "pane-1").is_err());
+    }
+
+    fn parse_command(method: &str, params: serde_json::Value) -> Method {
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "id": "test",
+            "method": method,
+            "params": params,
+        }))
+        .unwrap();
+        request.method
     }
 
     #[test]

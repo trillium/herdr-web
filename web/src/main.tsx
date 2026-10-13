@@ -2,8 +2,7 @@ import "@fontsource-variable/geist/wght.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { initAnalytics } from "./analytics";
-import { App } from "./App";
-import { BridgeProvider } from "./bridge";
+import { isSendOnlyPath } from "./sendOnly";
 import { logClientEvent } from "./clientLog";
 import { installConsoleCapture } from "./consoleCapture";
 import { startNativeControls } from "./native";
@@ -26,10 +25,22 @@ if (!root) {
   throw new Error("missing root element");
 }
 
-createRoot(root).render(
-  <StrictMode>
-    <BridgeProvider>
-      <App />
-    </BridgeProvider>
-  </StrictMode>,
-);
+const sendOnly = isSendOnlyPath(window.location.pathname);
+
+if (sendOnly) {
+  const { SendOnlyPage } = await import("./SendOnlyPage");
+  createRoot(root).render(
+    <StrictMode>
+      <SendOnlyPage />
+    </StrictMode>,
+  );
+} else {
+  const [{ App }, { BridgeProvider }] = await Promise.all([import("./App"), import("./bridge")]);
+  createRoot(root).render(
+    <StrictMode>
+      <BridgeProvider>
+        <App />
+      </BridgeProvider>
+    </StrictMode>,
+  );
+}
