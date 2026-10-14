@@ -226,6 +226,15 @@
 
 ### Changed
 
+- The voice-ender word (`bravely`, plus `gravely`/`briefly`/`lap`) now stages the dictated text
+  into the pane instead of submitting it. The composer writes the text with no trailing Enter, keeps
+  its existing guards (wrong-pane/duplicate/stale/not-ready/composing/empty) and its refocus-after-send
+  behavior, and the user presses Enter or Send themselves. `POST /api/command-submit` gains an
+  allow-listed `mode` of `submit` or `stage` (absent means `submit`, so a web/bridge version skew in
+  either direction keeps the old behavior); a request with any other value is rejected. No change to
+  the Send button, the Enter shortcuts, or the `/send` page
+  ([#63](https://github.com/trillium/herdr-web/pull/63)).
+
 - Voice line-ender countdown no longer shows a "Sending in Ns…" text hint (which shifted the layout); the input box background tints for the countdown instead.
 
 ### Fixed

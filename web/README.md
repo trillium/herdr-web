@@ -70,9 +70,10 @@ How it works: every voice-box change POSTs
 platform:'herdr'}` to `POST /api/chat/eval` (one stable `streamId` per box —
 per-box isolation is server-side). `armTimer`/`cancelTimer` render the advisory
 "Sending in 1s…" countdown only and never submit locally; the async `submitNow`
-re-verifies the ender tail against the live buffer, strips it, and submits the
-remainder through the live bridge path (`POST /api/command-submit` →
-`herdr_web.command_submit_requested`).
+re-verifies the ender tail against the live buffer, strips it, and stages the
+remainder through the live bridge path (`POST /api/command-submit` with
+`mode: 'stage'` → `herdr_web.command_submit_requested`): the text lands in the
+pane without a trailing Enter and the user submits it with Enter or Send.
 
 Two serving prerequisites, both verified against the origin guard:
 

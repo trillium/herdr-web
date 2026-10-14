@@ -1,3 +1,5 @@
+import type { CommandSubmitMode } from "./commandSubmit";
+
 // Voice line-ender wiring (task-ayazf): pure helpers + fetch shims around the
 // `parlay-input` wrapper mounted by ParlayInput.
 //
@@ -10,10 +12,12 @@
 //         parlay+herdr and drops platform-less Herdr traffic at the relay.
 //   DOWN: the shared device SSE carries `input_action`; advisory
 //         armTimer/cancelTimer render the 1s countdown ONLY (never submit).
-//   SUBMIT: an async submitNow {requireTail, text:''} re-verifies the tail
+//   STAGE:  an async submitNow {requireTail, text:''} re-verifies the tail
 //         against the LIVE buffer inside `parlay-input`, strips the ender, and
-//         the remainder is submitted via the live bridge path
-//         (POST /api/command-submit -> herdr_web.command_submit_requested).
+//         the remainder is staged via the live bridge path
+//         (POST /api/command-submit -> herdr_web.command_submit_requested)
+//         with mode:'stage': the text lands in the pane with no trailing
+//         Enter, and the user submits it themselves (Enter / Send).
 //
 // Per-box isolation is server-side by streamId — one streamId per input box.
 
@@ -22,6 +26,13 @@ export const VOICE_ENDER_PLATFORM = "herdr";
 
 /** `source` value for voice-ender submissions on POST /api/command-submit. */
 export const VOICE_ENDER_SOURCE = "parlay-ender";
+
+/**
+ * Mode the voice ender requests: `stage` (write the text, no Enter). The ender
+ * word is a replacement for the old submit behavior, not an opt-in — the user
+ * presses Enter or Send afterwards.
+ */
+export const VOICE_ENDER_SUBMIT_MODE: CommandSubmitMode = "stage";
 
 /** Reason value the up-channel sends on every voice-box change. */
 export const VOICE_ENDER_INPUT_REASON = "input";
@@ -113,14 +124,17 @@ export type VoiceCommandSubmitRequest = {
   terminalId: string | null;
   requestId: string;
   source: string;
+  /** Omitted means the bridge default, `submit`. */
+  mode?: CommandSubmitMode;
 };
 
 /**
- * Submit the live box draft via the bridge path: POST /api/command-submit
+ * Send the live box draft through the bridge path: POST /api/command-submit
  * (same origin — no Parlay origin-guard or CSP carve-out involved). The bridge
  * broadcasts herdr_web.command_submit_requested and the pane's
- * TerminalCommandControls submits the LIVE buffer through the shared
- * decideCommandSubmit guard (wrong-pane/duplicate/stale/composing/empty).
+ * TerminalCommandControls acts on the LIVE buffer through the shared
+ * decideCommandSubmit guard (wrong-pane/duplicate/stale/composing/empty):
+ * `mode:'stage'` writes the text without an Enter, `submit` also presses it.
  */
 export async function postVoiceCommandSubmit(
   fetchImpl: typeof fetch,
@@ -133,6 +147,9 @@ export async function postVoiceCommandSubmit(
   };
   if (request.terminalId) {
     body.terminal_id = request.terminalId;
+  }
+  if (request.mode) {
+    body.mode = request.mode;
   }
   const response = await fetchImpl("/api/command-submit", {
     method: "POST",

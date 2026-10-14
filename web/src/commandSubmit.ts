@@ -4,11 +4,25 @@ export const COMMAND_SUBMIT_FRESHNESS_MS = 5000;
 
 const MAX_SEEN_REQUEST_IDS = 200;
 
+/**
+ * What the composing client does with the draft when a submit signal lands:
+ * `submit` writes the text and presses Enter, `stage` writes the text only.
+ * Older bridges omit `mode`, so parsing defaults to `submit`.
+ */
+export type CommandSubmitMode = "submit" | "stage";
+
+export const DEFAULT_COMMAND_SUBMIT_MODE: CommandSubmitMode = "submit";
+
+export function parseCommandSubmitMode(value: unknown): CommandSubmitMode {
+  return value === "stage" ? "stage" : DEFAULT_COMMAND_SUBMIT_MODE;
+}
+
 export type CommandSubmitSignal = {
   pane_id: string;
   terminal_id: string | null;
   request_id: string;
   source: string;
+  mode: CommandSubmitMode;
   ts: number;
 };
 
@@ -49,6 +63,7 @@ export function parseCommandSubmitSignal(data: unknown): CommandSubmitSignal | n
       typeof record.source === "string" && record.source.length > 0
         ? record.source
         : "unknown",
+    mode: parseCommandSubmitMode(record.mode),
     ts: record.ts,
   };
 }
