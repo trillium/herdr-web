@@ -38,7 +38,11 @@ import type { CommandSubmitSignal } from "./commandSubmit";
 import { ConfirmDialog } from "./overlays";
 import { randomId } from "./randomId";
 import { logClientEvent } from "./clientLog";
-import { postVoiceCommandSubmit, VOICE_ENDER_SOURCE } from "./voiceEnder";
+import {
+  postVoiceCommandSubmit,
+  VOICE_ENDER_SOURCE,
+  VOICE_ENDER_SUBMIT_MODE,
+} from "./voiceEnder";
 import { addNativeResumeHandler } from "./native";
 import { clearSavedPaneState } from "./savedPaneState";
 import { shellQuote } from "./shell";
@@ -1892,8 +1896,21 @@ export function TerminalCommandControls({
       onTerminalFocus();
     }
   };
+  // Voice stage (mode:'stage'): the ender word lands the dictated draft in the
+  // pane without the trailing Enter, so the user submits it themselves. Read
+  // the live node exactly like submit() (a voice stage writes the stripped text
+  // synchronously just before the broadcast returns), and keep submit()'s
+  // refocus flag so mobile dictation continues into a fresh box.
+  const stageLive = () => {
+    focusAfterSubmitRef.current = !mobileControls || mobileFocusAfterSubmit;
+    const command = commandInputRef.current?.value ?? value;
+    clearCommandInput();
+    onStageCommand(command);
+  };
   const submitRef = useRef(submit);
   submitRef.current = submit;
+  const stageLiveRef = useRef(stageLive);
+  stageLiveRef.current = stageLive;
   const scopeRef = useRef({ paneId, terminalId, disabled });
   scopeRef.current = { paneId, terminalId, disabled };
   const evaluateSubmitSignal = useCallback((signal: CommandSubmitSignal) => {
@@ -1926,7 +1943,11 @@ export function TerminalCommandControls({
     if (decision === "submit") {
       pendingSubmitRef.current = null;
       logClientEvent("submit-fired", signal.source);
-      submitRef.current();
+      if (signal.mode === "stage") {
+        stageLiveRef.current();
+      } else {
+        submitRef.current();
+      }
     } else {
       // duplicate/stale/not-ready/empty: noted above so a retry is ignored,
       // and the box keeps its text for a manual Send. Stale carries the
@@ -1940,14 +1961,16 @@ export function TerminalCommandControls({
   useEffect(() => subscribeCommandSubmitRequests(evaluateSubmitSignal), [
     evaluateSubmitSignal,
   ]);
-  // Voice line-ender submit (task-ayazf): parlay-input already stripped the
+  // Voice line-ender trigger (task-ayazf): parlay-input already stripped the
   // ender tail and re-verified it against the live buffer before firing
   // onSubmit. Stage the remainder synchronously — draft state, guard ref,
-  // and DOM node — then submit through the live bridge path
+  // and DOM node — then hand off through the live bridge path
   // (POST /api/command-submit -> herdr_web.command_submit_requested) so the
   // shared decideCommandSubmit guard (wrong-pane/duplicate/stale/composing/
-  // empty) applies. Never submit the box directly here: the broadcast
-  // listener owns submission, and it reads acceptedValueRef + the live node.
+  // empty) applies. The request carries mode:'stage', so the broadcast
+  // listener writes the text and leaves the Enter to the user. Never act on
+  // the box directly here: the broadcast listener owns it, and it reads
+  // acceptedValueRef + the live node.
   const submitVoiceEnder = (text: string) => {
     acceptedValueRef.current = text;
     setValue(text);
@@ -1967,6 +1990,7 @@ export function TerminalCommandControls({
       terminalId: terminalId ?? null,
       requestId,
       source: VOICE_ENDER_SOURCE,
+      mode: VOICE_ENDER_SUBMIT_MODE,
     })
       .then((answer) => {
         logClientEvent(

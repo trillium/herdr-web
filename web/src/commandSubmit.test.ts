@@ -20,6 +20,7 @@ function signal(overrides: Partial<CommandSubmitSignal> = {}): CommandSubmitSign
     terminal_id: null,
     request_id: "req-1",
     source: "talon-ender",
+    mode: "submit",
     ts: 1_756_000_000_000,
     ...overrides,
   };
@@ -56,6 +57,7 @@ describe("parseCommandSubmitSignal", () => {
       terminal_id: "term-9",
       request_id: "req-1",
       source: "talon-ender",
+      mode: "submit",
       ts: 1_756_000_000_000,
     });
   });
@@ -75,8 +77,30 @@ describe("parseCommandSubmitSignal", () => {
       terminal_id: null,
       request_id: "req-1",
       source: "unknown",
+      mode: "submit",
       ts: 42,
     });
+  });
+
+  it("reads mode stage and defaults everything else to submit", () => {
+    const base = {
+      type: COMMAND_SUBMIT_EVENT_TYPE,
+      pane_id: "pane-a",
+      request_id: "req-1",
+      ts: 42,
+    };
+    expect(parseCommandSubmitSignal(JSON.stringify({ ...base, mode: "stage" }))?.mode).toBe(
+      "stage",
+    );
+    expect(parseCommandSubmitSignal(JSON.stringify({ ...base, mode: "submit" }))?.mode).toBe(
+      "submit",
+    );
+    // An older bridge omits mode, and an unknown value must not invent a new
+    // behavior: both keep the original submit semantics.
+    expect(parseCommandSubmitSignal(JSON.stringify(base))?.mode).toBe("submit");
+    expect(parseCommandSubmitSignal(JSON.stringify({ ...base, mode: "enter" }))?.mode).toBe(
+      "submit",
+    );
   });
 
   it("rejects other ui-event types and malformed payloads", () => {

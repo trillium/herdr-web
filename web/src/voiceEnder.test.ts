@@ -11,6 +11,7 @@ import {
   postVoiceCommandSubmit,
   VOICE_ENDER_PLATFORM,
   VOICE_ENDER_SOURCE,
+  VOICE_ENDER_SUBMIT_MODE,
   withHerdrPlatform,
 } from "./voiceEnder";
 
@@ -114,6 +115,7 @@ describe("postVoiceCommandSubmit", () => {
       terminalId: "term-1",
       requestId: "req-1",
       source: VOICE_ENDER_SOURCE,
+      mode: VOICE_ENDER_SUBMIT_MODE,
     });
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toBe("/api/command-submit");
@@ -124,8 +126,14 @@ describe("postVoiceCommandSubmit", () => {
       terminal_id: "term-1",
       request_id: "req-1",
       source: "parlay-ender",
+      mode: "stage",
     });
     expect(result).toEqual({ request_id: "req-1", pane_id: "pane-a", ts: 123 });
+  });
+
+  it("defaults the ender to modal stage: text in the pane, no Enter", () => {
+    // A replacement, not an opt-in: the voice word never presses Enter.
+    expect(VOICE_ENDER_SUBMIT_MODE).toBe("stage");
   });
 
   it("omits terminal_id when the pane has no terminal yet", async () => {
@@ -136,6 +144,8 @@ describe("postVoiceCommandSubmit", () => {
       requestId: "req-2",
       source: VOICE_ENDER_SOURCE,
     });
+    // No mode key at all: the bridge's own default (submit) applies, so a
+    // caller that never learned about modes keeps its old behavior.
     expect(JSON.parse((calls[0].init as { body: string }).body)).toEqual({
       pane_id: "pane-a",
       request_id: "req-2",

@@ -118,8 +118,9 @@ Open `http://127.0.0.1:8787` and verify:
 - Multiple browser clients can attach to the same terminal.
 - Pane selection syncs between browser clients.
 - Typing, mobile text input, stage-only input, tap-focus setting, scrolling, and refit work.
-- Mobile compact-controls toggle collapses/restores the special-keys row, a trailing voice-submit
-  phrase (e.g. "bravely") sends buffered dictation via the parlay-backed mobile input, and the
+- Mobile compact-controls toggle collapses/restores the special-keys row, a trailing voice phrase
+  (e.g. "bravely") stages buffered dictation into the pane via the parlay-backed mobile input with no
+  trailing Enter (the box clears, the pane text is unsubmitted, and Enter or Send submits it), and the
   mobile-mode toggle flips `~/.local/share/herdr-web/mobile-mode`.
 - On a touch device with a split pane, the single-pane toggle switches between the selected pane
   and the full split grid.

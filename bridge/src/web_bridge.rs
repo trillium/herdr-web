@@ -2478,6 +2478,10 @@ struct CommandSubmitRequest {
     request_id: Option<String>,
     #[serde(default)]
     source: Option<String>,
+    /// What the owning composer does with its draft: `submit` (default) writes
+    /// the text and presses Enter, `stage` writes the text only.
+    #[serde(default)]
+    mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3470,8 +3474,10 @@ async fn selection_handler(
 /// A local input source (e.g. a Talon voice ender) POSTs the pane whose
 /// composer should submit; the bridge fans a
 /// `herdr_web.command_submit_requested` event out on `ui_event_tx` and the
-/// owning client submits its existing draft. The draft text itself is never
-/// in the payload — the text in the box is authoritative.
+/// owning client acts on its existing draft: `mode:"stage"` writes the text
+/// into the pane with no trailing Enter (the voice ender's word stages rather
+/// than sends), `mode:"submit"` (the default) also presses Enter. The draft
+/// text itself is never in the payload — the text in the box is authoritative.
 async fn command_submit_handler(
     State(state): State<BridgeState>,
     headers: HeaderMap,
@@ -3482,6 +3488,7 @@ async fn command_submit_handler(
     if pane_id.is_empty() {
         return Err(BridgeError::BadRequest("missing pane_id".to_string()));
     }
+    let mode = validate_command_submit_mode(body.mode.as_deref())?;
     let terminal_id = body
         .terminal_id
         .as_deref()
@@ -3520,13 +3527,28 @@ async fn command_submit_handler(
         terminal_id,
         &request_id,
         source,
+        mode,
         ts_ms,
     );
     Ok(Json(serde_json::json!({
         "request_id": request_id,
         "pane_id": pane_id_owned,
+        "mode": mode,
         "ts": ts_ms,
     })))
+}
+
+/// Narrow allow-list for the command-submit `mode` field. Absent/blank means
+/// the original behavior (`submit`), so an older client keeps working against a
+/// newer bridge; an unknown value is rejected rather than guessed.
+fn validate_command_submit_mode(raw: Option<&str>) -> Result<&'static str, BridgeError> {
+    match raw.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("submit") => Ok("submit"),
+        Some("stage") => Ok("stage"),
+        Some(other) => Err(BridgeError::BadRequest(format!(
+            "unknown command-submit mode: {other}"
+        ))),
+    }
 }
 
 /// Client log pipeline: the phone is a black box, so the page beams small
@@ -4522,6 +4544,7 @@ fn command_submit_event_payload(
     terminal_id: Option<&str>,
     request_id: &str,
     source: &str,
+    mode: &str,
     ts_ms: u64,
 ) -> String {
     let mut payload = serde_json::json!({
@@ -4529,6 +4552,7 @@ fn command_submit_event_payload(
         "pane_id": pane_id,
         "request_id": request_id,
         "source": source,
+        "mode": mode,
         "ts": ts_ms,
     });
     if let Some(terminal_id) = terminal_id {
@@ -4543,6 +4567,7 @@ fn broadcast_command_submit_requested(
     terminal_id: Option<&str>,
     request_id: &str,
     source: &str,
+    mode: &str,
     ts_ms: u64,
 ) {
     let _ = ui_event_tx.send(command_submit_event_payload(
@@ -4550,6 +4575,7 @@ fn broadcast_command_submit_requested(
         terminal_id,
         request_id,
         source,
+        mode,
         ts_ms,
     ));
 }
@@ -8390,6 +8416,7 @@ mod tests {
             Some("term-9"),
             "req-123",
             "talon-ender",
+            "stage",
             1_756_000_000_000,
         );
         let parsed: serde_json::Value =
@@ -8417,9 +8444,33 @@ mod tests {
             Some("talon-ender")
         );
         assert_eq!(
+            parsed.get("mode").and_then(serde_json::Value::as_str),
+            Some("stage")
+        );
+        assert_eq!(
             parsed.get("ts").and_then(serde_json::Value::as_u64),
             Some(1_756_000_000_000)
         );
+    }
+
+    #[test]
+    fn command_submit_mode_allow_list_defaults_and_rejects() {
+        // Absent or blank is the pre-existing submit behavior, so an older web
+        // bundle against a newer bridge does not change meaning.
+        assert_eq!(validate_command_submit_mode(None).unwrap(), "submit");
+        assert_eq!(validate_command_submit_mode(Some("  ")).unwrap(), "submit");
+        assert_eq!(
+            validate_command_submit_mode(Some("submit")).unwrap(),
+            "submit"
+        );
+        assert_eq!(
+            validate_command_submit_mode(Some(" stage ")).unwrap(),
+            "stage"
+        );
+        let err = validate_command_submit_mode(Some("enter")).expect_err("unknown mode rejects");
+        let message = err.to_string();
+        assert!(message.contains("unknown command-submit mode"), "{message}");
+        assert!(!message.contains('\n'));
     }
 
     #[test]
@@ -8434,6 +8485,7 @@ mod tests {
             Some("term-9"),
             "req-trip-1",
             "voice-loop-trip",
+            "stage",
             42,
         );
         let raw = rx
@@ -8457,11 +8509,16 @@ mod tests {
             parsed.get("source").and_then(serde_json::Value::as_str),
             Some("voice-loop-trip")
         );
+        assert_eq!(
+            parsed.get("mode").and_then(serde_json::Value::as_str),
+            Some("stage")
+        );
     }
 
     #[test]
     fn command_submit_event_payload_omits_missing_terminal_id() {
-        let raw = command_submit_event_payload("pane-1", None, "req-123", "talon-ender", 42);
+        let raw =
+            command_submit_event_payload("pane-1", None, "req-123", "talon-ender", "submit", 42);
         let parsed: serde_json::Value =
             serde_json::from_str(&raw).expect("payload should be valid JSON");
         assert_eq!(

@@ -173,6 +173,24 @@ check(
   ghost.status !== 200,
   JSON.stringify(ghost),
 );
+// Mode is an allow-list: `stage` (voice ender default: text, no Enter) and
+// `submit` pass, anything else is refused instead of guessed.
+const badMode = await post("/api/command-submit", {
+  pane_id: "pane-that-cannot-exist",
+  request_id: "req-e2e-3",
+  mode: "enter",
+});
+check("command-submit rejects an unknown mode", badMode.status === 400, JSON.stringify(badMode));
+const stageMode = await post("/api/command-submit", {
+  pane_id: "pane-that-cannot-exist",
+  request_id: "req-e2e-4",
+  mode: "stage",
+});
+check(
+  "command-submit accepts mode stage (pane gate still applies)",
+  stageMode.status !== 400 && stageMode.status !== 200,
+  JSON.stringify(stageMode),
+);
 
 // 4. Health + subscriber path are up.
 const health = await fetch(`${base}/api/health`);

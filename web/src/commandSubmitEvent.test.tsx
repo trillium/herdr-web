@@ -109,6 +109,63 @@ describe("command submit requested events", () => {
     expect(onSubmitCommand).toHaveBeenCalledExactlyOnceWith("dictated command");
   });
 
+  it("stages the live text without a trailing enter when mode is stage", async () => {
+    const { container, onSubmitCommand, onStageCommand } = await renderControls();
+    await setCommandValue(commandField(container), "dictated command");
+
+    await emitSignal({
+      pane_id: "pane-a",
+      request_id: "req-stage",
+      ts: Date.now(),
+      mode: "stage",
+    });
+
+    // The mode routes to onStageCommand (the parent enqueues the text without
+    // "\r"); a stage must never reach the submitting callback.
+    expect(onStageCommand).toHaveBeenCalledExactlyOnceWith("dictated command");
+    expect(onSubmitCommand).not.toHaveBeenCalled();
+    expect(logClientEventMock).toHaveBeenCalledWith("submit-fired", "talon-ender");
+
+    // Same guards as submit: a redelivered request id is ignored.
+    await emitSignal({
+      pane_id: "pane-a",
+      request_id: "req-stage",
+      ts: Date.now(),
+      mode: "stage",
+    });
+    expect(onStageCommand).toHaveBeenCalledTimes(1);
+
+    // And an empty box still drops.
+    await emitSignal({
+      pane_id: "pane-a",
+      request_id: "req-stage-empty",
+      ts: Date.now(),
+      mode: "stage",
+    });
+    expect(onStageCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("refocuses the emptied box after a mobile stage, like submit", async () => {
+    const { container, onStageCommand } = await renderControls({
+      mobileFocusAfterSubmit: true,
+    });
+    await setCommandValue(commandField(container), "dictated command");
+
+    await emitSignal({
+      pane_id: "pane-a",
+      request_id: "req-stage-focus",
+      ts: Date.now(),
+      mode: "stage",
+    });
+
+    expect(onStageCommand).toHaveBeenCalledExactlyOnceWith("dictated command");
+    const field = commandField(container);
+    expect(field.value).toBe("");
+    // Dictation continues: the fresh box holds focus so the voice word can be
+    // spoken again without a tap.
+    expect(document.activeElement).toBe(field);
+  });
+
   it("defers while composing and submits when composition ends", async () => {
     const { container, onSubmitCommand } = await renderControls();
     const field = commandField(container);
@@ -128,14 +185,14 @@ describe("command submit requested events", () => {
 });
 
 describe("voice-ender bridge submit", () => {
-  it("stages stripped text and POSTs /api/command-submit, submitting on broadcast", async () => {
+  it("stages stripped text and POSTs /api/command-submit mode=stage, staging on broadcast", async () => {
     const fetchImpl = vi.fn(async (url: string, init?: { body?: string }) => {
       void url;
       void init;
       return Response.json({ request_id: "req-voice", pane_id: "pane-a", ts: Date.now() });
     });
     vi.stubGlobal("fetch", fetchImpl);
-    const { container, onSubmitCommand } = await renderControls();
+    const { container, onSubmitCommand, onStageCommand } = await renderControls();
     const voice = capturedVoiceOptions;
     if (!voice) {
       throw new Error("voice box was never wired to parlay-input");
@@ -165,11 +222,20 @@ describe("voice-ender bridge submit", () => {
       pane_id: "pane-a",
       request_id: expect.any(String),
       source: "parlay-ender",
+      // The ender word stages by default: the bridge echoes mode back and the
+      // composer writes the text without pressing Enter, so the user decides.
+      mode: "stage",
     });
     expect(onSubmitCommand).not.toHaveBeenCalled();
 
-    await emitSignal({ pane_id: "pane-a", request_id: posted.request_id, ts: Date.now() });
-    expect(onSubmitCommand).toHaveBeenCalledExactlyOnceWith("dictated command");
+    await emitSignal({
+      pane_id: "pane-a",
+      request_id: posted.request_id,
+      ts: Date.now(),
+      mode: posted.mode as "stage",
+    });
+    expect(onStageCommand).toHaveBeenCalledExactlyOnceWith("dictated command");
+    expect(onSubmitCommand).not.toHaveBeenCalled();
 
     // Flight-recorder trace: the bridge answer (submit-ack) beams via the
     // client log (mocked here); the onSubmit payload remainder is traced as
@@ -180,13 +246,16 @@ describe("voice-ender bridge submit", () => {
   });
 });
 
-async function renderControls(options: { terminalId?: string | null } = {}) {
+async function renderControls(
+  options: { terminalId?: string | null; mobileFocusAfterSubmit?: boolean } = {},
+) {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
   roots.push(root);
   const commandInputRef = createRef<HTMLInputElement | HTMLTextAreaElement>();
   const onSubmitCommand = vi.fn();
+  const onStageCommand = vi.fn();
   const drafts = createCommandDraftStore();
   await act(async () => {
     root.render(
@@ -202,6 +271,7 @@ async function renderControls(options: { terminalId?: string | null } = {}) {
           expandingInput
           enterNewline={false}
           mobileControls
+          mobileFocusAfterSubmit={options.mobileFocusAfterSubmit ?? false}
           controlsScalePercent={100}
           compactControls={false}
           onCompactControlsChange={vi.fn()}
@@ -217,13 +287,13 @@ async function renderControls(options: { terminalId?: string | null } = {}) {
           onInput={vi.fn()}
           onTerminalFocus={vi.fn()}
           onUpload={vi.fn()}
-          onStageCommand={vi.fn()}
+          onStageCommand={onStageCommand}
           onSubmitCommand={onSubmitCommand}
         />
       </CommandDraftContext.Provider>,
     );
   });
-  return { container, onSubmitCommand };
+  return { container, onSubmitCommand, onStageCommand };
 }
 
 function commandField(container: HTMLElement) {
@@ -256,6 +326,7 @@ async function emitSignal(init: {
   terminal_id?: string;
   request_id: string;
   ts: number;
+  mode?: "submit" | "stage";
 }) {
   await act(async () => {
     emitCommandSubmitRequest({
@@ -263,6 +334,7 @@ async function emitSignal(init: {
       terminal_id: init.terminal_id ?? null,
       request_id: init.request_id,
       source: "talon-ender",
+      mode: init.mode ?? "submit",
       ts: init.ts,
     });
   });
