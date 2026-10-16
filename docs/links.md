@@ -45,7 +45,7 @@ herdr-links --json | herdr-web-bridge link --from-herdr-links
 
 This publishes every URL found, tagged `--source herdr-links` and the first pane it was seen in.
 It is idempotent: a URL already on the page is left alone (not bumped, a read link stays read),
-so it is safe to run on a timer or after each agent turn.
+including one you dismissed: it stays dismissed (use **Restore** to bring it back), so it is safe to run on a timer or after each agent turn.
 
 ### HTTP alternative (remote agents)
 

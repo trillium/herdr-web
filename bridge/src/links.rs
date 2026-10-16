@@ -859,16 +859,12 @@ mod tests {
     #[test]
     fn ingest_does_not_resurrect_dismissed_links() {
         let manager = manager("ingest-dismissed");
-        let first = manager
-            .ingest(vec![link("https://example.com/a")])
-            .unwrap();
+        let first = manager.ingest(vec![link("https://example.com/a")]).unwrap();
         assert_eq!(first.added, 1);
         let id = list_all(&manager)[0].id.clone();
         manager.dismiss(&id).unwrap();
 
-        let again = manager
-            .ingest(vec![link("https://example.com/a")])
-            .unwrap();
+        let again = manager.ingest(vec![link("https://example.com/a")]).unwrap();
         assert_eq!(again.added, 0);
         assert_eq!(again.already_present, 1);
         assert!(manager
