@@ -166,6 +166,97 @@ describe("command submit requested events", () => {
     expect(document.activeElement).toBe(field);
   });
 
+  it("refocuses the emptied box after a voice stage even with the pref off", async () => {
+    const { container, onStageCommand } = await renderControls({
+      mobileFocusAfterSubmit: false,
+    });
+    const before = commandField(container);
+    await setCommandValue(before, "dictated command");
+    before.focus();
+    expect(document.activeElement).toBe(before);
+
+    await emitSignal({
+      pane_id: "pane-a",
+      request_id: "req-stage-focus-off",
+      ts: Date.now(),
+      mode: "stage",
+    });
+
+    expect(onStageCommand).toHaveBeenCalledExactlyOnceWith("dictated command");
+    const field = commandField(container);
+    // Remounted (stale-prefix guard) and still focused despite the pref.
+    expect(field).not.toBe(before);
+    expect(field.value).toBe("");
+    expect(document.activeElement).toBe(field);
+  });
+
+  it("leaves manual Send unfocused when the pref is off, focused when on", async () => {
+    for (const pref of [false, true]) {
+      const { container, onSubmitCommand } = await renderControls({
+        mobileFocusAfterSubmit: pref,
+      });
+      const field = commandField(container);
+      await setCommandValue(field, "typed command");
+      // Voice-free submit path: a mode:"submit" signal runs submit().
+      await emitSignal({
+        pane_id: "pane-a",
+        request_id: `req-submit-pref-${pref}`,
+        ts: Date.now(),
+      });
+      expect(onSubmitCommand).toHaveBeenCalledExactlyOnceWith("typed command");
+      const fresh = commandField(container);
+      expect(fresh.value).toBe("");
+      expect(document.activeElement === fresh).toBe(pref);
+      await act(async () => {
+        for (const root of roots.splice(0)) {
+          root.unmount();
+        }
+      });
+      document.body.innerHTML = "";
+    }
+  });
+
+  it("does not prefix the next input after a voice stage (stale-prefix regression)", async () => {
+    const { container, onStageCommand } = await renderControls();
+    const before = commandField(container);
+    await setCommandValue(before, "first dictation");
+
+    await emitSignal({
+      pane_id: "pane-a",
+      request_id: "req-stage-prefix",
+      ts: Date.now(),
+      mode: "stage",
+    });
+    expect(onStageCommand).toHaveBeenCalledExactlyOnceWith("first dictation");
+
+    const fresh = commandField(container);
+    expect(fresh).not.toBe(before);
+    expect(fresh.value).toBe("");
+    // The stale node must not leak its old text into the next entry.
+    await setCommandValue(fresh, "second");
+    expect(commandField(container).value).toBe("second");
+    expect(before.isConnected).toBe(false);
+  });
+
+  it("beams focus-after-stage with the focus verdict after a voice stage", async () => {
+    vi.stubGlobal("requestAnimationFrame", (cb: () => void) => setTimeout(cb, 0));
+    const { container } = await renderControls();
+    await setCommandValue(commandField(container), "dictated command");
+    await emitSignal({
+      pane_id: "pane-a",
+      request_id: "req-stage-beacon",
+      ts: Date.now(),
+      mode: "stage",
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(logClientEventMock).toHaveBeenCalledWith(
+      "focus-after-stage",
+      expect.stringMatching(/^active=1 vvh=\d+$/u),
+    );
+  });
+
   it("defers while composing and submits when composition ends", async () => {
     const { container, onSubmitCommand } = await renderControls();
     const field = commandField(container);

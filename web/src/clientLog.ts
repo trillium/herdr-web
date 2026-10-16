@@ -43,6 +43,7 @@ export type ClientLogKind =
   | "ender-result"
   | "page-load"
   | "voice-toggle"
+  | "focus-after-stage"
   | "console-error";
 
 const CLIENT_LOG_KINDS: readonly string[] = [
@@ -59,6 +60,7 @@ const CLIENT_LOG_KINDS: readonly string[] = [
   "ender-result",
   "page-load",
   "voice-toggle",
+  "focus-after-stage",
   "console-error",
 ];
 
