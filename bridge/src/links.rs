@@ -158,8 +158,8 @@ impl LinksManager {
         })
     }
 
-    /// Bulk-adds links found by a scanner. Unlike [`add`], a URL that is already live is left
-    /// untouched (no bump, no "new" again), so re-running a sweep is idempotent. Invalid URLs are
+    /// Bulk-adds links found by a scanner. Unlike [`add`], a URL that is already present (live or
+    /// dismissed) is left untouched (no bump, no "new" again), so re-running a sweep is idempotent. Invalid URLs are
     /// counted, not fatal.
     pub fn ingest(&self, requests: Vec<AddLinkRequest>) -> Result<IngestResult, LinksError> {
         let mut drafts = Vec::new();
@@ -283,7 +283,7 @@ struct Draft {
 fn apply_add(store: &mut LinksStore, now: String, draft: Draft, bump: bool) -> Option<LinkEntry> {
     if let Some(url) = &draft.url {
         if let Some(existing) = store.entries.iter_mut().find(|entry| {
-            entry.dismissed_at.is_none()
+            (!bump || entry.dismissed_at.is_none())
                 && entry.kind == LinkKind::Link
                 && entry.url.as_deref() == Some(url.as_str())
         }) {
@@ -854,6 +854,32 @@ mod tests {
             manager.dismiss("nope"),
             Err(LinksError::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn ingest_does_not_resurrect_dismissed_links() {
+        let manager = manager("ingest-dismissed");
+        let first = manager
+            .ingest(vec![link("https://example.com/a")])
+            .unwrap();
+        assert_eq!(first.added, 1);
+        let id = list_all(&manager)[0].id.clone();
+        manager.dismiss(&id).unwrap();
+
+        let again = manager
+            .ingest(vec![link("https://example.com/a")])
+            .unwrap();
+        assert_eq!(again.added, 0);
+        assert_eq!(again.already_present, 1);
+        assert!(manager
+            .list(LinksListQuery::default())
+            .unwrap()
+            .entries
+            .is_empty());
+        let all = list_all(&manager);
+        assert_eq!(all.len(), 1);
+        assert!(all[0].dismissed_at.is_some());
+        assert_eq!(all[0].count, 1);
     }
 
     #[test]
