@@ -231,7 +231,8 @@
   Send/Stage buttons). The box is still cleared and remounted, so the stale-prefix guard is
   unchanged. Adds a `focus-after-stage` flight-recorder beacon (`active=<0|1> vvh=<px>`) so a phone
   test shows whether focus held; the beacon needs a rebuilt bridge binary (new allow-listed log
-  kind) as well as `npm run build:web`.
+  kind) as well as `npm run build:web`
+  ([#65](https://github.com/trillium/herdr-web/pull/65)).
 
 - The voice-ender word (`bravely`, plus `gravely`/`briefly`/`lap`) now stages the dictated text
   into the pane instead of submitting it. The composer writes the text with no trailing Enter, keeps
