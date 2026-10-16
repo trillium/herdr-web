@@ -113,6 +113,7 @@ describe("ClientLogBeacon", () => {
       "ender-result",
       "page-load",
       "voice-toggle",
+      "focus-after-stage",
       "console-error",
     ] as const;
     for (const kind of kinds) {

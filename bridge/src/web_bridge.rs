@@ -3578,6 +3578,7 @@ const ALLOWED_CLIENT_LOG_KINDS: &[&str] = &[
     "ender-result",
     "page-load",
     "voice-toggle",
+    "focus-after-stage",
     "console-error",
 ];
 
@@ -8363,6 +8364,7 @@ mod tests {
         }
         assert!(ALLOWED_CLIENT_LOG_KINDS.contains(&"page-load"));
         assert!(ALLOWED_CLIENT_LOG_KINDS.contains(&"voice-toggle"));
+        assert!(ALLOWED_CLIENT_LOG_KINDS.contains(&"focus-after-stage"));
         assert!(ALLOWED_CLIENT_LOG_KINDS.contains(&"ender-match"));
         assert!(ALLOWED_CLIENT_LOG_KINDS.contains(&"ender-result"));
         assert!(ALLOWED_CLIENT_LOG_KINDS.contains(&"submit-ack"));

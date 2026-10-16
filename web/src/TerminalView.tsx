@@ -1770,6 +1770,23 @@ function MobileSelectionActions({
   );
 }
 
+// Flight-recorder beacon for the voice-stage refocus: two frames after the
+// programmatic focus(), record whether the fresh box still owns focus and how
+// tall the visual viewport is (a keyboard-up phone shrinks it). Lets a phone
+// test tell "caret present, keyboard gone" from "no focus" without a device
+// debugger.
+function beaconFocusAfterStage(node: HTMLElement) {
+  const frame = (cb: () => void) =>
+    typeof requestAnimationFrame === "function" ? requestAnimationFrame(cb) : setTimeout(cb, 0);
+  frame(() =>
+    frame(() => {
+      const active = document.activeElement === node ? 1 : 0;
+      const vvh = Math.round(window.visualViewport?.height ?? 0);
+      logClientEvent("focus-after-stage", `active=${active} vvh=${vvh}`);
+    }),
+  );
+}
+
 export function TerminalCommandControls({
   bridgeId,
   paneId,
@@ -1846,6 +1863,7 @@ export function TerminalCommandControls({
   }, [value]);
   const [fieldKey, setFieldKey] = useState(0);
   const focusAfterSubmitRef = useRef(false);
+  const beaconFocusAfterRef = useRef(false);
   const [expanded, setExpanded] = useState(false);
   const [ctrlLatch, setCtrlLatch] = useState(false);
   const setCommandInputNode = (node: HTMLInputElement | HTMLTextAreaElement | null) => {
@@ -1899,10 +1917,13 @@ export function TerminalCommandControls({
   // Voice stage (mode:'stage'): the ender word lands the dictated draft in the
   // pane without the trailing Enter, so the user submits it themselves. Read
   // the live node exactly like submit() (a voice stage writes the stripped text
-  // synchronously just before the broadcast returns), and keep submit()'s
-  // refocus flag so mobile dictation continues into a fresh box.
+  // synchronously just before the broadcast returns). Always refocus the
+  // fresh box, regardless of the "Focus command input after Send" pref: the
+  // ender word is spoken mid-dictation, so losing focus here drops the cursor
+  // and keyboard. The pref still governs the manual Send/Stage buttons.
   const stageLive = () => {
-    focusAfterSubmitRef.current = !mobileControls || mobileFocusAfterSubmit;
+    focusAfterSubmitRef.current = true;
+    beaconFocusAfterRef.current = true;
     const command = commandInputRef.current?.value ?? value;
     clearCommandInput();
     onStageCommand(command);
@@ -2036,6 +2057,10 @@ export function TerminalCommandControls({
       if (focusAfterSubmitRef.current) {
         focusAfterSubmitRef.current = false;
         node.focus();
+        if (beaconFocusAfterRef.current) {
+          beaconFocusAfterRef.current = false;
+          beaconFocusAfterStage(node);
+        }
       }
     }
   }, [commandInputRef, fieldKey]);
