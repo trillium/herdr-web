@@ -413,6 +413,8 @@ The bridge exposes:
 - `POST /api/command`: allow-listed workspace/tab/pane commands
 - `POST /api/selection`: bridge-owned selected pane for syncing browser clients
 - `GET /api/notes` and `POST /api/notes...`: bridge-owned pane notes
+- `GET|POST /api/links` and `POST /api/links/{id}/open|dismiss|restore`: the `/links` page's
+  agent-published links and notes (see [docs/links.md](docs/links.md))
 - `GET /api/agent-activity`: bridge-tracked agent status transition activity
 - `GET /api/agent-pins` and `POST /api/agent-pins/{pane_id}/pin|unpin`: bridge-owned agent pins
 - `GET /api/mobile-mode` and `POST /api/mobile-mode`: read/toggle a `mobile-mode` presence flag

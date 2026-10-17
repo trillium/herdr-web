@@ -3,6 +3,7 @@ mod agent_pins;
 mod conn_log;
 mod connection_manager;
 mod launcher_presets;
+mod links;
 mod notes;
 mod session;
 mod store_util;

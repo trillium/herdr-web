@@ -137,7 +137,7 @@ rsync -a --delete web/dist/ ~/.local/share/herdr-web/dist/
 ```
 
 No bridge restart is needed for a static-only update; assets are read from disk per request.
-A new bridge route or command, including `/send`, is compiled into the bridge binary and
+A new bridge route or command, including `/send` and `/links`, is compiled into the bridge binary and
 takes effect only after that process is restarted. To prune an
 already-deployed dir without a fresh sync, delete only hashed assets unreachable
 from `index.html` — reachability is transitive (bundles reference chunks, CSS

@@ -18,6 +18,14 @@
 
 ### Added
 
+- Links & notes page at `/links`: a place for the human to open links and read short notes that
+  agents hand off, with New badges, Dismiss/Restore and a `(n)` tab-title count. Agents publish
+  with `herdr-web-bridge link URL|--note TEXT` (or `POST /api/links`); `herdr-links --json |
+  herdr-web-bridge link --from-herdr-links` publishes what the existing pane scanner finds,
+  idempotently. See `docs/links.md`. Deploy needs a rebuilt bridge binary (new routes and the
+  `link` subcommand) plus `npm run build:web` and
+  `rsync -a --delete web/dist/ ~/.local/share/herdr-web/dist/`.
+
 - Send-only page at `/send`. It shows the pane Herdr currently has focused (workspace, tab,
   pane id, agent, directory) and a text box that inserts into that pane through the existing
   `/api/command` path (`pane.send_text`, or `pane.send_input` with Enter, which is on by

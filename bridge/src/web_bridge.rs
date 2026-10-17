@@ -62,6 +62,9 @@ use crate::launcher_presets::{
     LauncherPresetLaunch, LauncherPresetStore, ManagedAgentKind, ResolvedLauncherPreset,
     MAX_LABEL_BYTES,
 };
+use crate::links::{
+    AddLinkRequest, LinkEntry, LinksError, LinksListQuery, LinksListResponse, LinksManager,
+};
 use crate::notes::{
     AttachNoteRequest, CreateNoteRequest, NoteResponse, NotesError, NotesListQuery,
     NotesListResponse, NotesManager, RevisionRequest, UpdateNoteRequest,
@@ -83,6 +86,7 @@ const MIN_HERDR_VERSION_LABEL: &str = "0.9.0";
 const MAX_UPLOAD_BYTES: usize = 25 * 1024 * 1024;
 const MAX_FOCUSED_PANE_SEND_BYTES: usize = 64 * 1024;
 const MAX_NOTES_REQUEST_BYTES: usize = 512 * 1024;
+const MAX_LINKS_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_TERMINAL_INPUT_CHUNK_BYTES: usize = 768 * 1024;
 const MAX_QUEUED_TERMINAL_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const TERMINAL_DETACH_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -144,6 +148,7 @@ struct BridgeState {
     connection_manager: Arc<ConnectionManager>,
     launcher_presets: Arc<LauncherPresetStore>,
     notes: Arc<NotesManager>,
+    links: Arc<LinksManager>,
     ui_event_tx: tokio::sync::broadcast::Sender<String>,
     activity_tx: tokio::sync::broadcast::Sender<ActivityMessage>,
     upload_dir: PathBuf,
@@ -943,6 +948,7 @@ enum BridgeError {
     Api(ApiClientError),
     Io(io::Error),
     BadRequest(String),
+    NotFound(String),
     Conflict(String),
     Forbidden(String),
     Protocol(String),
@@ -964,6 +970,7 @@ impl fmt::Display for BridgeError {
             Self::Api(err) => write!(f, "{err}"),
             Self::Io(err) => write!(f, "{err}"),
             Self::BadRequest(message) => write!(f, "{message}"),
+            Self::NotFound(message) => write!(f, "{message}"),
             Self::Conflict(message) => write!(f, "{message}"),
             Self::Forbidden(message) => write!(f, "{message}"),
             Self::Protocol(message) => write!(f, "{message}"),
@@ -975,6 +982,7 @@ impl IntoResponse for BridgeError {
     fn into_response(self) -> Response {
         let status = match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::Api(_) | Self::Io(_) | Self::Protocol(_) => StatusCode::BAD_GATEWAY,
@@ -1005,6 +1013,17 @@ impl From<NotesError> for BridgeError {
             NotesError::Conflict(message) => Self::Conflict(message),
             NotesError::Io(err) => Self::Io(err),
             NotesError::Store(message) => Self::Protocol(message),
+        }
+    }
+}
+
+impl From<LinksError> for BridgeError {
+    fn from(err: LinksError) -> Self {
+        match err {
+            LinksError::BadRequest(message) => Self::BadRequest(message),
+            LinksError::NotFound(message) => Self::NotFound(message),
+            LinksError::Io(err) => Self::Io(err),
+            LinksError::Store(message) => Self::Protocol(message),
         }
     }
 }
@@ -1067,6 +1086,9 @@ impl From<io::Error> for UploadError {
 }
 
 pub(crate) fn run_command(args: &[String]) -> io::Result<i32> {
+    if args.first().map(String::as_str) == Some("link") {
+        return crate::links::run_cli(&args[1..]);
+    }
     let options = match parse_options(args) {
         Ok(Some(options)) => options,
         Ok(None) => return Ok(0),
@@ -1353,6 +1375,7 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
             .map_err(|message| io::Error::new(ErrorKind::InvalidInput, message))?,
     );
     let notes = Arc::new(NotesManager::new()?);
+    let links = Arc::new(LinksManager::new()?);
     let preferences_path = default_store_dir("HERDR_WEB_DATA_DIR", "", "herdr-web-data")
         .join("connection-priorities.json");
     ensure_private_dir(&preferences_path.parent().unwrap_or(&PathBuf::from(".")))?;
@@ -1410,6 +1433,7 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
         connection_manager,
         launcher_presets,
         notes,
+        links,
         ui_event_tx: tokio::sync::broadcast::channel(256).0,
         activity_tx: tokio::sync::broadcast::channel(512).0,
         upload_dir: options.upload_dir.clone(),
@@ -1468,6 +1492,26 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
             post(notes_delete_handler).options(preflight_handler),
         )
         .layer(DefaultBodyLimit::max(MAX_NOTES_REQUEST_BYTES));
+    let links_routes = Router::new()
+        .route(
+            "/api/links",
+            get(links_list_handler)
+                .post(links_add_handler)
+                .options(preflight_handler),
+        )
+        .route(
+            "/api/links/{link_id}/open",
+            post(links_open_handler).options(preflight_handler),
+        )
+        .route(
+            "/api/links/{link_id}/dismiss",
+            post(links_dismiss_handler).options(preflight_handler),
+        )
+        .route(
+            "/api/links/{link_id}/restore",
+            post(links_restore_handler).options(preflight_handler),
+        )
+        .layer(DefaultBodyLimit::max(MAX_LINKS_REQUEST_BYTES));
     let launcher_preset_routes = Router::new()
         .route(
             "/api/launcher-presets",
@@ -1505,10 +1549,12 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
             post(kick_connection_handler).options(preflight_handler),
         );
     let send_index = options.static_dir.join("index.html");
+    let links_index = send_index.clone();
     let app = Router::new()
         .merge(agent_activity_routes)
         .merge(agent_pins_routes)
         .merge(notes_routes)
+        .merge(links_routes)
         .merge(launcher_preset_routes)
         .merge(mobile_mode_routes)
         .merge(connection_routes)
@@ -1568,6 +1614,8 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
         )
         .route("/send", send_page_route(send_index.clone()))
         .route("/send/", send_page_route(send_index))
+        .route("/links", send_page_route(links_index.clone()))
+        .route("/links/", send_page_route(links_index))
         .fallback_service(
             ServiceBuilder::new()
                 .layer(middleware::from_fn(add_static_cache_headers))
@@ -4374,6 +4422,70 @@ async fn mobile_mode_toggle_handler(
     Ok(Json(serde_json::json!({ "active": active })))
 }
 
+async fn links_list_handler(
+    State(state): State<BridgeState>,
+    Query(query): Query<LinksListQuery>,
+    headers: HeaderMap,
+) -> Result<Json<LinksListResponse>, BridgeError> {
+    ensure_allowed_request(&headers, &state.request_policy)?;
+    Ok(Json(
+        run_store_task(state, move |state| Ok(state.links.list(query)?)).await?,
+    ))
+}
+
+async fn links_add_handler(
+    State(state): State<BridgeState>,
+    headers: HeaderMap,
+    Json(body): Json<AddLinkRequest>,
+) -> Result<Json<LinkEntry>, BridgeError> {
+    ensure_allowed_request(&headers, &state.request_policy)?;
+    let entry = run_store_task(state.clone(), move |state| Ok(state.links.add(body)?)).await?;
+    broadcast_links_changed(&state, Some(&entry.id));
+    Ok(Json(entry))
+}
+
+async fn links_open_handler(
+    State(state): State<BridgeState>,
+    AxumPath(link_id): AxumPath<String>,
+    headers: HeaderMap,
+) -> Result<Json<LinkEntry>, BridgeError> {
+    ensure_allowed_request(&headers, &state.request_policy)?;
+    let entry = run_store_task(state.clone(), move |state| {
+        Ok(state.links.mark_opened(&link_id)?)
+    })
+    .await?;
+    broadcast_links_changed(&state, Some(&entry.id));
+    Ok(Json(entry))
+}
+
+async fn links_dismiss_handler(
+    State(state): State<BridgeState>,
+    AxumPath(link_id): AxumPath<String>,
+    headers: HeaderMap,
+) -> Result<Json<LinkEntry>, BridgeError> {
+    ensure_allowed_request(&headers, &state.request_policy)?;
+    let entry = run_store_task(state.clone(), move |state| {
+        Ok(state.links.dismiss(&link_id)?)
+    })
+    .await?;
+    broadcast_links_changed(&state, Some(&entry.id));
+    Ok(Json(entry))
+}
+
+async fn links_restore_handler(
+    State(state): State<BridgeState>,
+    AxumPath(link_id): AxumPath<String>,
+    headers: HeaderMap,
+) -> Result<Json<LinkEntry>, BridgeError> {
+    ensure_allowed_request(&headers, &state.request_policy)?;
+    let entry = run_store_task(state.clone(), move |state| {
+        Ok(state.links.restore(&link_id)?)
+    })
+    .await?;
+    broadcast_links_changed(&state, Some(&entry.id));
+    Ok(Json(entry))
+}
+
 async fn notes_list_handler(
     State(state): State<BridgeState>,
     Query(query): Query<NotesListQuery>,
@@ -4524,6 +4636,16 @@ fn broadcast_agent_activity_changed(state: &BridgeState) {
     let payload = serde_json::json!({
         "type": "herdr_web.agent_activity_changed",
     });
+    let _ = state.ui_event_tx.send(payload.to_string());
+}
+
+fn broadcast_links_changed(state: &BridgeState, link_id: Option<&str>) {
+    let mut payload = serde_json::json!({
+        "type": "herdr_web.links_changed",
+    });
+    if let Some(link_id) = link_id {
+        payload["link_id"] = serde_json::json!(link_id);
+    }
     let _ = state.ui_event_tx.send(payload.to_string());
 }
 

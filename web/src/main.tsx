@@ -2,6 +2,7 @@ import "@fontsource-variable/geist/wght.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { initAnalytics } from "./analytics";
+import { isLinksPath } from "./links";
 import { isSendOnlyPath } from "./sendOnly";
 import { logClientEvent } from "./clientLog";
 import { installConsoleCapture } from "./consoleCapture";
@@ -27,7 +28,14 @@ if (!root) {
 
 const sendOnly = isSendOnlyPath(window.location.pathname);
 
-if (sendOnly) {
+if (isLinksPath(window.location.pathname)) {
+  const { LinksPage } = await import("./LinksPage");
+  createRoot(root).render(
+    <StrictMode>
+      <LinksPage />
+    </StrictMode>,
+  );
+} else if (sendOnly) {
   const { SendOnlyPage } = await import("./SendOnlyPage");
   createRoot(root).render(
     <StrictMode>

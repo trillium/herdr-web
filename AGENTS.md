@@ -73,6 +73,11 @@ This is a lightweight internal onboarding note for agents working in this repo.
   Tailnet (`100.x`) page origins, `PARLAY_ALLOWED_ORIGINS` on the parlay server — a `403` with no
   CORS headers means the origin was refused, not that the server is down.
 
+- The `/links` page's store (`bridge/src/links.rs`) has two writers: the bridge's HTTP handlers and
+  the `herdr-web-bridge link ...` CLI subcommand (dispatched at the top of `run_command`), which
+  writes the same file-locked JSON directly. The CLI cannot broadcast, so the page polls; do not
+  make the CLI depend on a running bridge. Usage lives in `docs/links.md`.
+
 ## Pull Requests
 
 - Always pass `--repo trillium/herdr-web` when creating a PR. This checkout has an `upstream`
