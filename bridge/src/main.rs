@@ -9,6 +9,7 @@ mod session;
 mod store_util;
 mod terminal_multiplex;
 mod web_bridge;
+mod websocket_heartbeat;
 mod workspace;
 
 fn main() -> std::io::Result<()> {

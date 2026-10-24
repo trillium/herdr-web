@@ -234,6 +234,13 @@
 
 ### Changed
 
+- Merged upstream `kcosr/herdr-web` through `v0.6.2` (mobile terminal key rework with hold-repeat
+  keys and a shortcut composer, reverse-proxy path prefixes for bridge URLs, WebSocket idle
+  heartbeats, event-stream recovery, vendored Herdr compat refreshed to `v0.9.3`). The runtime
+  minimum stays Herdr `v0.9.0` / terminal protocol `22`. Fork behavior is kept where it differs:
+  C-c and C-d stay out of the quick-key strip, the key strip still hides behind the compact-controls
+  toggle, and the fork's stage, follow-on, pin-cycle and mobile-mode buttons are unchanged.
+
 - The voice line-ender now always refocuses the cleared command box on mobile, regardless of
   Settings -> Mobile -> "Focus command input after Send" (that setting still governs the manual
   Send/Stage buttons). The box is still cleared and remounted, so the stale-prefix guard is
@@ -277,6 +284,72 @@
 
 - Removed the C-c and C-d buttons from the terminal quick-key strip (Tab stays)
   ([#55](https://github.com/trillium/herdr-web/pull/55)).
+
+## [0.6.2] - 2026-10-07
+
+### Added
+
+- Allow configured bridge URLs to include a reverse-proxy path prefix for same-origin multi-bridge
+  deployments. [PR #94](https://github.com/kcosr/herdr-web/pull/94), contributed by
+  [Will Hampson (@Whamp)](https://github.com/Whamp).
+
+### Changed
+
+- Refresh vendored Herdr compatibility to v0.9.3, retaining terminal protocol 22 and the
+  v0.9.0 runtime minimum. [PR #95](https://github.com/kcosr/herdr-web/pull/95).
+- Automatically increment Android `versionCode` and stamp `versionName` in the tagged release
+  commit, keeping repeated builds of that release on the same Android version.
+  [PR #91](https://github.com/kcosr/herdr-web/pull/91).
+- Document APK package, signature, alignment, and update-signer checks, and clarify debug signing.
+  [PR #91](https://github.com/kcosr/herdr-web/pull/91) by
+  [Will Hampson (@Whamp)](https://github.com/Whamp).
+
+### Fixed
+
+- Recover structural and activity event streams after lost events or disconnects, refresh
+  snapshots on resubscription, and release disconnected browser readers.
+  [PR #95](https://github.com/kcosr/herdr-web/pull/95).
+- Send protocol-level pings on idle browser WebSockets and close connections that do not return peer
+  traffic within 15 seconds, removing dead transports without claiming to detect frozen JavaScript.
+  [PR #93](https://github.com/kcosr/herdr-web/pull/93), contributed by
+  [Will Hampson (@Whamp)](https://github.com/Whamp).
+
+## [0.6.1] - 2026-09-12
+
+### Added
+
+- Add a non-repeating Enter key at the end of the expanded mobile arrow row, also selectable
+  for shortcuts such as Alt+Enter. [PR #89](https://github.com/kcosr/herdr-web/pull/89).
+
+- Add mobile terminal keys with hold-repeat and a shortcut builder for Ctrl, Shift, and Alt
+  combinations with special or printable keys. [PR #89](https://github.com/kcosr/herdr-web/pull/89),
+  building on [PR #63](https://github.com/kcosr/herdr-web/pull/63) by
+  [Will Hampson (@Whamp)](https://github.com/Whamp).
+
+### Changed
+
+- Keep Esc, Tab, C-c, C-d, and 1/2/3 in the mobile quick-key row. The neutral keyboard icon
+  expands Backspace, arrows, and navigation keys, with a keyboard-plus shortcut toggle inside.
+  [PR #89](https://github.com/kcosr/herdr-web/pull/89).
+- Share the same keys between direct input and shortcut building. Show the selected chord with
+  Send and Cancel actions; tapping the selected key again clears it while retaining modifiers.
+  Sending, cancelling, or collapsing the keyboard exits shortcut mode without changing the
+  command draft.
+  [PR #89](https://github.com/kcosr/herdr-web/pull/89).
+
+### Fixed
+
+- Preserve terminal or command-field focus when tapping mobile quick keys, shortcut keys,
+  or modifier toggles so the soft keyboard can stay open.
+  [PR #89](https://github.com/kcosr/herdr-web/pull/89).
+
+- Keep held mobile terminal keys repeating through UI updates, and send conventional
+  modified Backspace, Tab, and Escape input without requiring an extended keyboard protocol.
+  [PR #89](https://github.com/kcosr/herdr-web/pull/89).
+
+- Start mobile terminal refit retries after the current terminal renderer mounts, so a slow tab
+  switch cannot leave the terminal at its initial keyboard-sized height.
+  [PR #90](https://github.com/kcosr/herdr-web/pull/90).
 
 ## [0.6.0] - 2026-09-07
 

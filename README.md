@@ -354,6 +354,11 @@ For browser-served multi-bridge setups, configure both directions explicitly:
   origin that the page may connect to. This expands the served page's Content Security Policy for
   both HTTP and WebSocket bridge traffic.
 
+A configured bridge URL may include a reverse-proxy path prefix, such as
+`https://herd.example/bridges/server60`. The proxy must strip `/bridges/server60` before forwarding
+HTTP and WebSocket requests to the target bridge. A same-origin path keeps browser traffic under one
+public origin, so it does not require an additional `--allow-connect-origin` entry.
+
 For example, if the page is opened from `http://host-a:8787` and should connect to
 `http://host-b:8787`:
 
@@ -424,7 +429,8 @@ The bridge exposes:
 - `GET|POST /api/remote/{bridge_id}/{*rest}`: proxies REST reads to a `--remote-bridge`-configured
   remote bridge's `/api/{rest}`
 - `GET /ws/activity`: bridge-owned pane activity deltas
-- `GET /ws/events`: Herdr structural events
+- `GET /ws/events`: Herdr structural events, preceded by a bridge `resync_required` message after
+  subscription acknowledgement; closes on upstream failure so clients can reconnect and resnapshot
 - `GET /ws/ui-events`: bridge-local UI events such as selection changes
 - `GET /ws/terminal`: terminal attach stream
 - `GET /ws/remote/{bridge_id}/terminal`: proxies a terminal attach stream to a `--remote-bridge`-
@@ -477,8 +483,9 @@ local `vendor/herdr-compat` crate for copied Herdr protocol/schema/client/socket
 bridge HTTP/WebSocket behavior in `bridge/src/web_bridge.rs`. A separate upstream Herdr checkout can
 be used for refreshes and drift audits, but a full `vendor/herdr` snapshot is not part of this repo.
 The cost is that `vendor/herdr-compat` must be kept compatible with Herdr protocol changes.
-The current compatibility baseline is Herdr `v0.9.0` and terminal protocol `22`; the bridge requires
-that exact protocol rather than attempting to decode older or newer private wire formats.
+The current vendored compatibility baseline is Herdr `v0.9.3` and terminal protocol `22`. The
+runtime version floor remains `v0.9.0`; the bridge requires that exact protocol rather than
+attempting to decode older or newer private wire formats.
 
 See [docs/vendoring.md](docs/vendoring.md) for the refresh process.
 
@@ -506,7 +513,7 @@ surface.
 
 `herdr-web` builds on several projects and tools:
 
-- [Herdr](https://github.com/ogulcancelik/herdr), the terminal workspace manager this app extends.
+- [Herdr](https://github.com/herdrdev/herdr), the terminal workspace manager this app extends.
 - [Ghostty Web](https://www.npmjs.com/package/ghostty-web), used by the browser terminal renderer.
 - [Ghostty](https://github.com/ghostty-org/ghostty), including Ghostty VT / `libghostty-vt`,
   vendored through Herdr and used for terminal emulation in Herdr core.
