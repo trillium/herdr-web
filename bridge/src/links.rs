@@ -125,7 +125,7 @@ impl LinksManager {
     }
 
     #[cfg(test)]
-    fn for_test(dir: PathBuf) -> io::Result<Self> {
+    pub(crate) fn for_test(dir: PathBuf) -> io::Result<Self> {
         ensure_private_dir(&dir)?;
         Ok(Self {
             path: dir.join("links.json"),
