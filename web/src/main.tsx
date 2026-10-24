@@ -2,6 +2,7 @@ import "@fontsource-variable/geist/wght.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { initAnalytics } from "./analytics";
+import { applyFaviconTint } from "./faviconTint";
 import { isLinksPath } from "./links";
 import { isSendOnlyPath } from "./sendOnly";
 import { logClientEvent } from "./clientLog";
@@ -19,6 +20,7 @@ installConsoleCapture((kind, detail) => {
   }
 });
 initAnalytics();
+void applyFaviconTint();
 
 const root = document.getElementById("root");
 

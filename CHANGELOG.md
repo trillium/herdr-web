@@ -18,6 +18,9 @@
 
 ### Added
 
+- Tab icon (favicon) is tinted per machine from the URL hostname: `mini0` green, `mini1` blue,
+  anything else keeps the standard icon. `?tint=<css color>` overrides.
+
 - Links & notes page at `/links`: a place for the human to open links and read short notes that
   agents hand off, with New badges, Dismiss/Restore and a `(n)` tab-title count. Agents publish
   with `herdr-web-bridge link URL|--note TEXT` (or `POST /api/links`); `herdr-links --json |
