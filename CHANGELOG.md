@@ -239,7 +239,8 @@
   heartbeats, event-stream recovery, vendored Herdr compat refreshed to `v0.9.3`). The runtime
   minimum stays Herdr `v0.9.0` / terminal protocol `22`. Fork behavior is kept where it differs:
   C-c and C-d stay out of the quick-key strip, the key strip still hides behind the compact-controls
-  toggle, and the fork's stage, follow-on, pin-cycle and mobile-mode buttons are unchanged.
+  toggle, and the fork's stage, follow-on, pin-cycle and mobile-mode buttons are unchanged
+  ([#67](https://github.com/trillium/herdr-web/pull/67)).
 
 - The voice line-ender now always refocuses the cleared command box on mobile, regardless of
   Settings -> Mobile -> "Focus command input after Send" (that setting still governs the manual
