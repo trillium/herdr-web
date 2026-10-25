@@ -44,10 +44,10 @@ use herdr_compat::api::client::{ApiClient, ApiClientError};
 use herdr_compat::api::schema::{
     AgentInfo, AgentStartParams, AgentStatus, AgentTarget, EmptyParams, EventsSubscribeParams,
     LayoutApplyParams, LayoutExportParams, Method, PaneCurrentParams, PaneInfo, PaneLayoutSnapshot,
-    PaneListParams, PaneMoveDestination, PaneSplitParams, PaneTarget, Request, ResponseResult,
-    SessionSnapshot, SplitDirection, Subscription, SubscriptionEventData,
-    SubscriptionEventEnvelope, SubscriptionEventKind, TabCreateParams, TabInfo, TabListParams,
-    TabTarget, WorkspaceInfo,
+    PaneListParams, PaneMoveDestination, PaneSendInputParams, PaneSendTextParams, PaneSplitParams,
+    PaneTarget, Request, ResponseResult, SessionSnapshot, SplitDirection, Subscription,
+    SubscriptionEventData, SubscriptionEventEnvelope, SubscriptionEventKind, TabCreateParams,
+    TabInfo, TabListParams, TabTarget, WorkspaceInfo,
 };
 use herdr_compat::protocol::{
     self, AttachScrollDirection, AttachScrollSource, ClientMessage, RenderEncoding, ServerMessage,
@@ -85,7 +85,13 @@ const DEFAULT_STATIC_DIR: &str = "web/dist";
 const MIN_HERDR_VERSION: (u64, u64, u64) = (0, 9, 0);
 const MIN_HERDR_VERSION_LABEL: &str = "0.9.0";
 const MAX_UPLOAD_BYTES: usize = 25 * 1024 * 1024;
-const MAX_FOCUSED_PANE_SEND_BYTES: usize = 64 * 1024;
+/// Largest text one `/api/command` send may carry. Same budget as the terminal
+/// websocket's input backlog; anything bigger is refused up front, never cut.
+const MAX_FOCUSED_PANE_SEND_BYTES: usize = 8 * 1024 * 1024;
+/// Herdr's API socket drops a request line near 1 MiB (the bridge sees a broken
+/// pipe). JSON escaping can grow a control character 6x, so a send is split into
+/// raw-text pieces of this size, which stay under the limit even when escaped.
+const PANE_SEND_CHUNK_BYTES: usize = 128 * 1024;
 const MAX_NOTES_REQUEST_BYTES: usize = 512 * 1024;
 const MAX_LINKS_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_TERMINAL_INPUT_CHUNK_BYTES: usize = 768 * 1024;
@@ -2434,9 +2440,10 @@ fn validate_focused_pane_send_text(pane_id: &str, text: &str) -> Result<(), Brid
         return Err(BridgeError::BadRequest("text is required".to_string()));
     }
     if text.len() > MAX_FOCUSED_PANE_SEND_BYTES {
-        return Err(BridgeError::BadRequest(
-            "text must be at most 65536 bytes".to_string(),
-        ));
+        return Err(BridgeError::BadRequest(format!(
+            "text is {} bytes; at most {MAX_FOCUSED_PANE_SEND_BYTES} bytes can be sent at once",
+            text.len()
+        )));
     }
     if text.contains('\0') {
         return Err(BridgeError::BadRequest(
@@ -2444,6 +2451,100 @@ fn validate_focused_pane_send_text(pane_id: &str, text: &str) -> Result<(), Brid
         ));
     }
     Ok(())
+}
+
+/// Split a text send into pieces of at most `max_bytes`, cut on char boundaries.
+/// Only the last piece of a `pane.send_input` keeps its keys, so the Enter press
+/// still lands after all of the text. Other methods pass through untouched.
+fn split_pane_send(method: Method, max_bytes: usize) -> Vec<Method> {
+    fn pieces(text: &str, max_bytes: usize) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut rest = text;
+        while rest.len() > max_bytes {
+            let mut cut = max_bytes;
+            while !rest.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            let (head, tail) = rest.split_at(cut);
+            out.push(head);
+            rest = tail;
+        }
+        out.push(rest);
+        out
+    }
+    match method {
+        Method::PaneSendText(params) if params.text.len() > max_bytes => {
+            pieces(&params.text, max_bytes)
+                .into_iter()
+                .map(|text| {
+                    Method::PaneSendText(PaneSendTextParams {
+                        pane_id: params.pane_id.clone(),
+                        text: text.to_string(),
+                    })
+                })
+                .collect()
+        }
+        Method::PaneSendInput(params) if params.text.len() > max_bytes => {
+            let texts = pieces(&params.text, max_bytes);
+            let last = texts.len() - 1;
+            texts
+                .into_iter()
+                .enumerate()
+                .map(|(index, text)| {
+                    if index == last {
+                        Method::PaneSendInput(PaneSendInputParams {
+                            pane_id: params.pane_id.clone(),
+                            text: text.to_string(),
+                            keys: params.keys.clone(),
+                        })
+                    } else {
+                        Method::PaneSendText(PaneSendTextParams {
+                            pane_id: params.pane_id.clone(),
+                            text: text.to_string(),
+                        })
+                    }
+                })
+                .collect()
+        }
+        other => vec![other],
+    }
+}
+
+/// Send a command, splitting a large text send into sequential pieces so Herdr's
+/// request-size limit never truncates or drops it. A failure part-way names how
+/// much was already delivered, since that text is in the pane and cannot be recalled.
+fn send_command_chunked(
+    api: &ApiClient,
+    request: Request,
+    agent_pane: bool,
+) -> Result<herdr_compat::api::schema::SuccessResponse, BridgeError> {
+    let id = request.id;
+    let pieces = plan_pane_send(request.method, agent_pane, PANE_SEND_CHUNK_BYTES);
+    let total = pieces.len();
+    let mut delivered_bytes = 0usize;
+    let mut last = None;
+    for (index, method) in pieces.into_iter().enumerate() {
+        let piece_bytes = match &method {
+            Method::PaneSendText(params) => params.text.len(),
+            Method::PaneSendInput(params) => params.text.len(),
+            _ => 0,
+        };
+        match api.request(Request {
+            id: id.clone(),
+            method,
+        }) {
+            Ok(response) => last = Some(response),
+            Err(err) if total == 1 => return Err(err.into()),
+            Err(err) => {
+                return Err(BridgeError::Protocol(format!(
+                    "send failed at piece {} of {total} after {delivered_bytes} bytes were delivered: {err}",
+                    index + 1
+                )))
+            }
+        }
+        delivered_bytes += piece_bytes;
+    }
+    last.ok_or_else(|| BridgeError::Protocol("empty command".to_string()))
 }
 
 /// `Some(pane_id)` when this command inserts text and must name the focused pane.
@@ -2468,13 +2569,13 @@ fn require_focused_pane_target(
     }
 }
 
-fn current_focused_pane_id(api: &ApiClient) -> Result<Option<String>, BridgeError> {
+fn current_focused_pane(api: &ApiClient) -> Result<Option<PaneInfo>, BridgeError> {
     match api_request(
         api,
         "herdr-web:pane-current",
         Method::PaneCurrent(PaneCurrentParams::default()),
     ) {
-        Ok(ResponseResult::PaneCurrent { pane }) if pane.focused => Ok(Some(pane.pane_id)),
+        Ok(ResponseResult::PaneCurrent { pane }) if pane.focused => Ok(Some(pane)),
         Ok(ResponseResult::PaneCurrent { .. }) => Ok(None),
         Ok(other) => Err(BridgeError::Protocol(format!(
             "unexpected response: {other:?}"
@@ -2488,11 +2589,56 @@ fn current_focused_pane_id(api: &ApiClient) -> Result<Option<String>, BridgeErro
     }
 }
 
-fn ensure_send_targets_focused_pane(api: &ApiClient, method: &Method) -> Result<(), BridgeError> {
+/// Checks a text send names the focused pane. Returns whether that pane runs a
+/// detected agent, whose TUI is known to enable bracketed paste.
+fn ensure_send_targets_focused_pane(api: &ApiClient, method: &Method) -> Result<bool, BridgeError> {
     let Some(pane_id) = focused_send_pane_id(method) else {
-        return Ok(());
+        return Ok(false);
     };
-    require_focused_pane_target(current_focused_pane_id(api)?.as_deref(), pane_id)
+    let focused = current_focused_pane(api)?;
+    require_focused_pane_target(focused.as_ref().map(|pane| pane.pane_id.as_str()), pane_id)?;
+    Ok(focused.is_some_and(|pane| pane.agent.is_some()))
+}
+
+const BRACKETED_PASTE_START: &str = "\x1b[200~";
+const BRACKETED_PASTE_END: &str = "\x1b[201~";
+/// Text at or above this size, or with a line break, is pasted rather than typed.
+const PASTE_MIN_BYTES: usize = 1024;
+
+fn pane_send_text_mut(method: &mut Method) -> Option<&mut String> {
+    match method {
+        Method::PaneSendText(params) => Some(&mut params.text),
+        Method::PaneSendInput(params) => Some(&mut params.text),
+        _ => None,
+    }
+}
+
+/// Split a text send for an agent pane into pieces that are each their own
+/// bracketed paste (multi-line or large text only; Enter stays outside the
+/// markers). An agent TUI keeps only the tail of a big raw burst (measured: 243 B of
+/// 4 KB, 238 B of 256 KB) but takes the same bytes whole as a paste. One paste
+/// spread over several writes is not enough: that still lost all but the tail at
+/// 256 KB, while one paste per write arrived whole. A literal end marker in the
+/// text is dropped so it cannot close a paste early.
+fn plan_pane_send(mut method: Method, agent_pane: bool, max_piece_bytes: usize) -> Vec<Method> {
+    let paste = agent_pane
+        && pane_send_text_mut(&mut method).is_some_and(|text| {
+            if text.contains(['\n', '\r']) || text.len() >= PASTE_MIN_BYTES {
+                *text = text.replace(BRACKETED_PASTE_END, "");
+                true
+            } else {
+                false
+            }
+        });
+    let mut pieces = split_pane_send(method, max_piece_bytes);
+    if paste {
+        for piece in &mut pieces {
+            if let Some(text) = pane_send_text_mut(piece) {
+                *text = format!("{BRACKETED_PASTE_START}{text}{BRACKETED_PASTE_END}");
+            }
+        }
+    }
+    pieces
 }
 
 fn validate_optional_label(label: &Option<String>, field: &str) -> Result<(), BridgeError> {
@@ -2701,9 +2847,9 @@ async fn command_handler(
 
     let api = state.api.clone();
     let response = tokio::task::spawn_blocking(move || {
-        ensure_send_targets_focused_pane(&api, &request.method)?;
+        let agent_pane = ensure_send_targets_focused_pane(&api, &request.method)?;
         fill_clear_rename_labels(&api, &mut request.method)?;
-        Ok::<_, BridgeError>(api.request(request)?)
+        send_command_chunked(&api, request, agent_pane)
     })
     .await
     .map_err(|err| BridgeError::Protocol(err.to_string()))??;
@@ -7306,6 +7452,26 @@ mod tests {
     }
 
     #[test]
+    fn terminal_input_chunks_keep_a_large_bracketed_paste_byte_identical_and_in_order() {
+        let (tx, rx) = test_terminal_writer();
+        let mut data = b"\x1b[200~".to_vec();
+        data.extend_from_slice(long_message(2 * MAX_TERMINAL_INPUT_CHUNK_BYTES + 1000).as_bytes());
+        data.extend_from_slice(b"\x1b[201~");
+
+        let stats = send_terminal_input_chunks(&tx, &data).unwrap();
+
+        assert!(stats.chunks >= 3);
+        let received: Vec<u8> = rx
+            .try_iter()
+            .flat_map(|message| match message {
+                ClientMessage::Input { data } => data,
+                other => panic!("unexpected terminal message: {other:?}"),
+            })
+            .collect();
+        assert_eq!(received, data);
+    }
+
+    #[test]
     fn forwards_empty_terminal_input_as_one_message() {
         let (tx, rx) = test_terminal_writer();
 
@@ -7875,6 +8041,270 @@ mod tests {
         assert!(require_focused_pane_target(Some("pane-1"), "pane-1").is_ok());
         assert!(require_focused_pane_target(Some("pane-2"), "pane-1").is_err());
         assert!(require_focused_pane_target(None, "pane-1").is_err());
+    }
+
+    /// Multi-line text with multi-byte chars, control chars and a tab, ~`bytes` long.
+    fn long_message(bytes: usize) -> String {
+        let mut out = String::new();
+        let mut line = 0;
+        while out.len() < bytes {
+            out.push_str(&format!(
+                "line {line}: héllo wörld — naïve façade ✓ 日本語のテスト 🚀 emoji\n\tindented → arrow \u{1b}[0m\r\n"
+            ));
+            line += 1;
+        }
+        out
+    }
+
+    fn send_text_texts(pieces: &[Method]) -> Vec<&str> {
+        pieces
+            .iter()
+            .map(|piece| match piece {
+                Method::PaneSendText(params) => params.text.as_str(),
+                Method::PaneSendInput(params) => params.text.as_str(),
+                other => panic!("unexpected piece {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn focused_pane_send_accepts_exactly_the_limit_and_names_it_when_over() {
+        let at_limit = parse_command(
+            "pane.send_text",
+            serde_json::json!({ "pane_id": "pane-1", "text": "x".repeat(MAX_FOCUSED_PANE_SEND_BYTES) }),
+        );
+        assert!(validate_web_command(&at_limit).is_ok());
+
+        let over = parse_command(
+            "pane.send_text",
+            serde_json::json!({ "pane_id": "pane-1", "text": "x".repeat(MAX_FOCUSED_PANE_SEND_BYTES + 1) }),
+        );
+        let message = validate_web_command(&over).unwrap_err().to_string();
+        assert!(
+            message.contains(&(MAX_FOCUSED_PANE_SEND_BYTES + 1).to_string()),
+            "{message}"
+        );
+        assert!(
+            message.contains(&MAX_FOCUSED_PANE_SEND_BYTES.to_string()),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn split_pane_send_keeps_short_text_whole_and_other_methods_untouched() {
+        let short = parse_command(
+            "pane.send_input",
+            serde_json::json!({ "pane_id": "pane-1", "text": "echo ok", "keys": ["Enter"] }),
+        );
+        assert_eq!(
+            split_pane_send(short.clone(), PANE_SEND_CHUNK_BYTES),
+            vec![short]
+        );
+
+        let other = Method::PaneList(PaneListParams { workspace_id: None });
+        assert_eq!(split_pane_send(other.clone(), 4), vec![other]);
+    }
+
+    #[test]
+    fn split_pane_send_preserves_text_order_and_char_boundaries() {
+        let text = long_message(5000);
+        for max in [7usize, 64, 1000] {
+            let method = parse_command(
+                "pane.send_text",
+                serde_json::json!({ "pane_id": "pane-1", "text": text }),
+            );
+            let pieces = split_pane_send(method, max);
+            assert!(pieces.len() > 1);
+            let texts = send_text_texts(&pieces);
+            assert!(texts
+                .iter()
+                .all(|piece| !piece.is_empty() && piece.len() <= max));
+            assert_eq!(texts.concat(), text, "max={max}");
+            assert!(pieces
+                .iter()
+                .all(|piece| matches!(piece, Method::PaneSendText(_))));
+        }
+    }
+
+    #[test]
+    fn split_pane_send_input_presses_enter_only_after_the_last_piece() {
+        let text = long_message(3000);
+        let method = parse_command(
+            "pane.send_input",
+            serde_json::json!({ "pane_id": "pane-1", "text": text, "keys": ["Enter"] }),
+        );
+        let pieces = split_pane_send(method, 500);
+        let (last, rest) = pieces.split_last().unwrap();
+        assert!(rest
+            .iter()
+            .all(|piece| matches!(piece, Method::PaneSendText(_))));
+        match last {
+            Method::PaneSendInput(params) => assert_eq!(params.keys, vec!["Enter".to_string()]),
+            other => panic!("last piece must carry Enter, got {other:?}"),
+        }
+        assert_eq!(send_text_texts(&pieces).concat(), text);
+    }
+
+    #[test]
+    fn agent_pane_sends_wrap_each_piece_as_its_own_bracketed_paste_with_enter_outside() {
+        let method = parse_command(
+            "pane.send_input",
+            serde_json::json!({ "pane_id": "pane-1", "text": "a\nb\u{1b}[201~c", "keys": ["Enter"] }),
+        );
+        match plan_pane_send(method, true, PANE_SEND_CHUNK_BYTES).as_slice() {
+            [Method::PaneSendInput(params)] => {
+                assert_eq!(params.text, "\u{1b}[200~a\nbc\u{1b}[201~");
+                assert_eq!(params.keys, vec!["Enter".to_string()]);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let text = long_message(5000);
+        let method = parse_command(
+            "pane.send_input",
+            serde_json::json!({ "pane_id": "pane-1", "text": text, "keys": ["Enter"] }),
+        );
+        let pieces = plan_pane_send(method, true, 1000);
+        assert!(pieces.len() > 2);
+        let texts = send_text_texts(&pieces);
+        assert!(texts.iter().all(|piece| {
+            piece.starts_with(BRACKETED_PASTE_START) && piece.ends_with(BRACKETED_PASTE_END)
+        }));
+        let unwrapped: String = texts
+            .iter()
+            .map(|piece| {
+                piece
+                    .strip_prefix(BRACKETED_PASTE_START)
+                    .and_then(|piece| piece.strip_suffix(BRACKETED_PASTE_END))
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(unwrapped, text);
+        assert!(matches!(pieces.last(), Some(Method::PaneSendInput(_))));
+    }
+
+    #[test]
+    fn plain_short_or_non_agent_sends_are_not_wrapped() {
+        let short = parse_command(
+            "pane.send_text",
+            serde_json::json!({ "pane_id": "pane-1", "text": "yes" }),
+        );
+        assert_eq!(plan_pane_send(short.clone(), true, 1000), vec![short]);
+
+        let multiline = parse_command(
+            "pane.send_text",
+            serde_json::json!({ "pane_id": "pane-1", "text": "a\nb" }),
+        );
+        assert_eq!(
+            plan_pane_send(multiline.clone(), false, 1000),
+            vec![multiline]
+        );
+    }
+
+    /// Stand-in for Herdr's API socket: one connection per request, newline-delimited
+    /// JSON, and a request line over `request_limit` is dropped without a reply, which
+    /// is what the real daemon's ~1 MiB limit looks like to the bridge (broken pipe).
+    fn spawn_mock_herdr_api(
+        requests: usize,
+        request_limit: usize,
+        fail_from: Option<usize>,
+    ) -> (PathBuf, thread::JoinHandle<Vec<serde_json::Value>>) {
+        use std::io::{BufRead, BufReader};
+        use std::os::unix::net::UnixListener;
+
+        let socket_path = std::env::temp_dir().join(format!(
+            "herdr-send-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let handle = thread::spawn(move || {
+            let mut seen = Vec::new();
+            for index in 0..requests {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut line = String::new();
+                BufReader::new(socket.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                if line.len() > request_limit || fail_from.is_some_and(|from| index >= from) {
+                    continue;
+                }
+                let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+                writeln!(
+                    socket,
+                    "{}",
+                    serde_json::json!({ "id": request["id"], "result": { "type": "ok" } })
+                )
+                .unwrap();
+                seen.push(request);
+            }
+            seen
+        });
+        (socket_path, handle)
+    }
+
+    #[test]
+    fn large_multiline_non_ascii_send_arrives_intact_in_order_with_enter_last() {
+        let text = long_message(700 * 1024);
+        let (socket_path, daemon) = spawn_mock_herdr_api(
+            text.len().div_ceil(PANE_SEND_CHUNK_BYTES),
+            1024 * 1024,
+            None,
+        );
+        let api = ApiClient::for_socket_path(socket_path.clone());
+        let request = Request {
+            id: "test".to_string(),
+            method: parse_command(
+                "pane.send_input",
+                serde_json::json!({ "pane_id": "pane-1", "text": text, "keys": ["Enter"] }),
+            ),
+        };
+
+        send_command_chunked(&api, request, false).unwrap();
+        let seen = daemon.join().unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert!(seen.len() > 1, "a 700 KiB send must be split");
+        let delivered: String = seen
+            .iter()
+            .map(|request| request["params"]["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(delivered.as_bytes(), text.as_bytes());
+        let (last, rest) = seen.split_last().unwrap();
+        assert!(rest
+            .iter()
+            .all(|request| request["method"] == "pane.send_text"));
+        assert_eq!(last["method"], "pane.send_input");
+        assert_eq!(last["params"]["keys"], serde_json::json!(["Enter"]));
+    }
+
+    #[test]
+    fn mid_send_failure_reports_how_much_text_was_already_delivered() {
+        let text = long_message(3 * PANE_SEND_CHUNK_BYTES);
+        let (socket_path, daemon) = spawn_mock_herdr_api(2, 1024 * 1024, Some(1));
+        let api = ApiClient::for_socket_path(socket_path.clone());
+        let request = Request {
+            id: "test".to_string(),
+            method: parse_command(
+                "pane.send_text",
+                serde_json::json!({ "pane_id": "pane-1", "text": text }),
+            ),
+        };
+
+        let err = send_command_chunked(&api, request, false)
+            .unwrap_err()
+            .to_string();
+        daemon.join().unwrap();
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert!(err.contains("piece 2 of"), "{err}");
+        assert!(err.contains("bytes were delivered"), "{err}");
     }
 
     fn parse_command(method: &str, params: serde_json::Value) -> Method {

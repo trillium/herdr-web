@@ -238,6 +238,11 @@
 
 ### Changed
 
+- `/send` accepts up to 8 MiB (was 64 KiB), delivered in 128 KiB pieces so Herdr's ~1 MiB API
+  request limit is never hit. Over the limit the bridge answers `400` with the size and the limit;
+  the `/send` page and the composer say so before sending and keep the draft. Documented the measured
+  limits in `docs/message-size-limits.md` ([#69](https://github.com/trillium/herdr-web/pull/69)).
+
 - Merged upstream `kcosr/herdr-web` through `v0.6.2` (mobile terminal key rework with hold-repeat
   keys and a shortcut composer, reverse-proxy path prefixes for bridge URLs, WebSocket idle
   heartbeats, event-stream recovery, vendored Herdr compat refreshed to `v0.9.3`). The runtime
@@ -272,6 +277,11 @@
   unchanged, so the remote bridge applies its own origin, size, and filename rules; `command`,
   `command-submit`, and `launcher-presets/launch` stay blocked. Refused proxy paths are now logged
   at warn level with the bridge id and path. Needs a rebuilt bridge binary on the proxying bridge.
+
+- Long composer and `/send` messages no longer reach an agent TUI as only their tail. Multi-line or
+  1 KiB+ text is now sent as a bracketed paste (composer: when the pane enabled bracketed paste;
+  `/send`: when Herdr reports an agent in the pane), one paste per 128 KiB piece, in order. See
+  `docs/message-size-limits.md` ([#69](https://github.com/trillium/herdr-web/pull/69)).
 
 - Mobile: terminal text no longer renders under the iOS status bar / Dynamic Island; the app shell now
   honors `env(safe-area-inset-top)` (the manual top inset acts as a minimum).

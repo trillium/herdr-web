@@ -5,6 +5,7 @@ import { fetchWithTimeout } from "./fetchWithTimeout";
 import {
   SEND_ONLY_POLL_MS,
   focusedPaneFromSnapshot,
+  focusedSendSizeNotice,
   openSnapshotEvents,
   postFocusedSend,
   readPressEnter,
@@ -83,7 +84,9 @@ export function SendOnlyPage() {
     }
   }, [load, targetPaneId]);
 
-  const canSend = load === "ready" && target !== null && text.length > 0 && !sending;
+  const sizeNotice = focusedSendSizeNotice(text);
+  const canSend =
+    load === "ready" && target !== null && text.length > 0 && !sending && !sizeNotice.blocked;
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -158,7 +161,7 @@ export function SendOnlyPage() {
           {sending ? "Sending…" : "Send"}
         </button>
         <p className="send-only-status" role="status" aria-live="polite">
-          {status}
+          {status ?? sizeNotice.message}
         </p>
       </form>
     </main>

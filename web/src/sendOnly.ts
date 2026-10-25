@@ -3,6 +3,7 @@
 
 import { apiErrorMessage, type BridgeHttpUrl } from "./bridgeApi";
 import { fetchWithTimeout } from "./fetchWithTimeout";
+import { formatByteSize, MAX_TERMINAL_INPUT_BYTES, utf8ByteLength } from "./terminalPaste";
 import { displayTabLabel } from "./state";
 import { parseTheme, type Theme } from "./theme";
 import type { Snapshot } from "./types";
@@ -78,6 +79,34 @@ export function focusedSendRequest(
     method: "pane.send_text",
     params: { pane_id: paneId, text },
   };
+}
+
+/** Mirrors `MAX_FOCUSED_PANE_SEND_BYTES` in `bridge/src/web_bridge.rs`. */
+export const MAX_FOCUSED_SEND_BYTES = MAX_TERMINAL_INPUT_BYTES;
+/** Above this the bridge splits the text into several writes (still in order). */
+const SEND_NOTICE_BYTES = 64 * 1024;
+
+export type SendSizeNotice = { blocked: boolean; message: string | null };
+
+/** Tell the sender up front what a large send will do; blocked sends are never attempted. */
+export function focusedSendSizeNotice(text: string): SendSizeNotice {
+  if (text.length * 3 < SEND_NOTICE_BYTES) {
+    return { blocked: false, message: null };
+  }
+  const bytes = utf8ByteLength(text);
+  if (bytes > MAX_FOCUSED_SEND_BYTES) {
+    return {
+      blocked: true,
+      message: `${formatByteSize(bytes)} is over the ${formatByteSize(MAX_FOCUSED_SEND_BYTES)} limit. Nothing will be sent; shorten the text.`,
+    };
+  }
+  if (bytes > SEND_NOTICE_BYTES) {
+    return {
+      blocked: false,
+      message: `${formatByteSize(bytes)}: sent in several pieces, in order, and the pane may take a moment to show it all.`,
+    };
+  }
+  return { blocked: false, message: null };
 }
 
 export async function postFocusedSend(
