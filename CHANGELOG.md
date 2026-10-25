@@ -267,6 +267,12 @@
 
 ### Fixed
 
+- Uploading a file into a pane of a remote bridge (`/api/remote/{bridge_id}/uploads`) no longer
+  fails with 403 "path not permitted by proxy allow-list". The proxy now forwards `uploads`
+  unchanged, so the remote bridge applies its own origin, size, and filename rules; `command`,
+  `command-submit`, and `launcher-presets/launch` stay blocked. Refused proxy paths are now logged
+  at warn level with the bridge id and path. Needs a rebuilt bridge binary on the proxying bridge.
+
 - Mobile: terminal text no longer renders under the iOS status bar / Dynamic Island; the app shell now
   honors `env(safe-area-inset-top)` (the manual top inset acts as a minimum).
 
