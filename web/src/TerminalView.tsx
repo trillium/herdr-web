@@ -66,6 +66,7 @@ import { GhosttyRenderer, isUsableTerminalSize } from "./terminalRenderer";
 import { TerminalMeasurePump } from "./terminalMeasure";
 import type { Theme } from "./theme";
 import type { MobileTerminalTouchEvent, TerminalRenderer, TerminalSize } from "./terminalRenderer";
+import { planComposerDelivery } from "./terminalPaste";
 import {
   appendTerminalInputBatch,
   drainTerminalInputBatch,
@@ -1602,6 +1603,32 @@ export function TerminalView({
     return true;
   };
 
+  // Composer text goes out as a bracketed paste when the pane has asked for it:
+  // an agent TUI otherwise keeps only the tail of a large raw burst.
+  const deliverCommand = (command: string, suffix: string[]) => {
+    const plan = planComposerDelivery(
+      command,
+      suffix,
+      rendererRef.current?.hasBracketedPaste?.() ?? false,
+    );
+    if (plan.error) {
+      showUploadStatus(plan.error, 6000);
+      return false;
+    }
+    if (plan.warning) {
+      showUploadStatus(plan.warning, 5000);
+    }
+    return enqueueTerminalInput(plan.parts);
+  };
+  const canSendCommand = (command: string) => {
+    const plan = planComposerDelivery(command, [], false);
+    if (plan.error) {
+      showUploadStatus(plan.error, 6000);
+      return false;
+    }
+    return true;
+  };
+
   const showCommandControls = mobileControls || desktopCommandComposer;
 
   return (
@@ -1696,9 +1723,10 @@ export function TerminalView({
           onInput={sendTerminalInputData}
           onTerminalFocus={() => rendererRef.current?.focusTextInput()}
           onUpload={openFilePicker}
-          onStageCommand={(command) => enqueueTerminalInput([command])}
-          onSubmitCommand={(command) => enqueueTerminalInput([command, "\r"])}
-          onFollowOnCommand={(command) => enqueueTerminalInput([command, FOLLOW_ON_KEY])}
+          canSendCommand={canSendCommand}
+          onStageCommand={(command) => deliverCommand(command, [])}
+          onSubmitCommand={(command) => deliverCommand(command, ["\r"])}
+          onFollowOnCommand={(command) => deliverCommand(command, [FOLLOW_ON_KEY])}
           onNextAgentPane={onNextAgentPane}
           pinned={pinned}
           onPaneCycle={onPaneCycle}
@@ -1829,6 +1857,7 @@ export function TerminalCommandControls({
   onInput,
   onTerminalFocus,
   onUpload,
+  canSendCommand,
   onStageCommand,
   onSubmitCommand,
   onFollowOnCommand,
@@ -1859,6 +1888,8 @@ export function TerminalCommandControls({
   onInput: (data: string) => void;
   onTerminalFocus: () => void;
   onUpload: () => void;
+  /** Refuses (and tells the user why) before the draft is cleared; omitted means always ok. */
+  canSendCommand?: (command: string) => boolean;
   onStageCommand: (command: string) => void;
   onSubmitCommand: (command: string) => void;
   /** Submit the composer text as a follow-on (Pi's Alt-Enter) instead of a plain Enter steer. */
@@ -1915,6 +1946,9 @@ export function TerminalCommandControls({
     // yet. The node always mirrors the displayed buffer (see submitVoiceEnder
     // and clearCommandInput), so preferring it is race-free on every path.
     const command = commandInputRef.current?.value ?? value;
+    if (canSendCommand && !canSendCommand(command)) {
+      return;
+    }
     clearCommandInput();
     onSubmitCommand(command);
   };
@@ -1925,6 +1959,9 @@ export function TerminalCommandControls({
     focusAfterSubmitRef.current = !mobileControls || mobileFocusAfterSubmit;
     // Read the live node for the same race-free reason as submit().
     const command = commandInputRef.current?.value ?? value;
+    if (canSendCommand && !canSendCommand(command)) {
+      return;
+    }
     clearCommandInput();
     onFollowOnCommand(command);
   };
@@ -1933,6 +1970,9 @@ export function TerminalCommandControls({
       return;
     }
     const command = value;
+    if (canSendCommand && !canSendCommand(command)) {
+      return;
+    }
     clearCommandInput();
     onStageCommand(command);
     if (!mobileControls) {
@@ -1950,6 +1990,9 @@ export function TerminalCommandControls({
     focusAfterSubmitRef.current = true;
     beaconFocusAfterRef.current = true;
     const command = commandInputRef.current?.value ?? value;
+    if (canSendCommand && !canSendCommand(command)) {
+      return;
+    }
     clearCommandInput();
     onStageCommand(command);
   };

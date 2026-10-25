@@ -3,6 +3,8 @@ import type { Snapshot } from "./types";
 import {
   focusedPaneFromSnapshot,
   focusedSendRequest,
+  focusedSendSizeNotice,
+  MAX_FOCUSED_SEND_BYTES,
   isSendOnlyPath,
   openSnapshotEvents,
   postFocusedSend,
@@ -200,6 +202,27 @@ describe("snapshot events", () => {
     expect(sockets[1].url).toBe("ws://bridge.test/ws/events");
     connection.close();
     expect(sockets[1].closed).toBe(true);
+  });
+});
+
+describe("focusedSendSizeNotice", () => {
+  it("is silent for ordinary text", () => {
+    expect(focusedSendSizeNotice("echo ok")).toEqual({ blocked: false, message: null });
+    expect(focusedSendSizeNotice("日本語".repeat(5000))).toEqual({ blocked: false, message: null });
+    // Multi-byte text is measured in bytes, not characters.
+    expect(focusedSendSizeNotice("日本語".repeat(10000)).message).toMatch(/88 KB/);
+  });
+
+  it("explains that a large send is split but still sent whole", () => {
+    const notice = focusedSendSizeNotice("x".repeat(200 * 1024));
+    expect(notice.blocked).toBe(false);
+    expect(notice.message).toMatch(/200 KB.*several pieces, in order/);
+  });
+
+  it("blocks a send over the limit and says nothing will be sent", () => {
+    const notice = focusedSendSizeNotice("x".repeat(MAX_FOCUSED_SEND_BYTES + 1));
+    expect(notice.blocked).toBe(true);
+    expect(notice.message).toMatch(/over the 8\.0 MB limit.*Nothing will be sent/);
   });
 });
 

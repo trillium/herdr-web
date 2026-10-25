@@ -250,6 +250,8 @@ export type TerminalRenderer = {
   setFontSize(fontSizePx: number): TerminalSize | null;
   focus(): void;
   focusTextInput(): void;
+  /** True while the pane's app has bracketed paste (DEC mode 2004) enabled. */
+  hasBracketedPaste?(): boolean;
   clearSelection(): void;
   setScrollSensitivity(value: number): void;
   dispose(): void;
@@ -423,6 +425,10 @@ export class GhosttyRenderer implements TerminalRenderer {
 
   focus() {
     this.focusTextInput();
+  }
+
+  hasBracketedPaste() {
+    return this.#terminal?.hasBracketedPaste() ?? false;
   }
 
   focusTextInput() {
