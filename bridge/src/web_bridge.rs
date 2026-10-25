@@ -4812,9 +4812,9 @@ fn rest_path_is_safe(rest: &str) -> bool {
 
 /// Checks whether a decoded `rest` path is on the explicit proxy allow-list.
 ///
-/// The proxy may only forward to the read-oriented API endpoints the web UI needs to display a
-/// remote bridge's workspace state. Write-capable endpoints that could execute commands or
-/// modify the remote host filesystem (`command`, `uploads`) are never forwarded regardless of
+/// The proxy may only forward to the API endpoints the web UI needs to display a remote bridge's
+/// workspace state and to hand it files. Endpoints that could execute commands on the remote
+/// (`command`, `command-submit`, `launcher-presets/launch`) are never forwarded regardless of
 /// the HTTP method used.
 ///
 /// Allowed (GET and POST):
@@ -4826,12 +4826,14 @@ fn rest_path_is_safe(rest: &str) -> bool {
 ///   - `notes`            — notes list and per-note operations (notes.ts:117, 122, 227)
 ///   - `launcher-presets` — presets list, exact only; `launcher-presets/launch` is blocked
 ///                          (launcherPresets.ts:66)
+///   - `uploads`          — exact only; forwarded unchanged so the remote bridge applies its own
+///                          origin/host gate, size limit and filename sanitization. The proxy
+///                          never writes the file itself.
 ///
 /// Blocked (anything not listed above, including):
 ///   - `command`           — executes arbitrary shell commands on the remote
 ///   - `command-submit`    — triggers command submission on the remote
 ///   - `client-log`        — appends to the remote's log; meaningless as a proxy target
-///   - `uploads`           — writes files to the remote filesystem
 ///   - `selection`         — sets terminal selection state
 ///   - `mobile-mode`       — sets a local-filesystem flag on the remote
 ///   - `bridges`           — not meaningful as a proxy target
@@ -4839,7 +4841,7 @@ fn rest_path_is_safe(rest: &str) -> bool {
 fn is_proxy_path_allowed(rest: &str) -> bool {
     let path = rest.trim_start_matches('/');
     // Exact match only (no sub-paths allowed for these):
-    if path == "launcher-presets" {
+    if path == "launcher-presets" || path == "uploads" {
         return true;
     }
     // Exact match or prefix match for paths that have sub-path variants:
@@ -4943,6 +4945,11 @@ async fn remote_api_proxy_handler(
         return BridgeError::BadRequest("invalid remote proxy path".to_string()).into_response();
     }
     if !is_proxy_path_allowed(&rest) {
+        warn!(
+            bridge_id = %bridge_id,
+            path = %rest,
+            "remote bridge proxy refused path not on allow-list"
+        );
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({ "error": "path not permitted by proxy allow-list" })),
@@ -8790,6 +8797,7 @@ mod tests {
         assert!(is_proxy_path_allowed("notes"));
         assert!(is_proxy_path_allowed("notes/abc123/revision"));
         assert!(is_proxy_path_allowed("launcher-presets"));
+        assert!(is_proxy_path_allowed("uploads"));
     }
 
     #[test]
@@ -8797,7 +8805,7 @@ mod tests {
         assert!(!is_proxy_path_allowed("command"));
         assert!(!is_proxy_path_allowed("command-submit"));
         assert!(!is_proxy_path_allowed("client-log"));
-        assert!(!is_proxy_path_allowed("uploads"));
+        assert!(!is_proxy_path_allowed("uploads/extra"));
         assert!(!is_proxy_path_allowed("selection"));
         assert!(!is_proxy_path_allowed("mobile-mode"));
         assert!(!is_proxy_path_allowed("bridges"));

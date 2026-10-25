@@ -202,7 +202,10 @@ bin/herdr-web --remote-bridge http://mini2:8787 --remote-bridge http://mini3:878
 hostname and lists configured remote bridges in `/api/snapshot` and standalone at `GET /api/bridges`;
 `/api/remote/{bridge_id}/...` and `/ws/remote/{bridge_id}/terminal` proxy REST requests (to an
 explicit allow-list of endpoints) and terminal WebSocket sessions to that remote bridge. Only bridges
-the process was started with are reachable this way.
+the process was started with are reachable this way. File uploads (`/api/uploads`) are forwarded
+unchanged, so the remote bridge applies its own origin, size, and filename rules; `command`,
+`command-submit`, and `launcher-presets/launch` are never forwarded. Refused proxy paths are logged
+at warn level with the bridge id.
 
 ## Manual Release Upload
 
