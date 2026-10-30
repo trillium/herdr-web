@@ -18,7 +18,7 @@
 
 ### Added
 
-- Terminal UI top bar has a 44 px link button that opens `/links` and shows the unopened count.
+- Terminal UI top bar has a 44 px link button that opens `/links` and shows the unopened count ([#71](https://github.com/trillium/herdr-web/pull/71)).
 - The PWA manifest, favicon and home-screen icons are now recoloured per request `Host`, with the
   app named `herdr · <host>`, so each machine installs as a distinct app. Colours come from
   `--origin-colors PATH` / `HERDR_WEB_ORIGIN_COLORS` (JSON `{"hostname": "#rrggbb"}`) or a stable
