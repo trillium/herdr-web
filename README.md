@@ -517,3 +517,12 @@ surface.
 - [Ghostty Web](https://www.npmjs.com/package/ghostty-web), used by the browser terminal renderer.
 - [Ghostty](https://github.com/ghostty-org/ghostty), including Ghostty VT / `libghostty-vt`,
   vendored through Herdr and used for terminal emulation in Herdr core.
+
+### Per-origin PWA colour
+
+Each origin is its own installed PWA, so the bridge serves `/manifest.json`, `/herdr-logo.svg` and
+the `herdr-logo*.png` icons recoloured from the request `Host` (port stripped; `X-Forwarded-Host` is
+ignored), with the app named `herdr · <host>`. The colour is a stable hue derived from the hostname
+unless `--origin-colors PATH` (or `HERDR_WEB_ORIGIN_COLORS`) points at a JSON map such as
+`{"mini0": "#e06c75"}`; keys match the full hostname or its first label. Home-screen apps installed
+earlier keep their old icon until removed and re-added.

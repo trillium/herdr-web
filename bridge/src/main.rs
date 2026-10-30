@@ -5,6 +5,7 @@ mod connection_manager;
 mod launcher_presets;
 mod links;
 mod notes;
+mod origin_icons;
 mod session;
 mod store_util;
 mod terminal_multiplex;
