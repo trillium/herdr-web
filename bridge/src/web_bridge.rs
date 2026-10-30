@@ -129,6 +129,7 @@ struct BridgeOptions {
     static_dir: PathBuf,
     upload_dir: PathBuf,
     launcher_presets_path: Option<PathBuf>,
+    origin_colors_path: Option<PathBuf>,
     allowed_hosts: Vec<String>,
     allowed_origins: Vec<String>,
     allowed_connect_sources: Vec<String>,
@@ -1130,6 +1131,7 @@ fn parse_options(args: &[String]) -> Result<Option<BridgeOptions>, String> {
     let mut static_dir = PathBuf::from(DEFAULT_STATIC_DIR);
     let mut upload_dir = default_upload_dir();
     let mut launcher_presets_path = None;
+    let mut origin_colors_path = env::var_os("HERDR_WEB_ORIGIN_COLORS").map(PathBuf::from);
     let mut allowed_hosts = Vec::new();
     let mut allowed_origins = Vec::new();
     let mut allowed_connect_sources = Vec::new();
@@ -1186,6 +1188,13 @@ fn parse_options(args: &[String]) -> Result<Option<BridgeOptions>, String> {
                     return Err("missing value for --launcher-presets".into());
                 };
                 launcher_presets_path = Some(expand_home(value));
+                index += 2;
+            }
+            "--origin-colors" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err("missing value for --origin-colors".into());
+                };
+                origin_colors_path = Some(expand_home(value));
                 index += 2;
             }
             "--allow-host" => {
@@ -1249,6 +1258,7 @@ fn parse_options(args: &[String]) -> Result<Option<BridgeOptions>, String> {
         static_dir,
         upload_dir,
         launcher_presets_path,
+        origin_colors_path,
         allowed_hosts,
         allowed_origins,
         allowed_connect_sources,
@@ -1347,7 +1357,7 @@ fn print_help() {
 fn help_text() -> &'static str {
     "herdr-web-bridge\n\
 \n\
-Usage: herdr-web-bridge [--session NAME] [--host HOST] [--port PORT] [--static-dir DIR] [--upload-dir DIR] [--launcher-presets PATH] [--allow-origin ORIGIN] [--allow-host HOSTNAME] [--allow-connect-origin ORIGIN] [--remote-bridge URL]...\n\
+Usage: herdr-web-bridge [--session NAME] [--host HOST] [--port PORT] [--static-dir DIR] [--upload-dir DIR] [--launcher-presets PATH] [--origin-colors PATH] [--allow-origin ORIGIN] [--allow-host HOSTNAME] [--allow-connect-origin ORIGIN] [--remote-bridge URL]...\n\
 \n\
 Runs the local HTTP/WebSocket bridge for herdr-web.\n\
 Defaults to the active Herdr daemon sockets and 127.0.0.1:8787.\n\
@@ -1360,6 +1370,8 @@ The bridge's own resolved tailnet name (see tailnet_name in /api/capabilities) i
 accepted in Host/Origin without flags; Tailscale starting after the bridge needs a restart.\n\
 Use --allow-connect-origin ORIGIN to let the served web app connect to another bridge origin.\n\
 Use --launcher-presets PATH or HERDR_WEB_LAUNCHER_PRESETS to load custom launch presets.\n\
+Use --origin-colors PATH or HERDR_WEB_ORIGIN_COLORS (JSON {\"hostname\": \"#rrggbb\"}) to pick the PWA icon colour per Host;\n\
+  unlisted hosts get a stable colour derived from the hostname.\n\
 Use --remote-bridge URL (repeatable) to register another herdr-web bridge (e.g. http://mini2:8787)\n\
   to proxy through: reads at /api/remote/<id>/... and terminal sessions at\n\
   /ws/remote/<id>/terminal, where <id> is the remote's hostname as reported in /api/snapshot's\n\
@@ -1556,6 +1568,11 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
             "/api/terminal-connections/kick",
             post(kick_connection_handler).options(preflight_handler),
         );
+    let origin_icons = crate::origin_icons::OriginIcons::new(
+        options.static_dir.clone(),
+        options.origin_colors_path.as_deref(),
+    )
+    .map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?;
     let send_index = options.static_dir.join("index.html");
     let links_index = send_index.clone();
     let app = Router::new()
@@ -1620,6 +1637,7 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
             "/ws/remote/{bridge_id}/terminal",
             get(remote_terminal_ws_handler),
         )
+        .merge(origin_icon_routes(origin_icons))
         .route("/send", send_page_route(send_index.clone()))
         .route("/send/", send_page_route(send_index))
         .route("/links", send_page_route(links_index.clone()))
@@ -1647,6 +1665,37 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .await
+}
+
+fn origin_icon_routes(icons: Arc<crate::origin_icons::OriginIcons>) -> Router<BridgeState> {
+    let mut router = Router::new();
+    let manifest = icons.clone();
+    router = router.route(
+        "/manifest.json",
+        get(move |headers: HeaderMap| {
+            let icons = manifest.clone();
+            async move { icons.manifest(&headers) }
+        }),
+    );
+    let svg = icons.clone();
+    router = router.route(
+        "/herdr-logo.svg",
+        get(move |headers: HeaderMap| {
+            let icons = svg.clone();
+            async move { icons.svg(&headers) }
+        }),
+    );
+    for file in crate::origin_icons::ICON_FILES {
+        let icons = icons.clone();
+        router = router.route(
+            &format!("/{file}"),
+            get(move |headers: HeaderMap| {
+                let icons = icons.clone();
+                async move { icons.png(file, &headers) }
+            }),
+        );
+    }
+    router
 }
 
 fn send_page_route(index: PathBuf) -> axum::routing::MethodRouter<BridgeState> {

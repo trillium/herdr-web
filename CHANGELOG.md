@@ -18,6 +18,11 @@
 
 ### Added
 
+- The PWA manifest, favicon and home-screen icons are now recoloured per request `Host`, with the
+  app named `herdr · <host>`, so each machine installs as a distinct app. Colours come from
+  `--origin-colors PATH` / `HERDR_WEB_ORIGIN_COLORS` (JSON `{"hostname": "#rrggbb"}`) or a stable
+  hostname-derived hue. Already-installed home-screen apps keep their old icon until re-added.
+
 - Tab icon (favicon) is tinted per machine from the URL hostname: `mini0` green, `mini1` blue,
   anything else keeps the standard icon. `?tint=<css color>` overrides.
   ([#66](https://github.com/trillium/herdr-web/pull/66))
