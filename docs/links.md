@@ -5,8 +5,9 @@ exists so a link printed in a scrolling terminal is no longer the only way to re
 
 ## Human: see and open results
 
-1. Open `http://<bridge-host>:<port>/links` (the terminal UI has no link yet; bookmark it, or
-   use the "Open terminal" link on the page to go back).
+1. Tap the link icon in the terminal UI's top bar (it shows the number of unopened items), or
+   open `http://<bridge-host>:<port>/links` directly. The "Open terminal" link on the page goes
+   back.
 2. Newest first. Unopened items carry a **New** badge and the tab title shows `(n) Links`.
 3. Click a title to open the link in a new tab. Opening marks it read.
 4. **Dismiss** hides an item; tick **Show dismissed** to see it again and **Restore** it.

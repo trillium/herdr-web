@@ -4281,3 +4281,26 @@ span.links-item-title {
 .links-item-actions .btn {
   min-height: 44px;
 }
+
+/* terminal-UI entry point to /links: 44px touch target with an unread count pip */
+.links-open-btn {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  text-decoration: none;
+}
+
+.links-open-count {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--crust);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}

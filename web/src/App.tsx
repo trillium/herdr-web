@@ -54,6 +54,7 @@ import type {
 import { Capacitor } from "@capacitor/core";
 import { Preferences } from "@capacitor/preferences";
 import { AgentIcon, agentIconKind } from "./AgentIcon";
+import { LinksButton } from "./LinksButton";
 import {
   agentActivityKey,
   agentActivityTimestamps,
@@ -4234,6 +4235,7 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
               {stageBreadcrumb(snapshot, selectedPane, loadState, selectedRuntime?.canConnect ?? false)}
             </span>
           </div>
+          {isCompactLayout || !sidebarOpen ? <LinksButton /> : null}
           <button
             className="icon-btn"
             type="button"
@@ -7662,6 +7664,7 @@ function Switcher({
         >
           <RefreshCw size={16} />
         </button>
+        <LinksButton />
       </header>
 
       <div className="sidebar-scope host-scope" role="group" aria-label="Host">
