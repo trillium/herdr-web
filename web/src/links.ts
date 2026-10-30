@@ -102,3 +102,7 @@ export async function postLinkAction(id: string, action: LinkAction): Promise<vo
     throw new Error((await apiErrorMessage(response)) ?? `${action} failed (${response.status})`);
   }
 }
+
+export function linksButtonLabel(newCount: number): string {
+  return newCount > 0 ? `Open links (${newCount} new)` : "Open links";
+}
