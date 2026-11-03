@@ -278,6 +278,12 @@
 
 ### Fixed
 
+- Phone terminal now fills the screen: the grid is fitted to the full pane width (the unused
+  scrollbar-gutter reserve is dropped on phone-size and touch viewports), side gutters are trimmed,
+  the controls bar runs to the bottom edge and clears the home indicator itself, and the "Jump to
+  present" pill collapses to a corner icon so it no longer covers the last lines. Re-fits on
+  rotation and soft-keyboard show/hide. Desktop layout is unchanged.
+
 - Uploading a file into a pane of a remote bridge (`/api/remote/{bridge_id}/uploads`) no longer
   fails with 403 "path not permitted by proxy allow-list". The proxy now forwards `uploads`
   unchanged, so the remote bridge applies its own origin, size, and filename rules; `command`,

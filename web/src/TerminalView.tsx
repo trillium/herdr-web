@@ -652,6 +652,7 @@ export function TerminalView({
     let disposeInput: (() => void) | null = null;
     let disposeScroll: (() => void) | null = null;
     let resizeObserver: ResizeObserver | null = null;
+    let removeViewportListeners: (() => void) | null = null;
     const generation = rendererGenerationRef.current + 1;
     rendererGenerationRef.current = generation;
     const renderer = createTerminalRenderer(
@@ -754,6 +755,15 @@ export function TerminalView({
           }
         });
         resizeObserver.observe(host);
+        // The host's ResizeObserver covers most layout changes; the visual viewport
+        // (soft keyboard, rotation) can settle without one, so re-fit on it too.
+        const refit = () => scheduleSettledPublish("fit");
+        window.addEventListener("orientationchange", refit);
+        window.visualViewport?.addEventListener("resize", refit);
+        removeViewportListeners = () => {
+          window.removeEventListener("orientationchange", refit);
+          window.visualViewport?.removeEventListener("resize", refit);
+        };
 
         const fontReady = document.fonts?.ready;
         if (fontReady) {
@@ -795,6 +805,7 @@ export function TerminalView({
       disposeInput?.();
       disposeScroll?.();
       resizeObserver?.disconnect();
+      removeViewportListeners?.();
       if (rendererReadyRef.current?.generation === generation) {
         rendererReadyRef.current = null;
         setRendererReady(null);
@@ -1680,7 +1691,7 @@ export function TerminalView({
       {scrolledAwayFromPresent ? (
         <button className="terminal-jump-to-present" type="button" onClick={jumpToTerminalPresent}>
           <ChevronsDown size={14} aria-hidden="true" />
-          Jump to present
+          <span className="terminal-jump-to-present-label">Jump to present</span>
         </button>
       ) : null}
       {uploadStatus ? (
