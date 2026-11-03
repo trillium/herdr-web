@@ -186,6 +186,74 @@ export function isUsableTerminalSize(size: TerminalSize | null): size is Termina
     size.rows >= 1
   );
 }
+/**
+ * ghostty-web's FitAddon holds back this much width for a scrollbar gutter, but
+ * the scrollbar is painted over the canvas (a fading overlay), not beside it.
+ * The reserve therefore only ever shows up as an unused strip beside the grid.
+ */
+const FIT_SCROLLBAR_RESERVE_PX = 15;
+// Phone portrait (narrow) and phone landscape (wide but coarse-pointer, no hover).
+const COMPACT_FIT_QUERY = "(max-width: 820px), (hover: none) and (pointer: coarse)";
+
+type TerminalFitInput = {
+  clientWidth: number;
+  clientHeight: number;
+  paddingTop: number;
+  paddingBottom: number;
+  paddingLeft: number;
+  paddingRight: number;
+  cellWidth: number;
+  cellHeight: number;
+  scrollbarReservePx: number;
+};
+
+/** Cols/rows that fit a container, mirroring FitAddon but with a caller-chosen scrollbar reserve. */
+export function proposeTerminalFit(input: TerminalFitInput): TerminalSize | null {
+  if (input.cellWidth <= 0 || input.cellHeight <= 0) {
+    return null;
+  }
+  if (input.clientWidth <= 0 || input.clientHeight <= 0) {
+    return null;
+  }
+  const width =
+    input.clientWidth - input.paddingLeft - input.paddingRight - input.scrollbarReservePx;
+  const height = input.clientHeight - input.paddingTop - input.paddingBottom;
+  return {
+    cols: Math.max(2, Math.floor(width / input.cellWidth)),
+    rows: Math.max(1, Math.floor(height / input.cellHeight)),
+  };
+}
+
+function isCompactFitViewport() {
+  return typeof window !== "undefined" && window.matchMedia?.(COMPACT_FIT_QUERY).matches === true;
+}
+
+function installTerminalFit(fitAddon: FitAddon, terminal: Terminal) {
+  // fit() reads proposeDimensions() off the instance, so replacing it changes only the sizing rule.
+  fitAddon.proposeDimensions = () => {
+    const element = terminal.element;
+    const metrics = terminal.renderer?.getMetrics();
+    if (!element || !metrics) {
+      return undefined;
+    }
+    const style = window.getComputedStyle(element);
+    const px = (name: string) => Number.parseInt(style.getPropertyValue(name)) || 0;
+    return (
+      proposeTerminalFit({
+        clientWidth: element.clientWidth,
+        clientHeight: element.clientHeight,
+        paddingTop: px("padding-top"),
+        paddingBottom: px("padding-bottom"),
+        paddingLeft: px("padding-left"),
+        paddingRight: px("padding-right"),
+        cellWidth: metrics.width,
+        cellHeight: metrics.height,
+        scrollbarReservePx: isCompactFitViewport() ? 0 : FIT_SCROLLBAR_RESERVE_PX,
+      }) ?? undefined
+    );
+  };
+}
+
 type TerminalCellPosition = {
   col: number;
   row: number;
@@ -312,6 +380,7 @@ export class GhosttyRenderer implements TerminalRenderer {
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
+    installTerminalFit(fitAddon, terminal);
     terminal.open(container);
     if (this.#eventDrivenRendering) {
       suspendGhosttyIdleRenderLoop(terminal);
