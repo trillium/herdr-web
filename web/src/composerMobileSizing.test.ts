@@ -39,19 +39,30 @@ describe("composer mobile sizing", () => {
     );
     expect(small.length).toBeGreaterThan(0);
     const rules = small.join("\n");
-    // Phone controls retain a 44px target despite a reduced user scale.
+    // The main row (input, next pane, send) retains a 44px target despite a reduced user scale.
     expect(rules).toMatch(/--mobile-input-row-height:\s*max\(44px/);
-    expect(rules).toMatch(/--mobile-key-height:\s*max\(44px/);
     expect(rules).toMatch(/--mobile-send-width:\s*max\(44px/);
+    // Tray keys (shown on demand, one row) may be 40px so the bar stays two rows tall.
+    expect(rules).toMatch(/--mobile-key-height:\s*max\(40px/);
     expect(rules).toMatch(/padding:/);
   });
 
-  it("lays out a toolbar above a full-width input and caps auto-growth near four lines", () => {
+  it("puts the keys toggle, input, next pane and send on one main row, capping growth near four lines", () => {
     const small = mediaBlocks("@media (max-width: 820px)").join("\n");
-    expect(small).toMatch(/\.term-input-row\s*\{[^}]*flex-direction:\s*column/);
-    expect(small).toMatch(/\.term-composer-toolbar\s*\{[^}]*width:\s*100%/);
-    expect(small).toMatch(/\.term-composer-input\s*\{[^}]*width:\s*100%/);
+    expect(small).toMatch(/\.term-input-row\s*\{[^}]*flex-direction:\s*row/);
+    expect(small).toMatch(/\.term-input-row \.term-key,\s*\.term-input-row \.term-send\s*\{[^}]*height:\s*var\(--mobile-input-row-height\)/);
+    expect(small).toMatch(/\.term-composer-input\s*\{[^}]*flex:\s*1 1 0/);
+    expect(small).toMatch(/\.term-compact-toggle\s*\{[^}]*order:\s*0/);
+    expect(small).toMatch(/\.term-pin-cycle\s*\{[^}]*order:\s*2/);
     expect(small).toMatch(/\.term-native-input\[data-expanding="true"\]\s*\{[^}]*\*\s*4/);
+  });
+
+  it("budgets the chrome above the terminal from the screen height on a phone", () => {
+    const budget = mediaBlocks("@media (max-width: 820px)").filter((b) => b.includes(".tabbar"));
+    expect(budget.length).toBeGreaterThan(0);
+    const rules = budget.join("\n");
+    expect(rules).toMatch(/\.tabbar\s*\{[^}]*clamp\([^)]*dvh/);
+    expect(rules).toMatch(/\.stage-bar\s*\{[^}]*clamp\([^)]*dvh/);
   });
 
   it("sizes touch glyphs for thumbs while fitting the button grid", () => {

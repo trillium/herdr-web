@@ -109,6 +109,7 @@ import {
 import type { UploadCandidate, UploadedFile } from "./terminalUploads";
 
 import { ParlayInput } from "./ParlayInput";
+import { usePhoneLayout } from "./phoneLayout";
 
 type TerminalRendererFactory = (
   fontSizePx: number,
@@ -1910,6 +1911,7 @@ export function TerminalCommandControls({
   voiceSubmitEnabled?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const phoneLayout = usePhoneLayout();
   const [value, setValue] = useCommandDraft(bridgeId, paneId);
   // Keep this deadline outside the keyed field so it survives input replacement.
   const compositionGuardUntilRef = useRef(0);
@@ -2251,6 +2253,45 @@ export function TerminalCommandControls({
     }
   };
 
+  const mobileModeButton = (
+    <button
+      className="term-key term-key-icon term-mobile-mode-toggle"
+      type="button"
+      aria-label={mobileModeActive ? "Show Claude Code statusline" : "Hide Claude Code statusline"}
+      title={mobileModeActive ? "Show statusline" : "Hide statusline"}
+      data-active={mobileModeActive ? "true" : "false"}
+      onClick={onToggleMobileMode}
+    >
+      <Smartphone size={20} />
+    </button>
+  );
+  const stageButtons = (
+    <>
+      <button
+        className="term-send term-stage-command"
+        type="button"
+        disabled={disabled || value.length === 0}
+        aria-label="Stage command in terminal"
+        title="Stage"
+        onClick={stage}
+      >
+        <TextCursorInput size={20} />
+      </button>
+      {onFollowOnCommand ? (
+        <button
+          className="term-send term-follow-on-command"
+          type="button"
+          disabled={disabled}
+          aria-label="Send as follow-on reply"
+          title={value.length > 0 ? "Follow-on reply (Alt-Enter)" : "Alt-Enter"}
+          onClick={followOn}
+        >
+          <CornerDownRight size={20} />
+        </button>
+      ) : null}
+    </>
+  );
+
   return (
     <div
       ref={rootRef}
@@ -2280,6 +2321,12 @@ export function TerminalCommandControls({
               {label}
             </button>
           ))}
+          {phoneLayout ? (
+            <>
+              {mobileModeButton}
+              {stageButtons}
+            </>
+          ) : null}
         </div>
         <div className="term-key-actions" role="group" aria-label="Terminal actions">
           <button
@@ -2445,16 +2492,7 @@ export function TerminalCommandControls({
           >
             <Keyboard size={20} />
           </button>
-          <button
-            className="term-key term-key-icon term-mobile-mode-toggle"
-            type="button"
-            aria-label={mobileModeActive ? "Show Claude Code statusline" : "Hide Claude Code statusline"}
-            title={mobileModeActive ? "Show statusline" : "Hide statusline"}
-            data-active={mobileModeActive ? "true" : "false"}
-            onClick={onToggleMobileMode}
-          >
-            <Smartphone size={20} />
-          </button>
+          {phoneLayout ? null : mobileModeButton}
           <button
             className="term-key term-key-icon term-pin-cycle"
             type="button"
@@ -2469,28 +2507,7 @@ export function TerminalCommandControls({
           >
             <SkipForward size={20} />
           </button>
-          <button
-            className="term-send term-stage-command"
-            type="button"
-            disabled={disabled || value.length === 0}
-            aria-label="Stage command in terminal"
-            title="Stage"
-            onClick={stage}
-          >
-            <TextCursorInput size={20} />
-          </button>
-          {onFollowOnCommand ? (
-            <button
-              className="term-send term-follow-on-command"
-              type="button"
-              disabled={disabled}
-              aria-label="Send as follow-on reply"
-              title={value.length > 0 ? "Follow-on reply (Alt-Enter)" : "Alt-Enter"}
-              onClick={followOn}
-            >
-              <CornerDownRight size={20} />
-            </button>
-          ) : null}
+          {phoneLayout ? null : stageButtons}
           <button
             className="term-send"
             type="submit"

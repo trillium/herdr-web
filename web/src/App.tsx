@@ -81,6 +81,7 @@ import { logClientEvent } from "./clientLog";
 import { createCommands, createdPaneId } from "./commands";
 import type { LaunchSpec, PaneFocusDirection, SplitDirection } from "./commands";
 import { isConnectionResultCurrent } from "./connectionState";
+import { PHONE_LAYOUT_QUERY } from "./phoneLayout";
 import {
   DEFAULT_CONTENT_INSET_BOTTOM_PX,
   DEFAULT_CONTENT_INSET_TOP_PX,
@@ -88,6 +89,8 @@ import {
   DEFAULT_AGENT_FEATURES_IN_TABS,
   DEFAULT_MULTI_HOST_SPACE_SELECTION,
   DEFAULT_VOICE_SUBMIT_ENABLED,
+  clearSavedBottomInset,
+  consumePhoneBottomInsetReset,
   parseContentInsetBottomPx,
   parseContentInsetTopPx,
   parseMobileControlsScalePercent,
@@ -547,6 +550,11 @@ function readDisplayPrefs(): DisplayPrefs {
     theme: DEFAULT_THEME,
   };
   try {
+    // Consumed even with nothing saved yet, so padding chosen later is never reset.
+    const insetResetDue = consumePhoneBottomInsetReset(
+      window.localStorage,
+      window.matchMedia?.(PHONE_LAYOUT_QUERY).matches === true,
+    );
     const raw = window.localStorage.getItem(DISPLAY_PREFS_KEY);
     if (!raw) {
       return readLegacyDisplayPrefs(fallback);
@@ -554,6 +562,11 @@ function readDisplayPrefs(): DisplayPrefs {
     const parsed = JSON.parse(raw) as Partial<DisplayPrefs> & {
       mobileTouchSelection?: unknown;
     };
+    if (insetResetDue && clearSavedBottomInset(parsed)) {
+      // Persist now: loadDisplayPrefs() reads storage again, so a reset kept only in
+      // memory would be undone by the second read.
+      window.localStorage.setItem(DISPLAY_PREFS_KEY, JSON.stringify(parsed));
+    }
     return parseDisplayPrefsValue(parsed, fallback);
   } catch {
     return fallback;

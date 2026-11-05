@@ -730,6 +730,61 @@ describe("TerminalCommandControls", () => {
   });
 });
 
+describe("TerminalCommandControls phone layout", () => {
+  afterEach(() => {
+    delete (window as { matchMedia?: unknown }).matchMedia;
+  });
+
+  function stubPhoneViewport(matches: boolean) {
+    window.matchMedia = vi.fn(() => ({
+      matches,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+  }
+
+  const rareTools = [
+    "Hide Claude Code statusline",
+    "Stage command in terminal",
+    "Send as follow-on reply",
+  ];
+
+  it("keeps only keys toggle, input, next pane and send on the main row (keys hidden)", async () => {
+    stubPhoneViewport(true);
+    const { container } = await renderControls(true, { compactControls: true });
+    const form = container.querySelector("form.term-input-row");
+    expect(form).not.toBeNull();
+    for (const label of ["Show terminal keys", "Send enter"]) {
+      expect(form?.querySelector(`button[aria-label="${label}"]`)).not.toBeNull();
+    }
+    expect(form?.querySelector(".term-pin-cycle")).not.toBeNull();
+    for (const label of rareTools) {
+      expect(container.querySelector(`button[aria-label="${label}"]`)).toBeNull();
+    }
+    expect(container.querySelector(".term-key-strip")).toBeNull();
+  });
+
+  it("moves the rarely used tools into the scrolling key tray when keys are shown", async () => {
+    stubPhoneViewport(true);
+    const { container } = await renderControls(true, { compactControls: false });
+    const group = container.querySelector(".term-key-strip .term-key-group");
+    expect(group).not.toBeNull();
+    for (const label of rareTools) {
+      expect(group?.querySelector(`button[aria-label="${label}"]`)).not.toBeNull();
+    }
+    expect(container.querySelector("form.term-input-row .term-stage-command")).toBeNull();
+  });
+
+  it("leaves the desktop toolbar untouched", async () => {
+    stubPhoneViewport(false);
+    const { container } = await renderControls(true, { compactControls: true });
+    const form = container.querySelector("form.term-input-row");
+    for (const label of rareTools) {
+      expect(form?.querySelector(`button[aria-label="${label}"]`)).not.toBeNull();
+    }
+  });
+});
+
 async function renderControls(
   expandingInput: boolean,
   options: {
