@@ -109,6 +109,34 @@ describe("command submit requested events", () => {
     expect(onSubmitCommand).toHaveBeenCalledExactlyOnceWith("dictated command");
   });
 
+  it("delivers a several-thousand-character dictated line whole, minus nothing", async () => {
+    const { container, onSubmitCommand } = await renderControls();
+    const dictated = "so what I was thinking is that we could use the porter agent ".repeat(150);
+    await setCommandValue(commandField(container), dictated);
+
+    await emitSignal({
+      pane_id: "pane-a",
+      request_id: "req-long",
+      ts: Date.now(),
+      mode: "submit",
+      source: "parlay-ender",
+    });
+
+    expect(onSubmitCommand).toHaveBeenCalledTimes(1);
+    expect((onSubmitCommand.mock.calls[0] as unknown as [string])[0] === dictated).toBe(true);
+    expect(commandField(container).value).toBe("");
+  });
+
+  it("keeps the draft when the send is refused instead of silently dropping it", async () => {
+    const { container, onSubmitCommand } = await renderControls({ submitResult: false });
+    await setCommandValue(commandField(container), "do not lose this");
+
+    await emitSignal({ pane_id: "pane-a", request_id: "req-refused", ts: Date.now(), mode: "submit" });
+
+    expect(onSubmitCommand).toHaveBeenCalledExactlyOnceWith("do not lose this");
+    expect(commandField(container).value).toBe("do not lose this");
+  });
+
   it("stages the live text without a trailing enter when mode is stage", async () => {
     const { container, onSubmitCommand, onStageCommand } = await renderControls();
     await setCommandValue(commandField(container), "dictated command");
@@ -276,7 +304,7 @@ describe("command submit requested events", () => {
 });
 
 describe("voice-ender bridge submit", () => {
-  it("stages stripped text and POSTs /api/command-submit mode=stage, staging on broadcast", async () => {
+  it("submits stripped text: POSTs /api/command-submit mode=submit, sending on broadcast", async () => {
     const fetchImpl = vi.fn(async (url: string, init?: { body?: string }) => {
       void url;
       void init;
@@ -313,9 +341,9 @@ describe("voice-ender bridge submit", () => {
       pane_id: "pane-a",
       request_id: expect.any(String),
       source: "parlay-ender",
-      // The ender word stages by default: the bridge echoes mode back and the
-      // composer writes the text without pressing Enter, so the user decides.
-      mode: "stage",
+      // The ender word submits: the bridge echoes mode back and the composer
+      // writes the whole text and presses Enter.
+      mode: "submit",
     });
     expect(onSubmitCommand).not.toHaveBeenCalled();
 
@@ -323,10 +351,10 @@ describe("voice-ender bridge submit", () => {
       pane_id: "pane-a",
       request_id: posted.request_id,
       ts: Date.now(),
-      mode: posted.mode as "stage",
+      mode: posted.mode as "submit",
     });
-    expect(onStageCommand).toHaveBeenCalledExactlyOnceWith("dictated command");
-    expect(onSubmitCommand).not.toHaveBeenCalled();
+    expect(onSubmitCommand).toHaveBeenCalledExactlyOnceWith("dictated command");
+    expect(onStageCommand).not.toHaveBeenCalled();
 
     // Flight-recorder trace: the bridge answer (submit-ack) beams via the
     // client log (mocked here); the onSubmit payload remainder is traced as
@@ -338,15 +366,19 @@ describe("voice-ender bridge submit", () => {
 });
 
 async function renderControls(
-  options: { terminalId?: string | null; mobileFocusAfterSubmit?: boolean } = {},
+  options: {
+    terminalId?: string | null;
+    mobileFocusAfterSubmit?: boolean;
+    submitResult?: boolean;
+  } = {},
 ) {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
   roots.push(root);
   const commandInputRef = createRef<HTMLInputElement | HTMLTextAreaElement>();
-  const onSubmitCommand = vi.fn();
-  const onStageCommand = vi.fn();
+  const onSubmitCommand = vi.fn(() => options.submitResult ?? true);
+  const onStageCommand = vi.fn(() => true);
   const drafts = createCommandDraftStore();
   await act(async () => {
     root.render(
@@ -418,13 +450,14 @@ async function emitSignal(init: {
   request_id: string;
   ts: number;
   mode?: "submit" | "stage";
+  source?: string;
 }) {
   await act(async () => {
     emitCommandSubmitRequest({
       pane_id: init.pane_id,
       terminal_id: init.terminal_id ?? null,
       request_id: init.request_id,
-      source: "talon-ender",
+      source: init.source ?? "talon-ender",
       mode: init.mode ?? "submit",
       ts: init.ts,
     });

@@ -12,12 +12,12 @@ import type { CommandSubmitMode } from "./commandSubmit";
 //         parlay+herdr and drops platform-less Herdr traffic at the relay.
 //   DOWN: the shared device SSE carries `input_action`; advisory
 //         armTimer/cancelTimer render the 1s countdown ONLY (never submit).
-//   STAGE:  an async submitNow {requireTail, text:''} re-verifies the tail
+//   SUBMIT: an async submitNow {requireTail, text:''} re-verifies the tail
 //         against the LIVE buffer inside `parlay-input`, strips the ender, and
-//         the remainder is staged via the live bridge path
+//         the remainder is sent via the live bridge path
 //         (POST /api/command-submit -> herdr_web.command_submit_requested)
-//         with mode:'stage': the text lands in the pane with no trailing
-//         Enter, and the user submits it themselves (Enter / Send).
+//         with mode:'submit': the whole text lands in the pane and Enter is
+//         pressed, so "<text> bravely" is a complete send.
 //
 // Per-box isolation is server-side by streamId — one streamId per input box.
 
@@ -28,11 +28,10 @@ export const VOICE_ENDER_PLATFORM = "herdr";
 export const VOICE_ENDER_SOURCE = "parlay-ender";
 
 /**
- * Mode the voice ender requests: `stage` (write the text, no Enter). The ender
- * word is a replacement for the old submit behavior, not an opt-in — the user
- * presses Enter or Send afterwards.
+ * Mode the voice ender requests: `submit` (write the text, then Enter). It was
+ * briefly `stage`; the captain wants the ender word to send, so it does.
  */
-export const VOICE_ENDER_SUBMIT_MODE: CommandSubmitMode = "stage";
+export const VOICE_ENDER_SUBMIT_MODE: CommandSubmitMode = "submit";
 
 /** Reason value the up-channel sends on every voice-box change. */
 export const VOICE_ENDER_INPUT_REASON = "input";
@@ -134,7 +133,7 @@ export type VoiceCommandSubmitRequest = {
  * broadcasts herdr_web.command_submit_requested and the pane's
  * TerminalCommandControls acts on the LIVE buffer through the shared
  * decideCommandSubmit guard (wrong-pane/duplicate/stale/composing/empty):
- * `mode:'stage'` writes the text without an Enter, `submit` also presses it.
+ * `mode:'stage'` writes the text without an Enter, `submit` also presses it (the ender uses `submit`).
  */
 export async function postVoiceCommandSubmit(
   fetchImpl: typeof fetch,

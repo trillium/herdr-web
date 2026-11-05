@@ -1,0 +1,29 @@
+# 1. Reproduction: replay window evicts bracketed-paste enable (test run with the fix disabled)
+test terminal_multiplex::tests::other_private_modes_do_not_enable_bracketed_paste ... ok
+test terminal_multiplex::tests::bracketed_paste_reset_is_not_replayed_as_enabled ... ok
+test terminal_multiplex::tests::bracketed_paste_enable_survives_eviction_from_the_window ... FAILED
+test terminal_multiplex::tests::bracketed_paste_inside_a_multi_parameter_mode_set_is_recognised ... FAILED
+test terminal_multiplex::tests::bracketed_paste_sequence_split_across_chunks_is_recognised ... FAILED
+test result: FAILED. 4 passed; 3 failed; 0 ignored; 0 measured; 295 filtered out; finished in 0.03s
+
+# 2. Same tests with the fix
+test terminal_multiplex::tests::bracketed_paste_reset_is_not_replayed_as_enabled ... ok
+test terminal_multiplex::tests::bracketed_paste_inside_a_multi_parameter_mode_set_is_recognised ... ok
+test terminal_multiplex::tests::bracketed_paste_enable_survives_eviction_from_the_window ... ok
+test terminal_multiplex::tests::bracketed_paste_sequence_split_across_chunks_is_recognised ... ok
+test terminal_multiplex::tests::other_private_modes_do_not_enable_bracketed_paste ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 295 filtered out; finished in 0.07s
+
+# 3. Voice ender through live Parlay server (6000-char text + 'bravely')
+plain {"actions":null,"baseVersion":1,"engineEvalNs":8436125,"ok":true,"seq":1,"sseClients":1,"streamId":"eval-fm-probe-1793845737-main","timing":{"engineEv
+ender {"actions":[{"args":{"fireInMs":1000,"timerId":"submit"},"verb":"armTimer"},{"args":{"id":"submit-countdown","kind":"info","text":"auto-sending in 1s…"},"verb":"showHint"}],"baseVersion":2,"engineEvalNs":6637291,"ok":true,"seq":2,"sseClients":1,"streamId":"eval-fm-probe-1793845737-main","timing":{"engineEvalNs":6637291,"re
+
+1.01 data: {"actions":[{"args":{"requireTail":"bravely","text":""},"verb":"submitNow"}],"baseVersion":2,"seq":3,"streamId":"eval-fm-probe-1793845737-main","timing":{"serverOwnedFire":true},"v":1}
+
+# 4. launchd
+	state = running
+	program = /Users/mini0/.local/share/parlay-eval-engine/parlay/tools/cli/bin/parlay-eval-engine
+	pid = 97881
+		state = active
+		state = active
+{"ok":true,"protocol":1}

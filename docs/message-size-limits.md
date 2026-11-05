@@ -8,8 +8,26 @@ pane) with a byte-comparing receiver and a real Claude Code TUI.
 
 | Path | Route | Bridge limit |
 | --- | --- | --- |
-| Mobile/desktop composer | `TerminalView` -> `/ws/terminal` `{type:"input"}` frames -> bridge -> Herdr attach protocol -> pty | 8 MiB per frame (the input backlog budget) |
-| `/send` page | `POST /api/command` `pane.send_text` / `pane.send_input` -> bridge -> Herdr API socket -> pty | 8 MiB of text |
+| Mobile/desktop composer | `TerminalView` -> `/ws/terminal` `{type:"input"}` frames -> bridge -> Herdr attach protocol -> pty | none: the composer sends pieces of at most 256 Ki UTF-16 units |
+| `/send` page | `POST /api/command` `pane.send_text` / `pane.send_input` -> bridge -> Herdr API socket -> pty | none: the page sends one request per piece (the bridge still caps one request at 8 MiB) |
+
+## Update: no length is refused
+
+The 8 MiB refusals below are gone from both pages. The composer and `/send` split text into
+ordered pieces (`splitComposerText` in `web/src/terminalPaste.ts`, never inside a surrogate
+pair); a bracketed composer message becomes one paste per piece with Enter after the last. The
+bridge no longer closes the socket when the input backlog is full: the frame waits for the pty to
+drain (up to 60 s). The remaining per-request limits (8 MiB for one `/send` request, the 8 MiB
+backlog) now apply to a single piece, which is far below them.
+
+## Why the start of a message could still be missing
+
+Bracketed paste is only used when the client's terminal renderer knows the pane enabled mode 2004.
+That knowledge comes from the output stream, and a client joining a long-lived shared terminal is
+repainted from a 1 MiB replay window. Once the window overflowed, the one `CSI ? 2004 h` the agent
+sent at startup was gone, the phone sent long text raw, and Claude Code kept only its tail. The
+replay buffer (`bridge/src/terminal_multiplex.rs`) now tracks the mode across the whole stream and
+puts `CSI ? 2004 h` in front of the window while the mode is on.
 
 ## Every cap or drop point
 

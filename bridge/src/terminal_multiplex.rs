@@ -23,6 +23,90 @@ use bytes::{Bytes, BytesMut};
 /// eighth of the input backlog budget the writer already allows.
 pub const MAX_TERMINAL_REPLAY_BYTES: usize = 1024 * 1024;
 
+const BRACKETED_PASTE_ON: &[u8] = b"\x1b[?2004h";
+
+/// Follows DEC private mode 2004 (bracketed paste) across the whole output stream.
+///
+/// The replay window is bounded, so the `CSI ? 2004 h` an agent TUI sends once at
+/// startup is evicted from a long-lived session. A client that joins afterwards
+/// never sees it, concludes the pane does not accept bracketed paste, and sends
+/// long text raw — which Claude Code cuts down to its tail. The mode state is
+/// therefore kept outside the window and replayed in front of it.
+#[derive(Debug, Default)]
+struct BracketedPasteTracker {
+    enabled: bool,
+    /// Bytes of a CSI sequence that was split across two chunks.
+    pending: Vec<u8>,
+}
+
+/// Longest private-mode CSI worth carrying across a chunk boundary.
+const MAX_PENDING_CSI_BYTES: usize = 64;
+
+impl BracketedPasteTracker {
+    fn observe(&mut self, chunk: &[u8]) {
+        let mut buf;
+        let data: &[u8] = if self.pending.is_empty() {
+            chunk
+        } else {
+            buf = std::mem::take(&mut self.pending);
+            buf.extend_from_slice(chunk);
+            &buf
+        };
+        let mut i = 0;
+        while i < data.len() {
+            if data[i] != 0x1b {
+                i += 1;
+                continue;
+            }
+            // ESC [ ? <digits and ;> (h|l)
+            let start = i;
+            let mut j = i + 1;
+            if j >= data.len() {
+                self.pending = data[start..].to_vec();
+                return;
+            }
+            if data[j] != b'[' {
+                i = j;
+                continue;
+            }
+            j += 1;
+            if j >= data.len() {
+                self.pending = data[start..].to_vec();
+                return;
+            }
+            if data[j] != b'?' {
+                i = j;
+                continue;
+            }
+            j += 1;
+            let params_start = j;
+            while j < data.len() && (data[j].is_ascii_digit() || data[j] == b';') {
+                j += 1;
+            }
+            if j >= data.len() {
+                if data.len() - start <= MAX_PENDING_CSI_BYTES {
+                    self.pending = data[start..].to_vec();
+                }
+                return;
+            }
+            let set = match data[j] {
+                b'h' => Some(true),
+                b'l' => Some(false),
+                _ => None,
+            };
+            if let Some(set) = set {
+                let touches_paste = data[params_start..j]
+                    .split(|byte| *byte == b';')
+                    .any(|param| param == b"2004");
+                if touches_paste {
+                    self.enabled = set;
+                }
+            }
+            i = j + 1;
+        }
+    }
+}
+
 /// A bounded window over the most recent terminal output.
 ///
 /// Eviction happens at whole-chunk granularity, so once the window has
@@ -35,6 +119,7 @@ pub struct TerminalReplayBuffer {
     chunks: VecDeque<Bytes>,
     len: usize,
     capacity: usize,
+    bracketed_paste: BracketedPasteTracker,
 }
 
 impl TerminalReplayBuffer {
@@ -43,11 +128,16 @@ impl TerminalReplayBuffer {
             chunks: VecDeque::new(),
             len: 0,
             capacity,
+            bracketed_paste: BracketedPasteTracker::default(),
         }
     }
 
     pub fn push(&mut self, chunk: Bytes) {
-        if self.capacity == 0 || chunk.is_empty() {
+        if chunk.is_empty() {
+            return;
+        }
+        self.bracketed_paste.observe(&chunk);
+        if self.capacity == 0 {
             return;
         }
         if chunk.len() >= self.capacity {
@@ -70,11 +160,17 @@ impl TerminalReplayBuffer {
     }
 
     /// The buffered output as one frame, or `None` when nothing has been seen.
+    ///
+    /// When the pane has bracketed paste on, `CSI ? 2004 h` leads the frame even if
+    /// the window no longer contains the sequence that enabled it.
     pub fn snapshot(&self) -> Option<Bytes> {
         if self.chunks.is_empty() {
             return None;
         }
-        let mut out = BytesMut::with_capacity(self.len);
+        let mut out = BytesMut::with_capacity(self.len + BRACKETED_PASTE_ON.len());
+        if self.bracketed_paste.enabled {
+            out.extend_from_slice(BRACKETED_PASTE_ON);
+        }
         for chunk in &self.chunks {
             out.extend_from_slice(chunk);
         }
@@ -239,6 +335,65 @@ mod tests {
         buffer.push(Bytes::from_static(b"world"));
         assert_eq!(buffer.snapshot(), Some(Bytes::from_static(b"hello world")));
         assert_eq!(buffer.len(), 11);
+    }
+
+    fn snapshot_vec(buffer: &TerminalReplayBuffer) -> Vec<u8> {
+        buffer
+            .snapshot()
+            .map(|bytes| bytes.to_vec())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn bracketed_paste_enable_survives_eviction_from_the_window() {
+        // Reproduction: an agent TUI enables bracketed paste once at startup; a
+        // long session then pushes the sequence out of the replay window, and a
+        // client joining later was told nothing about the mode.
+        let mut buffer = TerminalReplayBuffer::new(32);
+        buffer.push(Bytes::from_static(b"\x1b[?2004h"));
+        for _ in 0..20 {
+            buffer.push(Bytes::from_static(b"streaming output\r\n"));
+        }
+        let snapshot = snapshot_vec(&buffer);
+        assert!(
+            !snapshot.windows(8).skip(1).any(|w| w == b"\x1b[?2004h"),
+            "the window itself must no longer hold the enable sequence"
+        );
+        assert!(snapshot.starts_with(b"\x1b[?2004h"));
+    }
+
+    #[test]
+    fn bracketed_paste_reset_is_not_replayed_as_enabled() {
+        let mut buffer = TerminalReplayBuffer::new(8);
+        buffer.push(Bytes::from_static(b"\x1b[?2004h"));
+        buffer.push(Bytes::from_static(b"\x1b[?2004l"));
+        buffer.push(Bytes::from_static(b"prompt$ "));
+        assert_eq!(snapshot_vec(&buffer), b"prompt$ ".to_vec());
+    }
+
+    #[test]
+    fn bracketed_paste_sequence_split_across_chunks_is_recognised() {
+        let mut buffer = TerminalReplayBuffer::new(8);
+        buffer.push(Bytes::from_static(b"\x1b[?20"));
+        buffer.push(Bytes::from_static(b"04h"));
+        buffer.push(Bytes::from_static(b"padding to evict"));
+        assert!(snapshot_vec(&buffer).starts_with(b"\x1b[?2004h"));
+    }
+
+    #[test]
+    fn bracketed_paste_inside_a_multi_parameter_mode_set_is_recognised() {
+        let mut buffer = TerminalReplayBuffer::new(8);
+        buffer.push(Bytes::from_static(b"\x1b[?1;2004;25h"));
+        buffer.push(Bytes::from_static(b"padding to evict"));
+        assert!(snapshot_vec(&buffer).starts_with(b"\x1b[?2004h"));
+    }
+
+    #[test]
+    fn other_private_modes_do_not_enable_bracketed_paste() {
+        let mut buffer = TerminalReplayBuffer::new(8);
+        buffer.push(Bytes::from_static(b"\x1b[?2026h\x1b[?1004h\x1b[?12004h"));
+        buffer.push(Bytes::from_static(b"padding to evict"));
+        assert_eq!(snapshot_vec(&buffer), b"to evict".to_vec());
     }
 
     #[test]

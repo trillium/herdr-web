@@ -18,6 +18,11 @@
 
 ### Added
 
+- Terminal input path is lossless at any length. The composer and `/send` split a long message
+  into ordered pieces (each its own bracketed paste where the pane has that mode) instead of
+  refusing anything over 8 MB, and the bridge queues a piece behind a full input backlog instead
+  of closing the socket mid-message. Needs a rebuilt bridge binary plus `npm run build:web` ([#74](https://github.com/trillium/herdr-web/pull/74)).
+
 - Terminal UI top bar has a 44 px link button that opens `/links` and shows the unopened count ([#71](https://github.com/trillium/herdr-web/pull/71)).
 - The PWA manifest, favicon and home-screen icons are now recoloured per request `Host`, with the
   app named `herdr · <host>`, so each machine installs as a distinct app. Colours come from
@@ -244,6 +249,11 @@
 
 ### Changed
 
+- The voice-ender word (`bravely`, `gravely`, `briefly`, `lap`) submits again: the whole dictated
+  text, minus the ender, goes to the pane and Enter is pressed, and the box refocuses so dictation
+  can continue. It briefly staged without Enter ([#63](https://github.com/trillium/herdr-web/pull/63)).
+  The Parlay eval engine must run with the personal `commands.json` for those phrases to fire ([#74](https://github.com/trillium/herdr-web/pull/74)).
+
 - `/send` accepts up to 8 MiB (was 64 KiB), delivered in 128 KiB pieces so Herdr's ~1 MiB API
   request limit is never hit. Over the limit the bridge answers `400` with the size and the limit;
   the `/send` page and the composer say so before sending and keep the draft. Documented the measured
@@ -277,6 +287,16 @@
 - Voice line-ender countdown no longer shows a "Sending in Ns…" text hint (which shifted the layout); the input box background tints for the countdown instead.
 
 ### Fixed
+
+- Long messages sent from the phone could arrive with their start missing. The bridge's 1 MiB
+  replay window evicts the `CSI ? 2004 h` an agent TUI sends once at startup, so a client joining
+  later believed the pane did not accept bracketed paste and sent long text raw, which Claude
+  Code cuts down to its tail. The bridge now tracks bracketed-paste mode across the whole output
+  stream and replays it in front of the window. Needs a rebuilt bridge binary ([#74](https://github.com/trillium/herdr-web/pull/74)).
+- A send while the terminal socket was not open reported success, cleared the draft and lost the
+  text. The composer now keeps the draft and says "Not connected; nothing was sent", and a socket
+  that drops part-way through a split message says so instead of leaving the rest queued for a
+  later keypress ([#74](https://github.com/trillium/herdr-web/pull/74)).
 
 - Phone terminal now fills the screen: the grid is fitted to the full pane width (the unused
   scrollbar-gutter reserve is dropped on phone-size and touch viewports), side gutters are trimmed,

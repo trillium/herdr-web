@@ -3,7 +3,7 @@
 
 import { apiErrorMessage, type BridgeHttpUrl } from "./bridgeApi";
 import { fetchWithTimeout } from "./fetchWithTimeout";
-import { formatByteSize, MAX_TERMINAL_INPUT_BYTES, utf8ByteLength } from "./terminalPaste";
+import { formatByteSize, splitComposerText, utf8ByteLength } from "./terminalPaste";
 import { displayTabLabel } from "./state";
 import { parseTheme, type Theme } from "./theme";
 import type { Snapshot } from "./types";
@@ -81,25 +81,17 @@ export function focusedSendRequest(
   };
 }
 
-/** Mirrors `MAX_FOCUSED_PANE_SEND_BYTES` in `bridge/src/web_bridge.rs`. */
-export const MAX_FOCUSED_SEND_BYTES = MAX_TERMINAL_INPUT_BYTES;
-/** Above this the bridge splits the text into several writes (still in order). */
+/** Above this the text is sent as several requests, in order. */
 const SEND_NOTICE_BYTES = 64 * 1024;
 
 export type SendSizeNotice = { blocked: boolean; message: string | null };
 
-/** Tell the sender up front what a large send will do; blocked sends are never attempted. */
+/** Tell the sender up front what a large send will do. No length is refused. */
 export function focusedSendSizeNotice(text: string): SendSizeNotice {
   if (text.length * 3 < SEND_NOTICE_BYTES) {
     return { blocked: false, message: null };
   }
   const bytes = utf8ByteLength(text);
-  if (bytes > MAX_FOCUSED_SEND_BYTES) {
-    return {
-      blocked: true,
-      message: `${formatByteSize(bytes)} is over the ${formatByteSize(MAX_FOCUSED_SEND_BYTES)} limit. Nothing will be sent; shorten the text.`,
-    };
-  }
   if (bytes > SEND_NOTICE_BYTES) {
     return {
       blocked: false,
@@ -115,15 +107,26 @@ export async function postFocusedSend(
   text: string,
   pressEnter: boolean,
 ): Promise<void> {
-  const request = focusedSendRequest(paneId, text, pressEnter);
-  const response = await fetchWithTimeout(httpUrl("/api/command"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(request),
-  });
-  if (!response.ok) {
-    const message = (await apiErrorMessage(response)) ?? `send failed (${response.status})`;
-    throw new Error(message);
+  // One request per piece keeps each under the bridge's per-request cap, however long the
+  // text is. Enter rides on the last piece only.
+  const pieces = splitComposerText(text);
+  if (pieces.length === 0) {
+    pieces.push("");
+  }
+  for (const [index, piece] of pieces.entries()) {
+    const last = index === pieces.length - 1;
+    const request = focusedSendRequest(paneId, piece, pressEnter && last);
+    const response = await fetchWithTimeout(httpUrl("/api/command"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      const message = (await apiErrorMessage(response)) ?? `send failed (${response.status})`;
+      throw new Error(
+        index === 0 ? message : `${message} (${index} of ${pieces.length} pieces were already delivered)`,
+      );
+    }
   }
 }
 

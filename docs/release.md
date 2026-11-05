@@ -120,8 +120,8 @@ Open `http://127.0.0.1:8787` and verify:
 - Pane selection syncs between browser clients.
 - Typing, mobile text input, stage-only input, tap-focus setting, scrolling, and refit work.
 - Mobile compact-controls toggle collapses/restores the special-keys row, a trailing voice phrase
-  (e.g. "bravely") stages buffered dictation into the pane via the parlay-backed mobile input with no
-  trailing Enter (the box clears, the pane text is unsubmitted, and Enter or Send submits it), and the
+  (e.g. "bravely") sends the buffered dictation, minus the phrase, to the pane via the parlay-backed
+  mobile input and presses Enter (the box clears and refocuses), and the
   mobile-mode toggle flips `~/.local/share/herdr-web/mobile-mode`.
 - On a touch device with a split pane, the single-pane toggle switches between the selected pane
   and the full split grid.
