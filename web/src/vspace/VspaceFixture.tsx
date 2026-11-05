@@ -66,8 +66,8 @@ export function VspaceFixture() {
         onInput={noop}
         onTerminalFocus={noop}
         onUpload={noop}
-        onStageCommand={noop}
-        onSubmitCommand={noop}
+        onStageCommand={() => true}
+        onSubmitCommand={() => true}
         onNextAgentPane={noop}
         onPrevAgentPane={noop}
         pinned={false}

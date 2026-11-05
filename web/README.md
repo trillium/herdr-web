@@ -70,10 +70,12 @@ How it works: every voice-box change POSTs
 platform:'herdr'}` to `POST /api/chat/eval` (one stable `streamId` per box —
 per-box isolation is server-side). `armTimer`/`cancelTimer` render the advisory
 "Sending in 1s…" countdown only and never submit locally; the async `submitNow`
-re-verifies the ender tail against the live buffer, strips it, and stages the
+re-verifies the ender tail against the live buffer, strips it, and sends the
 remainder through the live bridge path (`POST /api/command-submit` with
-`mode: 'stage'` → `herdr_web.command_submit_requested`): the text lands in the
-pane without a trailing Enter and the user submits it with Enter or Send.
+`mode: 'submit'` → `herdr_web.command_submit_requested`): the whole text lands in the
+pane and Enter is pressed. The ender phrases come from the engine's `commands.json`
+(the shipped defaults are only `send it` / `submit` / `submit that`; `bravely`,
+`gravely`, `briefly` and `lap` need the personal manifest next to the engine binary).
 
 Two serving prerequisites, both verified against the origin guard:
 

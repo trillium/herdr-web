@@ -126,14 +126,13 @@ describe("postVoiceCommandSubmit", () => {
       terminal_id: "term-1",
       request_id: "req-1",
       source: "parlay-ender",
-      mode: "stage",
+      mode: "submit",
     });
     expect(result).toEqual({ request_id: "req-1", pane_id: "pane-a", ts: 123 });
   });
 
-  it("defaults the ender to modal stage: text in the pane, no Enter", () => {
-    // A replacement, not an opt-in: the voice word never presses Enter.
-    expect(VOICE_ENDER_SUBMIT_MODE).toBe("stage");
+  it("defaults the ender to submit: the whole text goes to the pane and Enter is pressed", () => {
+    expect(VOICE_ENDER_SUBMIT_MODE).toBe("submit");
   });
 
   it("omits terminal_id when the pane has no terminal yet", async () => {

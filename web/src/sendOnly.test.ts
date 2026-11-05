@@ -4,7 +4,6 @@ import {
   focusedPaneFromSnapshot,
   focusedSendRequest,
   focusedSendSizeNotice,
-  MAX_FOCUSED_SEND_BYTES,
   isSendOnlyPath,
   openSnapshotEvents,
   postFocusedSend,
@@ -121,6 +120,37 @@ describe("focused send request", () => {
     });
   });
 
+  it("splits an enormous send into ordered requests with Enter only on the last", async () => {
+    const text = "line 日本語 🚀\n".repeat(1_000_000);
+    const bodies: { method: string; params: { text: string; keys?: string[] } }[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      bodies.push(JSON.parse(String((init as RequestInit).body)));
+      return new Response("{}", { status: 200 });
+    });
+
+    await postFocusedSend((path) => path, "pane-2", text, true);
+
+    expect(bodies.length).toBeGreaterThan(1);
+    expect(bodies.slice(0, -1).every((body) => body.method === "pane.send_text")).toBe(true);
+    expect(bodies.at(-1)?.method).toBe("pane.send_input");
+    expect(bodies.at(-1)?.params.keys).toEqual(["Enter"]);
+    expect(bodies.map((body) => body.params.text).join("") === text).toBe(true);
+  });
+
+  it("names how many pieces were already delivered when a later piece fails", async () => {
+    const text = "x".repeat(700_000);
+    let calls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      calls += 1;
+      return calls === 1
+        ? new Response("{}", { status: 200 })
+        : new Response(JSON.stringify({ error: "boom" }), { status: 502 });
+    });
+    await expect(postFocusedSend((path) => path, "pane-2", text, true)).rejects.toThrow(
+      /boom \(1 of 3 pieces were already delivered\)/,
+    );
+  });
+
   it("posts the command to /api/command and surfaces bridge errors", async () => {
     const fetchImpl = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ error: "send target is not the focused pane" }), { status: 400 }),
@@ -219,10 +249,10 @@ describe("focusedSendSizeNotice", () => {
     expect(notice.message).toMatch(/200 KB.*several pieces, in order/);
   });
 
-  it("blocks a send over the limit and says nothing will be sent", () => {
-    const notice = focusedSendSizeNotice("x".repeat(MAX_FOCUSED_SEND_BYTES + 1));
-    expect(notice.blocked).toBe(true);
-    expect(notice.message).toMatch(/over the 8\.0 MB limit.*Nothing will be sent/);
+  it("never blocks a send by size", () => {
+    const notice = focusedSendSizeNotice("x".repeat(20 * 1024 * 1024));
+    expect(notice.blocked).toBe(false);
+    expect(notice.message).toMatch(/several pieces, in order/);
   });
 });
 

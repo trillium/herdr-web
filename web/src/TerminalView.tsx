@@ -531,6 +531,12 @@ export function TerminalView({
       inputFlushTimerRef.current = null;
       const socket = socketRef.current;
       if (socket?.readyState !== WebSocket.OPEN) {
+        // The rest of a split message cannot be delivered in order after a reconnect, and
+        // left queued it would be written by a later keypress; say so instead.
+        if (inputQueueRef.current.length > 0) {
+          inputQueueRef.current = [];
+          showUploadStatus("Connection lost while sending; part of the message may not have arrived.", 8000);
+        }
         return;
       }
       const next = inputQueueRef.current.shift();
@@ -542,7 +548,7 @@ export function TerminalView({
       }
     };
     flush();
-  }, [sendTerminalInputFrame]);
+  }, [sendTerminalInputFrame, showUploadStatus]);
 
   const flushBatchedTerminalInput = useCallback(() => {
     clearBatchedInputTimer();
@@ -1609,6 +1615,10 @@ export function TerminalView({
     if (filteredParts.length === 0) {
       return false;
     }
+    if (socketRef.current?.readyState !== WebSocket.OPEN) {
+      showUploadStatus("Not connected; nothing was sent.", 6000);
+      return false;
+    }
     inputQueueRef.current.push(...filteredParts);
     flushQueuedTerminalInput();
     return true;
@@ -1622,22 +1632,10 @@ export function TerminalView({
       suffix,
       rendererRef.current?.hasBracketedPaste?.() ?? false,
     );
-    if (plan.error) {
-      showUploadStatus(plan.error, 6000);
-      return false;
-    }
     if (plan.warning) {
       showUploadStatus(plan.warning, 5000);
     }
     return enqueueTerminalInput(plan.parts);
-  };
-  const canSendCommand = (command: string) => {
-    const plan = planComposerDelivery(command, [], false);
-    if (plan.error) {
-      showUploadStatus(plan.error, 6000);
-      return false;
-    }
-    return true;
   };
 
   const showCommandControls = mobileControls || desktopCommandComposer;
@@ -1734,7 +1732,6 @@ export function TerminalView({
           onInput={sendTerminalInputData}
           onTerminalFocus={() => rendererRef.current?.focusTextInput()}
           onUpload={openFilePicker}
-          canSendCommand={canSendCommand}
           onStageCommand={(command) => deliverCommand(command, [])}
           onSubmitCommand={(command) => deliverCommand(command, ["\r"])}
           onFollowOnCommand={(command) => deliverCommand(command, [FOLLOW_ON_KEY])}
@@ -1868,7 +1865,6 @@ export function TerminalCommandControls({
   onInput,
   onTerminalFocus,
   onUpload,
-  canSendCommand,
   onStageCommand,
   onSubmitCommand,
   onFollowOnCommand,
@@ -1899,12 +1895,11 @@ export function TerminalCommandControls({
   onInput: (data: string) => void;
   onTerminalFocus: () => void;
   onUpload: () => void;
-  /** Refuses (and tells the user why) before the draft is cleared; omitted means always ok. */
-  canSendCommand?: (command: string) => boolean;
-  onStageCommand: (command: string) => void;
-  onSubmitCommand: (command: string) => void;
+  /** Each returns false when nothing was sent (and says why), so the draft is kept. */
+  onStageCommand: (command: string) => boolean;
+  onSubmitCommand: (command: string) => boolean;
   /** Submit the composer text as a follow-on (Pi's Alt-Enter) instead of a plain Enter steer. */
-  onFollowOnCommand?: (command: string) => void;
+  onFollowOnCommand?: (command: string) => boolean;
   onNextAgentPane: () => void;
   onPrevAgentPane: () => void;
   pinned: boolean;
@@ -1949,19 +1944,21 @@ export function TerminalCommandControls({
   };
   // Tap cycles panes; hold toggles which pool it cycles through.
   const paneCyclePress = useLongPress(onPaneCycleModeToggle, () => onPaneCycle("next"));
-  const submit = () => {
-    focusAfterSubmitRef.current = !mobileControls || mobileFocusAfterSubmit;
+  // `keepDictating`: the voice ender is spoken mid-dictation, so the fresh box must keep
+  // focus (and the keyboard) regardless of the "Focus command input after Send" pref.
+  const submit = (keepDictating = false) => {
+    focusAfterSubmitRef.current = keepDictating || !mobileControls || mobileFocusAfterSubmit;
+    beaconFocusAfterRef.current = keepDictating;
     // Read the live element, not just render-scoped state: a voice-ender
     // submit stages stripped text into the box synchronously just before the
     // bridge broadcast returns, and the React re-render may not have flushed
     // yet. The node always mirrors the displayed buffer (see submitVoiceEnder
     // and clearCommandInput), so preferring it is race-free on every path.
     const command = commandInputRef.current?.value ?? value;
-    if (canSendCommand && !canSendCommand(command)) {
-      return;
+    // Clear only once the text is on its way: a refused send keeps the draft.
+    if (onSubmitCommand(command) !== false) {
+      clearCommandInput();
     }
-    clearCommandInput();
-    onSubmitCommand(command);
   };
   const followOn = () => {
     if (!onFollowOnCommand) {
@@ -1970,22 +1967,19 @@ export function TerminalCommandControls({
     focusAfterSubmitRef.current = !mobileControls || mobileFocusAfterSubmit;
     // Read the live node for the same race-free reason as submit().
     const command = commandInputRef.current?.value ?? value;
-    if (canSendCommand && !canSendCommand(command)) {
-      return;
+    if (onFollowOnCommand(command) !== false) {
+      clearCommandInput();
     }
-    clearCommandInput();
-    onFollowOnCommand(command);
   };
   const stage = () => {
     if (value.length === 0) {
       return;
     }
     const command = value;
-    if (canSendCommand && !canSendCommand(command)) {
+    if (onStageCommand(command) === false) {
       return;
     }
     clearCommandInput();
-    onStageCommand(command);
     if (!mobileControls) {
       onTerminalFocus();
     }
@@ -2001,11 +1995,9 @@ export function TerminalCommandControls({
     focusAfterSubmitRef.current = true;
     beaconFocusAfterRef.current = true;
     const command = commandInputRef.current?.value ?? value;
-    if (canSendCommand && !canSendCommand(command)) {
-      return;
+    if (onStageCommand(command) !== false) {
+      clearCommandInput();
     }
-    clearCommandInput();
-    onStageCommand(command);
   };
   const submitRef = useRef(submit);
   submitRef.current = submit;
@@ -2046,7 +2038,7 @@ export function TerminalCommandControls({
       if (signal.mode === "stage") {
         stageLiveRef.current();
       } else {
-        submitRef.current();
+        submitRef.current(signal.source === VOICE_ENDER_SOURCE);
       }
     } else {
       // duplicate/stale/not-ready/empty: noted above so a retry is ignored,

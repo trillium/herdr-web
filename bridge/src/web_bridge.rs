@@ -96,6 +96,7 @@ const MAX_NOTES_REQUEST_BYTES: usize = 512 * 1024;
 const MAX_LINKS_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_TERMINAL_INPUT_CHUNK_BYTES: usize = 768 * 1024;
 const MAX_QUEUED_TERMINAL_INPUT_BYTES: usize = 8 * 1024 * 1024;
+const TERMINAL_INPUT_BACKLOG_EXCEEDED: &str = "terminal input backlog exceeded";
 const TERMINAL_DETACH_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_TERMINAL_DETACH_DRAIN_WAITS: usize = 4;
 const MAX_ATTACH_HANDSHAKE_RETRIES: usize = 2;
@@ -942,7 +943,7 @@ impl TerminalWriter {
         let queued = self.queued_input_bytes.fetch_add(len, Ordering::AcqRel);
         if queued + len > MAX_QUEUED_TERMINAL_INPUT_BYTES {
             self.queued_input_bytes.fetch_sub(len, Ordering::AcqRel);
-            return Err("terminal input backlog exceeded".to_string());
+            return Err(TERMINAL_INPUT_BACKLOG_EXCEEDED.to_string());
         }
         Ok(())
     }
@@ -5769,7 +5770,7 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
                 }
                 Some(message) = ws_receiver.next() => {
                     record_websocket_peer_activity(&mut heartbeat, &message);
-                    if !handle_terminal_client_message(&write_tx, &sizes, message) {
+                    if !handle_terminal_client_message(&write_tx, &sizes, message).await {
                         break;
                     }
                 }
@@ -5820,7 +5821,7 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
                 }
                 Some(message) = ws_receiver.next() => {
                     record_websocket_peer_activity(&mut heartbeat, &message);
-                    if !handle_terminal_client_message(&write_tx, &sizes, message) {
+                    if !handle_terminal_client_message(&write_tx, &sizes, message).await {
                         break;
                     }
                 }
@@ -5928,16 +5929,24 @@ async fn handle_terminal_output_message(
     }
 }
 
-fn handle_terminal_client_message(
+async fn handle_terminal_client_message(
     write_tx: &TerminalWriter,
     sizes: &TerminalClientSize,
     message: Result<Message, axum::Error>,
 ) -> bool {
     match message {
-        Ok(Message::Text(text)) => {
-            handle_terminal_text_frame(write_tx, sizes, text.as_str()).is_ok()
-        }
-        Ok(Message::Binary(bytes)) => send_terminal_input_chunks(write_tx, &bytes).is_ok(),
+        Ok(Message::Text(text)) => match parse_terminal_client_frame(text.as_str()) {
+            Ok(TerminalClientFrame::Input { data }) => {
+                send_terminal_input_chunks_waiting(write_tx, data.as_bytes())
+                    .await
+                    .is_ok()
+            }
+            Ok(frame) => handle_terminal_frame(write_tx, sizes, frame).is_ok(),
+            Err(_) => false,
+        },
+        Ok(Message::Binary(bytes)) => send_terminal_input_chunks_waiting(write_tx, &bytes)
+            .await
+            .is_ok(),
         Ok(Message::Close(_)) => false,
         Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => true,
         Err(_) => false,
@@ -6615,6 +6624,35 @@ struct TerminalInputChunkStats {
     max_chunk_bytes: usize,
 }
 
+/// How long a frame waits for the pty to drain enough backlog before the socket is given up on.
+const TERMINAL_INPUT_BACKLOG_WAIT: Duration = Duration::from_secs(60);
+const TERMINAL_INPUT_BACKLOG_POLL: Duration = Duration::from_millis(5);
+
+/// Like [`send_terminal_input_chunks`], but a frame that does not fit the backlog right now
+/// waits for the pty to drain instead of failing. A long message is split by the client into
+/// frames, and refusing one mid-message would close the socket with the message half delivered.
+async fn send_terminal_input_chunks_waiting(
+    write_tx: &TerminalWriter,
+    data: &[u8],
+) -> Result<TerminalInputChunkStats, String> {
+    let deadline = tokio::time::Instant::now() + TERMINAL_INPUT_BACKLOG_WAIT;
+    loop {
+        if data.len() > MAX_QUEUED_TERMINAL_INPUT_BYTES {
+            // Larger than the whole budget: no amount of waiting makes it fit.
+            return send_terminal_input_chunks(write_tx, data);
+        }
+        match send_terminal_input_chunks(write_tx, data) {
+            Err(err)
+                if err == TERMINAL_INPUT_BACKLOG_EXCEEDED
+                    && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(TERMINAL_INPUT_BACKLOG_POLL).await;
+            }
+            other => return other,
+        }
+    }
+}
+
 fn send_terminal_input_chunks(
     write_tx: &TerminalWriter,
     data: &[u8],
@@ -6655,12 +6693,21 @@ fn send_terminal_input_chunks(
     Ok(stats)
 }
 
+#[cfg(test)]
 fn handle_terminal_text_frame(
     write_tx: &TerminalWriter,
     sizes: &TerminalClientSize,
     text: &str,
 ) -> Result<(), String> {
     let frame = parse_terminal_client_frame(text)?;
+    handle_terminal_frame(write_tx, sizes, frame)
+}
+
+fn handle_terminal_frame(
+    write_tx: &TerminalWriter,
+    sizes: &TerminalClientSize,
+    frame: TerminalClientFrame,
+) -> Result<(), String> {
     match frame {
         TerminalClientFrame::Input { data } => {
             send_terminal_input_chunks(write_tx, data.as_bytes())?;
@@ -7987,6 +8034,57 @@ mod tests {
             })
             .sum();
         assert_eq!(queued, first.len());
+    }
+
+    #[tokio::test]
+    async fn waiting_send_delivers_every_frame_in_order_when_the_pty_drains_slowly() {
+        // A long message arrives as many frames; the pty consumes them slower than the
+        // client sends. Frames must queue behind the backlog, never close the socket.
+        let (tx, rx) = test_terminal_writer();
+        let frame_len = MAX_QUEUED_TERMINAL_INPUT_BYTES / 2 + 1;
+        let frames: Vec<Vec<u8>> = (0..6u8).map(|i| vec![b'a' + i; frame_len]).collect();
+
+        let drain_counter = tx.queued_input_bytes.clone();
+        let drainer = std::thread::spawn(move || {
+            let mut received: Vec<u8> = Vec::new();
+            let mut seen = 0usize;
+            let expected = frame_len * 6;
+            while seen < expected {
+                match rx.recv_timeout(Duration::from_secs(10)) {
+                    Ok(ClientMessage::Input { data }) => {
+                        std::thread::sleep(Duration::from_millis(20));
+                        seen += data.len();
+                        received.extend_from_slice(&data);
+                        drain_counter.fetch_sub(data.len(), Ordering::AcqRel);
+                    }
+                    Ok(other) => panic!("unexpected terminal message: {other:?}"),
+                    Err(_) => break,
+                }
+            }
+            received
+        });
+
+        for frame in &frames {
+            send_terminal_input_chunks_waiting(&tx, frame)
+                .await
+                .unwrap();
+        }
+        let received = drainer.join().unwrap();
+        assert_eq!(received.len(), frame_len * 6);
+        assert!(
+            received == frames.concat(),
+            "bytes differ or arrived out of order"
+        );
+    }
+
+    #[tokio::test]
+    async fn waiting_send_still_refuses_a_frame_larger_than_the_whole_budget() {
+        let (tx, rx) = test_terminal_writer();
+        let data = vec![b'x'; MAX_QUEUED_TERMINAL_INPUT_BYTES + 1];
+        assert!(send_terminal_input_chunks_waiting(&tx, &data)
+            .await
+            .is_err());
+        assert_eq!(rx.try_iter().count(), 0);
     }
 
     #[test]

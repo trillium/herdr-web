@@ -1,8 +1,12 @@
-// Delivery of composer text to a pane: when to wrap it in a bracketed paste, and
-// the one limit the client cannot lift (the bridge's per-socket input backlog).
+// Delivery of composer text to a pane: when to wrap it in a bracketed paste, and how a
+// long message is split so no length is refused.
 
-/** Mirrors `MAX_QUEUED_TERMINAL_INPUT_BYTES` in `bridge/src/web_bridge.rs`. */
-export const MAX_TERMINAL_INPUT_BYTES = 8 * 1024 * 1024;
+/**
+ * Longest run of UTF-16 units sent in one frame. Worst case 3 UTF-8 bytes per unit, so a
+ * piece stays under 768 KiB, one bridge chunk. The bridge holds back the next frame until
+ * the pty has drained, so the number of pieces is unbounded.
+ */
+export const COMPOSER_PIECE_UNITS = 256 * 1024;
 
 /**
  * Composer text at or above this size (or with any line break) is sent as a
@@ -46,13 +50,29 @@ export function shouldBracketPaste(text: string, bracketedPasteEnabled: boolean)
 }
 
 export type ComposerDelivery = {
-  /** Input parts to enqueue, in order; the command text may be wrapped as a paste. */
+  /** Input parts to enqueue, in order; the command text may be split and wrapped as pastes. */
   parts: string[];
-  /** Set when the text cannot be sent; the composer must keep the draft. */
-  error: string | null;
   /** Set when the text will be sent but may be cut by the receiving app. */
   warning: string | null;
 };
+
+/** Split at code-point boundaries so a surrogate pair is never torn between frames. */
+export function splitComposerText(text: string, pieceUnits = COMPOSER_PIECE_UNITS): string[] {
+  const pieces: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = Math.min(start + pieceUnits, text.length);
+    if (end < text.length) {
+      const last = text.charCodeAt(end - 1);
+      if (last >= 0xd800 && last <= 0xdbff) {
+        end -= 1;
+      }
+    }
+    pieces.push(text.slice(start, end));
+    start = end;
+  }
+  return pieces;
+}
 
 export function planComposerDelivery(
   command: string,
@@ -60,19 +80,15 @@ export function planComposerDelivery(
   bracketedPasteEnabled: boolean,
 ): ComposerDelivery {
   const bytes = utf8ByteLength(command);
-  if (bytes + suffix.reduce((sum, part) => sum + part.length, 0) > MAX_TERMINAL_INPUT_BYTES) {
-    return {
-      parts: [],
-      error: `Message is ${formatByteSize(bytes)}; the bridge accepts at most ${formatByteSize(
-        MAX_TERMINAL_INPUT_BYTES,
-      )} per send. Nothing was sent.`,
-      warning: null,
-    };
-  }
   const bracket = shouldBracketPaste(command, bracketedPasteEnabled);
   const warning =
     !bracketedPasteEnabled && bytes >= UNBRACKETED_WARN_BYTES
       ? `Sending ${formatByteSize(bytes)}; this pane is not in bracketed-paste mode, so the app may keep only part of it.`
       : null;
-  return { parts: [bracket ? wrapBracketedPaste(command) : command, ...suffix], error: null, warning };
+  // Each piece is its own paste: an agent TUI keeps only the tail of one paste spread over
+  // several writes, but takes a paste per write whole.
+  const pieces = splitComposerText(command).map((piece) =>
+    bracket ? wrapBracketedPaste(piece) : piece,
+  );
+  return { parts: [...pieces, ...suffix], warning };
 }
