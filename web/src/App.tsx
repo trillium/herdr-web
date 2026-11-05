@@ -153,6 +153,12 @@ import {
 } from "./navigationPrefs";
 import type { NavigationSyncMode } from "./navigationPrefs";
 import { ActionMenu, ConfirmDialog, RenameDialog, useLongPress } from "./overlays";
+import {
+  pendingSelectionHolds,
+  runtimeSharesNavigation,
+  sharedSelectionPolicy,
+  type PendingSharedPaneSelection,
+} from "./paneSelection";
 import type { MenuItem } from "./overlays";
 import {
   focusableElements,
@@ -296,12 +302,6 @@ type PendingCreatedPaneNote = PendingCreatedPaneNoteTarget & {
 type QuickPaneNoteTarget = ScopedPaneRef & {
   label: string;
 };
-type PendingSharedPaneSelection = {
-  paneId: string;
-  connectionKey: string;
-  timeoutId: number;
-};
-
 export function launcherEmptyMessage(
   bridgeReady: boolean,
   launcherSupported: boolean,
@@ -1450,14 +1450,17 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
       : selectedRuntime
         ? (activeWorkspacesByBridgeId[selectedRuntime.id] ?? null)
         : null;
-  const preferSharedSnapshotSelection =
-    navigationIsShared &&
-    Boolean(selectedRuntime) &&
-    !pendingSharedPaneSelectionsRef.current[selectedRuntime?.id ?? ""];
+  const { useShared: selectedNavigationShared, preferShared: preferSharedSnapshotSelection } =
+    sharedSelectionPolicy(
+      navigationIsShared,
+      selectedRuntime,
+      pendingSharedPaneSelectionsRef.current[selectedRuntime?.id ?? ""],
+      snapshot?.selected_pane_id,
+    );
   const resolvedPaneId = chooseSelectedPane(
     snapshot,
     selectedRawPaneId,
-    navigationIsShared,
+    selectedNavigationShared,
     preferSharedSnapshotSelection,
   );
   const supportedCommands =
@@ -1737,13 +1740,32 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
     showDetailRef.current = showDetail;
   }, [showDetail]);
 
-  // Sync current bridge/pane/workspace selection to URL for persistence
-  useEffect(() => {
+  // The URL selection the page was opened with, captured once: the sync effect
+  // below rewrites the URL, and StrictMode re-runs effects in dev.
+  const urlSeedRef = useRef<{
+    bridgeId: string | null;
+    paneId: string | null;
+    workspaceId: string | null;
+  } | null | undefined>(undefined);
+  if (urlSeedRef.current === undefined) {
     const params = new URLSearchParams(window.location.search);
-    const hasUrlSelection =
-      params.has("bridge") || params.has("pane") || params.has("workspace");
-    if (hasUrlSelection) {
-      return; // Don't overwrite URL-seeded selection
+    urlSeedRef.current =
+      params.has("bridge") || params.has("pane") || params.has("workspace")
+        ? {
+            bridgeId: params.get("bridge"),
+            paneId: params.get("pane"),
+            workspaceId: params.get("workspace"),
+          }
+        : null;
+  }
+  const urlSeedAppliedRef = useRef(false);
+
+  // Sync current bridge/pane/workspace selection to URL for persistence. It waits
+  // for a URL-seeded selection to be applied, then follows every selection: a URL
+  // frozen at the first pane restores that pane, not the one in view, on reload.
+  useEffect(() => {
+    if (urlSeedRef.current && !urlSeedAppliedRef.current) {
+      return;
     }
     if (selectedRuntime && selectedPaneRefState) {
       const urlParams = new URLSearchParams(window.location.search);
@@ -1761,15 +1783,13 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
 
   // Seed selection from URL params on initial load
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlBridgeId = params.get("bridge");
-    const urlPaneId = params.get("pane");
-    const urlWorkspaceId = params.get("workspace");
-    if (urlBridgeId && urlPaneId) {
-      setSelectedBridgeId(urlBridgeId);
-      setSelectedPaneRefState({ bridgeId: urlBridgeId, paneId: urlPaneId });
-      if (urlWorkspaceId) {
-        setActiveWorkspaceRefState({ bridgeId: urlBridgeId, workspaceId: urlWorkspaceId });
+    const seed = urlSeedRef.current;
+    urlSeedAppliedRef.current = true;
+    if (seed?.bridgeId && seed.paneId) {
+      setSelectedBridgeId(seed.bridgeId);
+      setSelectedPaneRefState({ bridgeId: seed.bridgeId, paneId: seed.paneId });
+      if (seed.workspaceId) {
+        setActiveWorkspaceRefState({ bridgeId: seed.bridgeId, workspaceId: seed.workspaceId });
       }
     }
   }, []); // Only run on mount
@@ -1782,21 +1802,28 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
     }
     const restoredPaneId = selectedPanesByBridgeId[selectedRuntime.id] ?? null;
     const restoredWorkspaceId = activeWorkspacesByBridgeId[selectedRuntime.id] ?? null;
-    if (
-      navigationIsShared &&
-      snapshot?.selected_pane_id &&
-      pendingSharedPaneSelectionsRef.current[selectedRuntime.id]?.paneId ===
-        snapshot.selected_pane_id
-    ) {
-      clearPendingSharedPaneSelection(selectedRuntime.id, snapshot.selected_pane_id);
+    if (selectedNavigationShared && snapshot?.selected_pane_id) {
+      const pending = pendingSharedPaneSelectionsRef.current[selectedRuntime.id];
+      if (
+        pending &&
+        (pending.paneId === snapshot.selected_pane_id ||
+          (pending.unconfirmed && !pendingSelectionHolds(pending, snapshot.selected_pane_id)))
+      ) {
+        clearPendingSharedPaneSelection(selectedRuntime.id);
+      }
     }
+    const policy = sharedSelectionPolicy(
+      navigationIsShared,
+      selectedRuntime,
+      pendingSharedPaneSelectionsRef.current[selectedRuntime.id],
+      snapshot?.selected_pane_id,
+    );
     const nextPaneId = chooseSelectedPaneForActiveWorkspace(
       snapshot,
       restoredPaneId,
       restoredWorkspaceId,
-      navigationIsShared,
-      navigationIsShared &&
-        !pendingSharedPaneSelectionsRef.current[selectedRuntime.id],
+      policy.useShared,
+      policy.preferShared,
     );
     setSelectedPaneRefState((current) => {
       if (!nextPaneId) {
@@ -1838,7 +1865,7 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
   }, [
     activeWorkspacesByBridgeId,
     clearPendingSharedPaneSelection,
-    navigationIsShared,
+    selectedNavigationShared,
     selectedPanesByBridgeId,
     selectedRuntime?.id,
     snapshot,
@@ -2104,13 +2131,13 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
     paneId: string,
     workspaceId?: string,
   ) => {
-    const pendingPaneId = pendingSharedPaneSelectionsRef.current[bridgeId]?.paneId;
-    if (pendingPaneId && pendingPaneId !== paneId) {
+    const pending = pendingSharedPaneSelectionsRef.current[bridgeId];
+    if (pending && pending.paneId !== paneId && !pending.unconfirmed) {
       return;
     }
-    if (pendingPaneId === paneId) {
-      clearPendingSharedPaneSelection(bridgeId, paneId);
-    }
+    // A selection event after the tap's echo window closed is another client's
+    // newer pick, not a stale echo, so it replaces the tap.
+    clearPendingSharedPaneSelection(bridgeId);
     rememberPaneSelection(bridgeId, paneId, workspaceId);
   }, [clearPendingSharedPaneSelection, rememberPaneSelection]);
 
@@ -2120,7 +2147,7 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
         clearPendingSharedPaneSelection(bridgeId);
       }
     }
-    if (mode === "shared" && selectedRuntime && snapshot?.selected_pane_id) {
+    if (mode === "shared" && selectedRuntime && !selectedRuntime.proxied && snapshot?.selected_pane_id) {
       const pane = snapshot.panes.find(
         (candidate) => candidate.pane_id === snapshot.selected_pane_id,
       );
@@ -2483,29 +2510,39 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
         void refreshBridgeSnapshot(runtime, false);
       }
     };
-    const timeoutId = window.setTimeout(() => {
+    // The tap stays the view's selection after the echo window closes or the
+    // publish fails; only the bridge moving off the selection this tap replaced
+    // (our echo, or another client's pick) releases it. Dropping it here would
+    // let the stale snapshot send the view to whatever was selected before.
+    const markUnconfirmed = () => {
+      const pending = pendingSharedPaneSelectionsRef.current[runtime.id];
       if (
-        clearPendingSharedPaneSelection(runtime.id, paneId, runtime.connectionKey)
+        pending?.paneId === paneId &&
+        pending.connectionKey === runtime.connectionKey &&
+        !pending.unconfirmed
       ) {
+        window.clearTimeout(pending.timeoutId);
+        pending.unconfirmed = true;
         refreshIfConnectionIsCurrent();
       }
-    }, SHARED_SELECTION_SETTLE_TIMEOUT_MS);
+    };
+    const timeoutId = window.setTimeout(markUnconfirmed, SHARED_SELECTION_SETTLE_TIMEOUT_MS);
     pendingSharedPaneSelectionsRef.current[runtime.id] = {
       paneId,
       connectionKey: runtime.connectionKey,
       timeoutId,
+      supersededPaneId: connectionRefs.current[runtime.id]?.snapshot?.selected_pane_id ?? null,
+      unconfirmed: false,
     };
-    void syncSelectedPane(runtime.httpUrl, paneId).catch(() => {
-      if (
-        clearPendingSharedPaneSelection(runtime.id, paneId, runtime.connectionKey)
-      ) {
-        refreshIfConnectionIsCurrent();
-      }
-    });
+    void syncSelectedPane(runtime.httpUrl, paneId).catch(markUnconfirmed);
   };
 
   const pushFocus = (runtime: BridgeRuntime | null, tabId?: string, workspaceId?: string) => {
-    if (!navigationIsShared || !runtime || runtime.capabilityState !== "ready") {
+    if (
+      !runtimeSharesNavigation(navigationIsShared, runtime) ||
+      !runtime ||
+      runtime.capabilityState !== "ready"
+    ) {
       return;
     }
     const commands = createCommands(runtime.httpUrl);
@@ -2548,7 +2585,7 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
     setSelectedBridgeId(bridgeId);
     bridge.markBridgeUsed(bridgeId);
     rememberPaneSelection(bridgeId, pane.pane_id, pane.workspace_id);
-    if (navigationIsShared && runtime.capabilityState === "ready") {
+    if (runtimeSharesNavigation(navigationIsShared, runtime) && runtime.capabilityState === "ready") {
       publishSharedPaneSelection(runtime, pane.pane_id);
     }
     pushFocus(runtime, pane.tab_id, pane.workspace_id);
@@ -2624,7 +2661,7 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
       if (paneId) {
         const pane = bridgeSnapshot.panes.find((item) => item.pane_id === paneId);
         rememberPaneSelection(bridgeId, paneId, pane?.workspace_id ?? workspaceId);
-        if (navigationIsShared && runtime.capabilityState === "ready") {
+        if (runtimeSharesNavigation(navigationIsShared, runtime) && runtime.capabilityState === "ready") {
           publishSharedPaneSelection(runtime, paneId);
         }
         pushFocus(runtime, pane?.tab_id, workspaceId);
@@ -3170,7 +3207,7 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
       const newTabShortcut = isNewTabShortcut(event);
       const splitDirection = splitSupported ? splitShortcutDirection(event) : null;
       const paneFocusDirection =
-        paneFocusSupported || !navigationIsShared
+        paneFocusSupported || !selectedNavigationShared
           ? paneFocusShortcutDirection(event)
           : null;
       const paneCycleStep = paneCycleShortcutStep(event);
@@ -3195,7 +3232,7 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
         if (!selectedPane || !selectedRuntime) {
           return;
         }
-        if (!navigationIsShared) {
+        if (!selectedNavigationShared) {
           const nextPane = snapshot
             ? chooseDirectionalPane(snapshot, selectedPane.pane_id, paneFocusDirection)
             : null;
@@ -3395,6 +3432,7 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
     menu,
     multiHostSpaceSelection,
     navigationIsShared,
+    selectedNavigationShared,
     paneFocusSupported,
     pinnedAgentKeys,
     scope,
@@ -3720,7 +3758,7 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
         if (created) {
           setSelectedBridgeId(runtime.id);
           rememberPaneSelection(runtime.id, created.pane_id, created.workspace_id);
-          if (navigationIsShared) {
+          if (runtimeSharesNavigation(navigationIsShared, runtime)) {
             publishSharedPaneSelection(runtime, created.pane_id);
           }
           if (isCompactLayout) {
