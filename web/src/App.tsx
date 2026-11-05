@@ -197,6 +197,7 @@ import {
   parseTerminalCursorBlink,
   parseTerminalFontSizePx,
 } from "./terminalPrefs";
+import { activeTab, activeTabId, tabColorVars, tabHue } from "./tabColor";
 import { applyTheme, DEFAULT_THEME, nextTheme, parseTheme } from "./theme";
 import type { Theme } from "./theme";
 import {
@@ -4002,6 +4003,8 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
   };
 
   const renderTerminal = !isCompactLayout || showDetail;
+  const stageTab = activeTab(snapshot, activeSpace, selectedPane);
+  const stageTabStyle = tabColorVars(stageTab, selectedRuntime?.color) as CSSProperties;
   const appStyle = {
     "--sidebar-w": `${sidebarWidth}px`,
     "--notes-w": `${notesPanelWidth}px`,
@@ -4241,7 +4244,12 @@ function AppContent({ commandDrafts }: { commandDrafts: ReturnType<typeof create
         />
       </aside>
 
-      <section className="stage" aria-label="Terminal">
+      <section
+        className="stage"
+        aria-label="Terminal"
+        data-tab-colored={stageTab ? "true" : undefined}
+        style={stageTabStyle}
+      >
         <TabBar
           snapshot={snapshot}
           activeSpace={activeSpace}
@@ -6413,6 +6421,14 @@ function TabBar({
     clearable?: boolean,
   ) => void;
 }) {
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const selectedTabId = snapshot && activeSpace ? activeTabId(activeSpace, selectedPane) : null;
+  // The strip scrolls sideways; keep the active tab's chip in view so the colour that
+  // frames the stage always has its matching chip on screen.
+  useEffect(() => {
+    const active = stripRef.current?.querySelector<HTMLElement>('[data-active="true"]');
+    active?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [selectedTabId]);
   if (!snapshot || !activeSpace) {
     return null;
   }
@@ -6420,13 +6436,9 @@ function TabBar({
   if (tabs.length === 0) {
     return null;
   }
-  const activeTabId =
-    selectedPane && selectedPane.workspace_id === activeSpace.workspace_id
-      ? selectedPane.tab_id
-      : activeSpace.active_tab_id;
   return (
     <div className="tabbar">
-      <div className="tabbar-scroll" role="tablist" aria-label="Tabs">
+      <div ref={stripRef} className="tabbar-scroll" role="tablist" aria-label="Tabs">
         {tabs.map((tab) => {
           const label = displayTabLabel(tab, snapshot.panes);
           return (
@@ -6435,8 +6447,9 @@ function TabBar({
               type="button"
               className="tabbar-tab"
               role="tab"
-              aria-selected={tab.tab_id === activeTabId}
-              data-active={tab.tab_id === activeTabId}
+              aria-selected={tab.tab_id === selectedTabId}
+              data-active={tab.tab_id === selectedTabId}
+              style={{ "--tab-h": tabHue(tab) } as CSSProperties}
               onClick={() => onSelectTab(tab.tab_id)}
               onContextMenu={(event) => {
                 event.preventDefault();

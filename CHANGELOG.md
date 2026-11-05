@@ -18,6 +18,14 @@
 
 ### Added
 
+- Every herdr tab has its own stable colour (a hash of the tab's name, or its id while unnamed,
+  into a 12-hue palette) so you can tell which tab you are in at a glance: each chip in the tab
+  strip carries its colour, the active chip is filled, and the tab strip, pane header, terminal
+  side edges and the top of the controls are washed in it. The right-hand side of each wash and the
+  right edge line use the bridge's machine colour, so the same tab on mini1 looks different from
+  mini0. Light and dark themes both keep text contrast; the terminal itself is never tinted. The
+  active chip also scrolls into view in the strip ([#77](https://github.com/trillium/herdr-web/pull/77)).
+
 - Terminal input path is lossless at any length. The composer and `/send` split a long message
   into ordered pieces (each its own bracketed paste where the pane has that mode) instead of
   refusing anything over 8 MB, and the bridge queues a piece behind a full input backlog instead
