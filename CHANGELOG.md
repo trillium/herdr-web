@@ -24,7 +24,7 @@
   visualViewport sizes, the safe-area inset and the controls bar padding. It outlines the input row
   and hatches any gap under it, and beams the same numbers to the bridge log (`grep layout-probe
   herdr-web.log`) so they can be read without a screenshot. See `web/README.md`. Web-only; no
-  bridge rebuild needed.
+  bridge rebuild needed ([#78](https://github.com/trillium/herdr-web/pull/78)).
 
 - Every herdr tab has its own stable colour (a hash of the tab's name, or its id while unnamed,
   into a 12-hue palette) so you can tell which tab you are in at a glance: each chip in the tab
@@ -267,10 +267,11 @@
 
 - Phone: the controls bar sits 12 px above the bottom edge on an iPhone with a home indicator
   (was 24 px), so the input row hugs the home indicator and the terminal gets the recovered
-  height. The safe-area inset is counted once, in the bar's own padding.
+  height. The safe-area inset is counted once, in the bar's own padding
+  ([#78](https://github.com/trillium/herdr-web/pull/78)).
 - Phone: the "N devices viewing" pill no longer sits over the first terminal lines. It shows for
   4 seconds when the viewer count changes, then shrinks to a small count chip in the corner that
-  reopens it.
+  reopens it ([#78](https://github.com/trillium/herdr-web/pull/78)).
 
 - Phone portrait gives the terminal more of the screen: with keys shown at 440x956 it goes from
   587 px (61% of the height, 38 rows) to 717 px (75%, 47 rows). The tab strip and pane header are
