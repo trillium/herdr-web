@@ -255,10 +255,10 @@
   next pane, send); Esc/Tab/1-3, upload, and the Stage, Follow-on and statusline buttons sit in one
   scrolling tray above it while keys are shown (the keyboard button on the main row toggles it).
   The gap under the bar and the terminal's own padding are smaller. Desktop and landscape layouts
-  are unchanged.
+  are unchanged ([#76](https://github.com/trillium/herdr-web/pull/76)).
 - A saved Settings > Display spacing > Bottom padding is reset to 0 once on phone-width screens.
   The controls bar clears the home indicator itself since #73, so the old manual padding was only
-  a dead strip under the input. Set it again afterwards if wanted; it is not reset a second time.
+  a dead strip under the input. Set it again afterwards if wanted; it is not reset a second time ([#76](https://github.com/trillium/herdr-web/pull/76)).
 
 - The voice-ender word (`bravely`, `gravely`, `briefly`, `lap`) submits again: the whole dictated
   text, minus the ender, goes to the pane and Enter is pressed, and the box refocuses so dictation
