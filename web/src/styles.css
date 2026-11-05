@@ -4411,3 +4411,95 @@ span.links-item-title {
     gap: 4px;
   }
 }
+
+/* ------------------------------------------------------------ tab colours */
+
+/* Each herdr tab has a stable hue (`--tab-h`, see tabColor.ts) set on the stage and on
+   its own chip in the strip. The colour only frames the terminal: washes on the bars,
+   a line along the terminal edges and the top of the controls. Terminal text and the
+   terminal background are never tinted. The saturation/lightness pairs below are
+   checked for text contrast in tabColor.test.ts, so change them together.
+   `--machine-color` is the bridge's own colour; it is blended into the right-hand
+   side of each wash and the right edge line so a mini1 tab looks unlike a mini0 one. */
+.stage,
+.tabbar-tab {
+  --tab-color: hsl(var(--tab-h, 232) 72% 66%);
+  --tab-chip-fill: 24%;
+}
+
+:root[data-theme="light"] .stage,
+:root[data-theme="light"] .tabbar-tab {
+  --tab-color: hsl(var(--tab-h, 232) 68% 40%);
+  --tab-chip-fill: 12%;
+}
+
+.stage[data-tab-colored="true"] {
+  --machine-edge: var(--machine-color, var(--tab-color));
+  --tab-wash: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--tab-color) 30%, transparent) 0%,
+    color-mix(in srgb, var(--tab-color) 12%, transparent) 40%,
+    color-mix(in srgb, var(--machine-edge) 24%, transparent) 100%
+  );
+}
+
+/* Light theme: the same colours are darker, so the wash is thinner to keep text readable. */
+:root[data-theme="light"] .stage[data-tab-colored="true"] {
+  --tab-wash: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--tab-color) 12%, transparent) 0%,
+    color-mix(in srgb, var(--tab-color) 5%, transparent) 40%,
+    color-mix(in srgb, var(--machine-edge) 14%, transparent) 100%
+  );
+}
+
+.stage[data-tab-colored="true"] .tabbar {
+  background:
+    linear-gradient(90deg, var(--tab-color), var(--machine-edge)) bottom / 100% 2px no-repeat,
+    var(--tab-wash),
+    var(--sidebar-bg);
+}
+
+.stage[data-tab-colored="true"] .stage-bar {
+  background: var(--tab-wash), var(--mantle);
+  border-bottom-color: color-mix(in srgb, var(--tab-color) 55%, var(--line));
+}
+
+/* Chips in the strip: every tab shows its own colour, the active one is filled. */
+.tabbar-tab {
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--tab-color) 70%, transparent);
+}
+
+.tabbar-tab .dot {
+  flex: 0 0 auto;
+}
+
+.tabbar-tab[data-active="true"] {
+  border-color: var(--tab-color);
+  background: color-mix(in srgb, var(--tab-color) var(--tab-chip-fill), var(--row-active));
+  box-shadow: inset 0 -3px 0 var(--tab-color);
+}
+
+.tabbar-tab:hover:not([data-active="true"]) {
+  background: color-mix(in srgb, var(--tab-color) 12%, var(--row-hover));
+}
+
+/* Edge lines: tab colour on the left, machine colour on the right. */
+.stage[data-tab-colored="true"] .terminal-stage {
+  box-shadow:
+    inset 3px 0 0 var(--tab-color),
+    inset -4px 0 0 var(--machine-edge);
+}
+
+.stage[data-tab-colored="true"] .terminal-command-controls:not([data-composing="true"]),
+.stage[data-tab-colored="true"] .terminal-mobile-controls:not([data-composing="true"]) {
+  border-top: 2px solid var(--tab-color);
+  border-image: linear-gradient(90deg, var(--tab-color), var(--machine-edge)) 1;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--tab-color) 16%, transparent),
+      color-mix(in srgb, var(--machine-edge) 12%, transparent)
+    ),
+    color-mix(in srgb, var(--mantle) 94%, black);
+}
