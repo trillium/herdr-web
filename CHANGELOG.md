@@ -288,6 +288,14 @@
 
 ### Fixed
 
+- Tapping a pane in the list could open a different pane (for example tapping Porter and landing
+  on Zephyr). Shared navigation publishes each tap to the bridge and follows the bridge's selected
+  pane back, but a remote bridge cannot accept that publish (the proxy allow-list returns 403), so
+  every tap on a remote host snapped to that host's herdr-focused pane; on a local bridge a slow
+  or failed publish did the same. Remote hosts now navigate independently, a local tap holds until
+  the bridge confirms it or another client moves the selection, and the page URL follows the
+  selected pane instead of freezing at the first one, so a reload no longer restores a stale pane
+  (PR_LINK).
 - Long messages sent from the phone could arrive with their start missing. The bridge's 1 MiB
   replay window evicts the `CSI ? 2004 h` an agent TUI sends once at startup, so a client joining
   later believed the pane did not accept bracketed paste and sent long text raw, which Claude
