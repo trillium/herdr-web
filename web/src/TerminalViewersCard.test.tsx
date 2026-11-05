@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import TerminalViewersCard, {
+  VIEWERS_AUTO_COLLAPSE_MS,
   terminalViewersDetail,
   terminalViewersLabel,
 } from "./TerminalViewersCard";
@@ -131,5 +132,59 @@ describe("TerminalViewersCard", () => {
     expect(String(url)).toBe("http://bridge/api/terminal-connections/kick");
     expect(JSON.parse(String(init?.body))).toEqual({ client_id: "b", clear_state: true });
     expect(container.textContent).not.toContain("iphone-mobile");
+  });
+});
+
+describe("TerminalViewersCard on a phone", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("max-width: 820px"),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the pill, then shrinks to a corner chip, and the chip reopens it", async () => {
+    const container = await render([
+      connection("a", "mac-desktop"),
+      connection("b", "iphone-mobile"),
+    ]);
+    expect(container.textContent).toContain("2 devices viewing");
+    expect(container.querySelector(".terminal-viewers-chip")).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(VIEWERS_AUTO_COLLAPSE_MS + 50);
+    });
+    expect(container.textContent).not.toContain("devices viewing");
+    const chip = container.querySelector<HTMLButtonElement>(".terminal-viewers-chip");
+    expect(chip?.textContent).toBe("2");
+    expect(chip?.getAttribute("aria-label")).toContain("2 devices viewing");
+
+    await act(async () => {
+      chip!.click();
+    });
+    expect(container.textContent).toContain("2 devices viewing");
+  });
+
+  it("stays up while the device list is being managed", async () => {
+    const container = await render([
+      connection("a", "mac-desktop"),
+      connection("b", "iphone-mobile"),
+    ]);
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".terminal-viewers-toggle")!.click();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(VIEWERS_AUTO_COLLAPSE_MS * 3);
+    });
+    expect(container.querySelector(".terminal-viewers-list")).not.toBeNull();
+    expect(container.querySelector(".terminal-viewers-chip")).toBeNull();
   });
 });

@@ -1,4 +1,6 @@
+import { Users } from "lucide-react";
 import { useEffect, useState } from "react";
+import { usePhoneLayout } from "./phoneLayout";
 import type { BridgeHttpUrl } from "./bridgeApi";
 import {
   getConnectionsForTerminal,
@@ -7,6 +9,8 @@ import {
 } from "./connectionManager";
 
 const VIEWERS_POLL_INTERVAL_MS = 2000;
+/** How long the full pill stays up on a phone before shrinking to the corner chip. */
+export const VIEWERS_AUTO_COLLAPSE_MS = 4000;
 
 interface Props {
   terminalId: string;
@@ -55,6 +59,10 @@ export function terminalViewersDetail(connections: TerminalConnection[], limit =
  * additionally makes it forget its saved pane state, which is what mangles the
  * UI on every other device when it is stale.
  *
+ * On a phone the pill covered the first terminal lines, so it shows for a few seconds when the
+ * viewer count changes and then shrinks to a small corner chip; tapping the chip brings it back.
+ * Wider screens keep the pill up.
+ *
  * The nickname and priority endpoints in `connectionManager` stay in place for
  * other clients of the bridge API; this view simply does not drive them.
  */
@@ -66,6 +74,9 @@ export default function TerminalViewersCard({
   const [connections, setConnections] = useState<TerminalConnection[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [kickError, setKickError] = useState<string | null>(null);
+  const phone = usePhoneLayout();
+  const [revealed, setRevealed] = useState(true);
+  const viewerCount = connections.length;
 
   async function kick(clientId: string, clearState: boolean) {
     if (!httpUrl) {
@@ -113,12 +124,36 @@ export default function TerminalViewersCard({
     // parent render.
   }, [terminalId, httpUrl]);
 
+  // Re-show the pill whenever the number of viewers changes, then let it fall back to the chip.
+  useEffect(() => {
+    if (!phone || viewerCount < 2) {
+      return;
+    }
+    setRevealed(true);
+    const timer = setTimeout(() => setRevealed(false), VIEWERS_AUTO_COLLAPSE_MS);
+    return () => clearTimeout(timer);
+  }, [phone, viewerCount]);
+
   // A single viewer is the ordinary case and needs no chrome over the terminal.
   if (connections.length < 2) {
     return null;
   }
 
   const detail = terminalViewersDetail(connections);
+  // Managing devices keeps the pill up; otherwise a phone shows only the chip once it settles.
+  if (phone && !revealed && !expanded) {
+    return (
+      <button
+        type="button"
+        className="terminal-viewers-chip"
+        aria-label={`${terminalViewersLabel(connections.length)} - show`}
+        onClick={() => setRevealed(true)}
+      >
+        <Users size={11} aria-hidden="true" />
+        <span>{connections.length}</span>
+      </button>
+    );
+  }
   return (
     <div className="terminal-viewers-card">
       <div className="terminal-viewers" role="status" aria-live="polite">
