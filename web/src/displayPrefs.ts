@@ -67,3 +67,32 @@ function parseClampedInteger(value: unknown, min: number, max: number, fallback:
   }
   return Math.min(max, Math.max(min, Math.round(value)));
 }
+
+/**
+ * One-time reset of a saved "Bottom padding" on phones. Before the controls bar
+ * cleared the home-indicator inset itself, people added bottom padding by hand to
+ * keep the bar off the indicator; that padding is now a dead strip under the input.
+ * The marker makes the reset a one-off, so a value set again afterwards is kept.
+ */
+export const PHONE_BOTTOM_INSET_RESET_KEY = "herdr.mobileWeb.phoneBottomInsetReset.v1";
+
+/** True exactly once per browser profile, on the first phone-width read. */
+export function consumePhoneBottomInsetReset(
+  storage: Pick<Storage, "getItem" | "setItem">,
+  isPhone: boolean,
+) {
+  if (!isPhone || storage.getItem(PHONE_BOTTOM_INSET_RESET_KEY) !== null) {
+    return false;
+  }
+  storage.setItem(PHONE_BOTTOM_INSET_RESET_KEY, "1");
+  return true;
+}
+
+/** Zeroes a saved bottom padding in a parsed prefs object; true when it changed. */
+export function clearSavedBottomInset(parsed: { contentInsetBottomPx?: unknown }) {
+  if (parseContentInsetBottomPx(parsed.contentInsetBottomPx) === DEFAULT_CONTENT_INSET_BOTTOM_PX) {
+    return false;
+  }
+  parsed.contentInsetBottomPx = DEFAULT_CONTENT_INSET_BOTTOM_PX;
+  return true;
+}

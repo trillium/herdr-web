@@ -249,6 +249,17 @@
 
 ### Changed
 
+- Phone portrait gives the terminal more of the screen: with keys shown at 440x956 it goes from
+  587 px (61% of the height, 38 rows) to 717 px (75%, 47 rows). The tab strip and pane header are
+  shorter and scale with the screen height. The controls bar is one main row (keys toggle, input,
+  next pane, send); Esc/Tab/1-3, upload, and the Stage, Follow-on and statusline buttons sit in one
+  scrolling tray above it while keys are shown (the keyboard button on the main row toggles it).
+  The gap under the bar and the terminal's own padding are smaller. Desktop and landscape layouts
+  are unchanged.
+- A saved Settings > Display spacing > Bottom padding is reset to 0 once on phone-width screens.
+  The controls bar clears the home indicator itself since #73, so the old manual padding was only
+  a dead strip under the input. Set it again afterwards if wanted; it is not reset a second time.
+
 - The voice-ender word (`bravely`, `gravely`, `briefly`, `lap`) submits again: the whole dictated
   text, minus the ender, goes to the pane and Enter is pressed, and the box refocuses so dictation
   can continue. It briefly staged without Enter ([#63](https://github.com/trillium/herdr-web/pull/63)).

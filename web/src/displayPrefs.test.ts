@@ -10,6 +10,9 @@ import {
   MAX_CONTENT_INSET_TOP_PX,
   MAX_MOBILE_CONTROLS_SCALE_PERCENT,
   MIN_MOBILE_CONTROLS_SCALE_PERCENT,
+  PHONE_BOTTOM_INSET_RESET_KEY,
+  clearSavedBottomInset,
+  consumePhoneBottomInsetReset,
   parseContentInsetBottomPx,
   parseContentInsetTopPx,
   parseMobileControlsScalePercent,
@@ -84,5 +87,25 @@ describe("display preferences", () => {
       expect(parseVoiceSubmitEnabled(garbage, DEFAULT_VOICE_SUBMIT_ENABLED)).toBe(true);
       expect(parseVoiceSubmitEnabled(garbage, false)).toBe(false);
     }
+  });
+
+  it("resets a saved bottom padding once per phone profile", () => {
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+    };
+    expect(consumePhoneBottomInsetReset(storage, false)).toBe(false);
+    expect(store.has(PHONE_BOTTOM_INSET_RESET_KEY)).toBe(false);
+    expect(consumePhoneBottomInsetReset(storage, true)).toBe(true);
+    expect(consumePhoneBottomInsetReset(storage, true)).toBe(false);
+  });
+
+  it("zeroes only a non-zero saved bottom padding", () => {
+    const saved = { contentInsetBottomPx: 64, contentInsetTopPx: 12 };
+    expect(clearSavedBottomInset(saved)).toBe(true);
+    expect(saved).toEqual({ contentInsetBottomPx: 0, contentInsetTopPx: 12 });
+    expect(clearSavedBottomInset(saved)).toBe(false);
+    expect(clearSavedBottomInset({})).toBe(false);
   });
 });
