@@ -295,7 +295,7 @@
   or failed publish did the same. Remote hosts now navigate independently, a local tap holds until
   the bridge confirms it or another client moves the selection, and the page URL follows the
   selected pane instead of freezing at the first one, so a reload no longer restores a stale pane
-  (PR_LINK).
+  ([#75](https://github.com/trillium/herdr-web/pull/75)).
 - Long messages sent from the phone could arrive with their start missing. The bridge's 1 MiB
   replay window evicts the `CSI ? 2004 h` an agent TUI sends once at startup, so a client joining
   later believed the pane did not accept bracketed paste and sent long text raw, which Claude
