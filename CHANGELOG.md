@@ -24,7 +24,7 @@
   side edges and the top of the controls are washed in it. The right-hand side of each wash and the
   right edge line use the bridge's machine colour, so the same tab on mini1 looks different from
   mini0. Light and dark themes both keep text contrast; the terminal itself is never tinted. The
-  active chip also scrolls into view in the strip (PR pending).
+  active chip also scrolls into view in the strip ([#77](https://github.com/trillium/herdr-web/pull/77)).
 
 - Terminal input path is lossless at any length. The composer and `/send` split a long message
   into ordered pieces (each its own bracketed paste where the pane has that mode) instead of
