@@ -5,6 +5,7 @@ import {
   formatWebBuildStamp,
 } from "./buildStamp";
 import type { BridgeBuildInfo } from "./buildStamp";
+import { readLayoutProbeFlag, setLayoutProbeFlag } from "./layoutProbe";
 
 /**
  * Build stamp panel in the settings dialog's Bridge tab (the tab settings opens on), so a phone
@@ -14,6 +15,7 @@ import type { BridgeBuildInfo } from "./buildStamp";
 export function BuildStampSection() {
   const [bridgeBuild, setBridgeBuild] = useState<BridgeBuildInfo | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [layoutProbe, setLayoutProbe] = useState(readLayoutProbeFlag);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -48,6 +50,17 @@ export function BuildStampSection() {
               : "checking…"}
         </span>
       </div>
+      <label className="settings-row">
+        <span>Layout probe (measure the bottom gap)</span>
+        <input
+          type="checkbox"
+          checked={layoutProbe}
+          onChange={(event) => {
+            setLayoutProbe(event.target.checked);
+            setLayoutProbeFlag(event.target.checked);
+          }}
+        />
+      </label>
     </div>
   );
 }

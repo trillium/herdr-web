@@ -8,6 +8,7 @@ import { isSendOnlyPath } from "./sendOnly";
 import { logClientEvent } from "./clientLog";
 import { installConsoleCapture } from "./consoleCapture";
 import { startNativeControls } from "./native";
+import { LayoutProbeHost } from "./LayoutProbeOverlay";
 import "./styles.css";
 
 startNativeControls();
@@ -50,6 +51,7 @@ if (isLinksPath(window.location.pathname)) {
     <StrictMode>
       <BridgeProvider>
         <App />
+        <LayoutProbeHost />
       </BridgeProvider>
     </StrictMode>,
   );

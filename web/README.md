@@ -117,6 +117,27 @@ Two backstops keep a flaky voice path honest instead of silently dead:
   leaves the live buffer; the tail is re-verified against the live buffer before
   firing, so it never double-submits with the server path.
 
+## Layout probe (measuring the bottom gap on a real phone)
+
+`src/layoutProbe.ts` / `src/LayoutProbeOverlay.tsx` read where the controls bar really sits, so a
+gap under the input row is a number instead of a guess. Turn it on with either:
+
+- `?layout=1` on any URL (`?layout=0` turns it off); the choice is remembered in `localStorage`, or
+- Settings -> Bridge -> Layout probe (the way in for an installed home-screen app, which has no URL
+  bar; the installed app and Safari keep separate storage).
+
+The overlay shows the input row's distance to the bottom of the layout and visual viewport, the
+controls bar padding, `window.innerHeight`, `visualViewport`, `100dvh/svh/lvh`, the resolved
+`env(safe-area-inset-*)`, standalone vs browser, and the row/bar/terminal rectangles. It outlines
+the input row in red and hatches any gap beneath it. **Send** beams the numbers again; it also sends
+automatically on load and whenever they change (rotation, keyboard, resize).
+
+The numbers reach the bridge log as `client kind=page-load detail=layout-probe n=<seq> <i>/<n> ...`
+lines (they reuse the existing `page-load` kind and are split to fit its 160-byte cap, so no bridge
+rebuild is needed). Read one measurement with `grep layout-probe` on `herdr-web.log`; `gap=` is the
+distance in CSS px from the input row's bottom to the bottom of the screen. Desktop Chrome cannot
+emulate `env(safe-area-inset-*)`, which reads 0 there.
+
 ## Vite dev server environment variables:
 
 - `HERDR_WEB_BRIDGE` — bridge URL the dev server proxies `/api` and `/ws` to. Defaults to
