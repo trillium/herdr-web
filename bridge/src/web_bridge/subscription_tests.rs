@@ -119,6 +119,10 @@ fn test_state(api_path: PathBuf) -> BridgeState {
         activity_tx: tokio::sync::broadcast::channel(512).0,
         upload_dir: api_path.with_extension("uploads"),
         remote_bridges: Arc::new(Vec::new()),
+        remote_machines: Arc::new(MachineRemotes::new(
+            Vec::new(),
+            Arc::new(crate::machine_remote::HerdrCli::from_env()),
+        )),
         remote_http_client: reqwest::Client::new(),
         daemon_health: Arc::new(std::sync::Mutex::new(DaemonHealth::default())),
     }

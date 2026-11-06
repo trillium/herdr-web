@@ -65,6 +65,10 @@ use crate::launcher_presets::{
 use crate::links::{
     AddLinkRequest, LinkEntry, LinksError, LinksListQuery, LinksListResponse, LinksManager,
 };
+use crate::machine_remote::{
+    build_remote_machines, capabilities_json as machine_capabilities_json, normalize_machine_label,
+    HerdrCli, MachineRemotes, RemoteMachine,
+};
 use crate::notes::{
     AttachNoteRequest, CreateNoteRequest, NoteResponse, NotesError, NotesListQuery,
     NotesListResponse, NotesManager, RevisionRequest, UpdateNoteRequest,
@@ -135,6 +139,8 @@ struct BridgeOptions {
     allowed_origins: Vec<String>,
     allowed_connect_sources: Vec<String>,
     remote_bridges: Vec<String>,
+    /// Herdr saved-machine labels (`--remote-machine`), reached through `herdr --machine`.
+    remote_machines: Vec<String>,
 }
 
 /// Another herdr-web bridge instance (typically on a different Tailscale machine) that this
@@ -163,6 +169,7 @@ struct BridgeState {
     activity_tx: tokio::sync::broadcast::Sender<ActivityMessage>,
     upload_dir: PathBuf,
     remote_bridges: Arc<Vec<RemoteBridge>>,
+    remote_machines: Arc<MachineRemotes>,
     remote_http_client: reqwest::Client,
     daemon_health: Arc<std::sync::Mutex<DaemonHealth>>,
 }
@@ -1137,6 +1144,7 @@ fn parse_options(args: &[String]) -> Result<Option<BridgeOptions>, String> {
     let mut allowed_origins = Vec::new();
     let mut allowed_connect_sources = Vec::new();
     let mut remote_bridges = Vec::new();
+    let mut remote_machines = Vec::new();
     let mut explicit_session = None;
     let mut index = 0;
 
@@ -1226,6 +1234,13 @@ fn parse_options(args: &[String]) -> Result<Option<BridgeOptions>, String> {
                 remote_bridges.push(normalize_remote_bridge_url(value)?);
                 index += 2;
             }
+            "--remote-machine" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err("missing value for --remote-machine".into());
+                };
+                remote_machines.push(normalize_machine_label(value)?);
+                index += 2;
+            }
             arg => return Err(format!("unknown herdr-web option: {arg}")),
         }
     }
@@ -1264,6 +1279,7 @@ fn parse_options(args: &[String]) -> Result<Option<BridgeOptions>, String> {
         allowed_origins,
         allowed_connect_sources,
         remote_bridges,
+        remote_machines,
     }))
 }
 
@@ -1358,7 +1374,7 @@ fn print_help() {
 fn help_text() -> &'static str {
     "herdr-web-bridge\n\
 \n\
-Usage: herdr-web-bridge [--session NAME] [--host HOST] [--port PORT] [--static-dir DIR] [--upload-dir DIR] [--launcher-presets PATH] [--origin-colors PATH] [--allow-origin ORIGIN] [--allow-host HOSTNAME] [--allow-connect-origin ORIGIN] [--remote-bridge URL]...\n\
+Usage: herdr-web-bridge [--session NAME] [--host HOST] [--port PORT] [--static-dir DIR] [--upload-dir DIR] [--launcher-presets PATH] [--origin-colors PATH] [--allow-origin ORIGIN] [--allow-host HOSTNAME] [--allow-connect-origin ORIGIN] [--remote-bridge URL]... [--remote-machine LABEL]...\n\
 \n\
 Runs the local HTTP/WebSocket bridge for herdr-web.\n\
 Defaults to the active Herdr daemon sockets and 127.0.0.1:8787.\n\
@@ -1377,6 +1393,10 @@ Use --remote-bridge URL (repeatable) to register another herdr-web bridge (e.g. 
   to proxy through: reads at /api/remote/<id>/... and terminal sessions at\n\
   /ws/remote/<id>/terminal, where <id> is the remote's hostname as reported in /api/snapshot's\n\
   bridges array (also available standalone at GET /api/bridges).\n\
+Use --remote-machine LABEL (repeatable) to show a herdr saved machine (`herdr machine list`) with no\n\
+  herdr-web bridge on it: snapshot and terminal go through `herdr --machine LABEL ...` over SSH, under\n\
+  the same /api/remote/<id>/... and /ws/remote/<id>/terminal paths. HERDR_WEB_HERDR_BIN overrides the\n\
+  herdr binary used (default: herdr on PATH).\n\
 Uploads default to HERDR_WEB_UPLOAD_DIR, XDG_DATA_HOME/herdr-web/uploads, or ~/.local/share/herdr-web/uploads."
 }
 
@@ -1439,6 +1459,20 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
     for remote in &remote_bridges {
         info!(id = %remote.id, url = %remote.base_url, "herdr-web bridge proxying remote bridge");
     }
+    let remote_machines = build_remote_machines(
+        &options.remote_machines,
+        &remote_bridges
+            .iter()
+            .map(|remote| remote.id.clone())
+            .collect(),
+    );
+    for machine in &remote_machines {
+        info!(id = %machine.id, label = %machine.label, "herdr-web bridge exposing herdr saved machine");
+    }
+    let remote_machines = Arc::new(MachineRemotes::new(
+        remote_machines,
+        Arc::new(HerdrCli::from_env()),
+    ));
     let remote_http_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
         .build()
@@ -1459,6 +1493,7 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
         activity_tx: tokio::sync::broadcast::channel(512).0,
         upload_dir: options.upload_dir.clone(),
         remote_bridges: Arc::new(remote_bridges),
+        remote_machines,
         remote_http_client,
         daemon_health: daemon_health.clone(),
     };
@@ -4163,6 +4198,17 @@ async fn snapshot_handler(
             label: remote.label.clone(),
             url: remote.base_url.clone(),
         })
+        .chain(
+            state
+                .remote_machines
+                .machines()
+                .iter()
+                .map(|machine| SnapshotBridgeInfo {
+                    id: machine.id.clone(),
+                    label: machine.label.clone(),
+                    url: machine.display_url(),
+                }),
+        )
         .collect();
 
     Ok(Json(web_snapshot_from_session_snapshot(
@@ -4492,7 +4538,7 @@ fn parse_tailnet_name_from_status(json: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
-/// Returns the remote bridges this bridge was launched with (`--remote-bridge`), as a flat
+/// Returns the remote bridges (`--remote-bridge`) and herdr saved machines (`--remote-machine`) this bridge was launched with, as a flat
 /// read-only mirror of server-side config. There is no dynamic registration: a bridge only
 /// appears here if the server process itself was started with that URL.
 async fn bridges_handler(
@@ -4508,6 +4554,16 @@ async fn bridges_handler(
                 id: remote.id.clone(),
                 url: remote.base_url.clone(),
             })
+            .chain(
+                state
+                    .remote_machines
+                    .machines()
+                    .iter()
+                    .map(|machine| BridgeListEntry {
+                        id: machine.id.clone(),
+                        url: machine.display_url(),
+                    }),
+            )
             .collect(),
     ))
 }
@@ -5130,6 +5186,9 @@ async fn remote_api_proxy_handler(
     if let Err(err) = ensure_allowed_request(&headers, &state.request_policy) {
         return err.into_response();
     }
+    if let Some(machine) = state.remote_machines.find(&bridge_id).cloned() {
+        return machine_api_handler(&state.remote_machines, &machine, &method, &rest).await;
+    }
     let Some(remote) = find_remote_bridge(&state.remote_bridges, &bridge_id) else {
         return (
             StatusCode::NOT_FOUND,
@@ -5193,6 +5252,144 @@ async fn remote_api_proxy_handler(
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
+/// Serves `/api/remote/<id>/<rest>` for a herdr saved machine from herdr's own machine API.
+/// Only the read endpoints the web UI needs to draw a remote exist; every other proxy path (and
+/// every non-GET) is refused, so nothing here can run a command on the machine.
+async fn machine_api_handler(
+    remotes: &MachineRemotes,
+    machine: &RemoteMachine,
+    method: &HttpMethod,
+    rest: &str,
+) -> Response {
+    if !rest_path_is_safe(rest) {
+        return BridgeError::BadRequest("invalid remote proxy path".to_string()).into_response();
+    }
+    if !is_proxy_path_allowed(rest) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "path not permitted by proxy allow-list" })),
+        )
+            .into_response();
+    }
+    let path = rest.trim_start_matches('/');
+    match (path, method == HttpMethod::GET) {
+        ("snapshot", true) => match remotes.snapshot(machine).await {
+            Ok(session_snapshot) => {
+                let selected = session_snapshot.focused_pane_id.clone();
+                Json(web_snapshot_from_session_snapshot(
+                    session_snapshot,
+                    selected,
+                    Vec::new(),
+                ))
+                .into_response()
+            }
+            Err(err) => {
+                warn!(machine = %machine.label, error = %err, "herdr machine snapshot failed");
+                BridgeError::Protocol(format!(
+                    "herdr machine {} unreachable: {err}",
+                    machine.label
+                ))
+                .into_response()
+            }
+        },
+        ("capabilities", true) => Json(machine_capabilities_json()).into_response(),
+        (_, true) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "not available for herdr machine remotes" })),
+        )
+            .into_response(),
+        _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
+    }
+}
+
+/// Serves `/ws/remote/<id>/terminal` for a herdr saved machine: the pane is polled through
+/// `herdr --machine` (herdr's machine API has no streaming command), repainted to the browser
+/// whenever the screen changes, and typed input is replayed as `send-text` / `send-keys`.
+/// Browser resizes and scrolling do not apply: the screen is the pane's own visible area.
+async fn machine_terminal_socket(
+    socket: WebSocket,
+    state: BridgeState,
+    machine: RemoteMachine,
+    query: TerminalQuery,
+) {
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+    let feed = match state
+        .remote_machines
+        .open_pane(&machine, query.terminal_id.trim())
+        .await
+    {
+        Ok(feed) => feed,
+        Err(err) => {
+            let _ = send_websocket_message(
+                &mut ws_sender,
+                Message::Text(close_message(&format!("terminal attach failed: {err}")).into()),
+                "terminal",
+            )
+            .await;
+            return;
+        }
+    };
+    let mut frames = feed.subscribe();
+    let mut heartbeat = WebSocketHeartbeat::new(Instant::now());
+    // `mark_changed` makes the first iteration paint the screen as it already is.
+    frames.mark_changed();
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(heartbeat.deadline()) => {
+                if !handle_websocket_heartbeat_deadline(&mut ws_sender, &mut heartbeat, "terminal")
+                    .await
+                {
+                    break;
+                }
+            }
+            changed = frames.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let frame = frames.borrow_and_update().clone();
+                if let Some(reason) = frame.closed {
+                    let _ = send_websocket_message(
+                        &mut ws_sender,
+                        Message::Text(close_message(&reason).into()),
+                        "terminal",
+                    )
+                    .await;
+                    break;
+                }
+                if frame.seq == 0 {
+                    continue;
+                }
+                if !send_terminal_output_frame(
+                    &mut ws_sender,
+                    frame.screen,
+                    TerminalOutputWireEncoding::Identity,
+                )
+                .await
+                {
+                    break;
+                }
+            }
+            Some(message) = ws_receiver.next() => {
+                record_websocket_peer_activity(&mut heartbeat, &message);
+                match message {
+                    Ok(Message::Text(text)) => match parse_terminal_client_frame(text.as_str()) {
+                        Ok(TerminalClientFrame::Input { data }) => feed.send_input(data),
+                        Ok(TerminalClientFrame::Resize { .. })
+                        | Ok(TerminalClientFrame::Scroll { .. }) => {}
+                        Err(_) => break,
+                    },
+                    Ok(Message::Binary(bytes)) => {
+                        feed.send_input(String::from_utf8_lossy(&bytes).into_owned());
+                    }
+                    Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
+                    Ok(Message::Close(_)) | Err(_) => break,
+                }
+            }
+            else => break,
+        }
+    }
+}
+
 /// Proxies `/ws/remote/<bridge_id>/terminal` websocket upgrades through to
 /// `<remote-url>/ws/terminal` on another herdr-web bridge, preserving the query string
 /// (terminal_id, cols, rows, coalesce_ms, takeover).
@@ -5201,10 +5398,19 @@ async fn remote_terminal_ws_handler(
     State(state): State<BridgeState>,
     AxumPath(bridge_id): AxumPath<String>,
     RawQuery(query): RawQuery,
+    terminal_query: Result<Query<TerminalQuery>, axum::extract::rejection::QueryRejection>,
     headers: HeaderMap,
 ) -> Response {
     if let Err(err) = ensure_allowed_request(&headers, &state.request_policy) {
         return err.into_response();
+    }
+    if let Some(machine) = state.remote_machines.find(&bridge_id).cloned() {
+        let Ok(Query(query)) = terminal_query else {
+            return BridgeError::BadRequest("missing terminal_id".to_string()).into_response();
+        };
+        return ws
+            .on_upgrade(move |socket| machine_terminal_socket(socket, state, machine, query))
+            .into_response();
     }
     let Some(remote) = find_remote_bridge(&state.remote_bridges, &bridge_id) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -10545,6 +10751,118 @@ mod tests {
         assert!(message.contains("unexpected api result"));
         assert!(message.contains("Start or update Herdr"));
         assert!(message.contains("restart herdr-web-bridge"));
+    }
+
+    #[test]
+    fn parse_options_collects_repeatable_remote_machines() {
+        let args: Vec<String> = [
+            "--remote-bridge",
+            "mini2:8787",
+            "--remote-machine",
+            "melanie",
+            "--remote-machine",
+            "  Mini 3 ",
+        ]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect();
+        let options = parse_options(&args).unwrap().unwrap();
+        assert_eq!(options.remote_machines, vec!["melanie", "Mini 3"]);
+        assert_eq!(options.remote_bridges, vec!["http://mini2:8787"]);
+
+        let none = parse_options(&[]).unwrap().unwrap();
+        assert!(none.remote_machines.is_empty());
+    }
+
+    #[test]
+    fn parse_options_rejects_bad_remote_machine_values() {
+        let missing = parse_options(&["--remote-machine".to_string()]).unwrap_err();
+        assert!(missing.contains("missing value for --remote-machine"));
+        let blank = parse_options(&["--remote-machine".to_string(), "  ".to_string()]).unwrap_err();
+        assert!(blank.contains("must not be empty"));
+        let flaglike =
+            parse_options(&["--remote-machine".to_string(), "--port".to_string()]).unwrap_err();
+        assert!(flaglike.contains("must not start with '-'"));
+    }
+
+    #[test]
+    fn help_text_documents_remote_machine() {
+        let help = help_text();
+        assert!(help.contains("[--remote-machine LABEL]..."));
+        assert!(help.contains("herdr --machine LABEL"));
+    }
+
+    struct SnapshotOnlyRunner;
+
+    impl crate::machine_remote::MachineRunner for SnapshotOnlyRunner {
+        fn run(
+            &self,
+            _machine: &str,
+            args: &[&str],
+        ) -> Result<String, crate::machine_remote::MachineError> {
+            assert_eq!(args, ["api", "snapshot"]);
+            Ok(crate::machine_remote::SNAPSHOT_FIXTURE.to_string())
+        }
+    }
+
+    async fn machine_api_response(
+        method: HttpMethod,
+        rest: &str,
+    ) -> (StatusCode, serde_json::Value) {
+        let machine = RemoteMachine {
+            id: "melanie".into(),
+            label: "melanie".into(),
+        };
+        let remotes = MachineRemotes::new(vec![machine.clone()], Arc::new(SnapshotOnlyRunner));
+        let response = machine_api_handler(&remotes, &machine, &method, rest).await;
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null),
+        )
+    }
+
+    #[tokio::test]
+    async fn machine_remote_snapshot_uses_the_web_snapshot_shape() {
+        let (status, body) = machine_api_response(HttpMethod::GET, "snapshot").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["workspaces"][0]["label"], "work");
+        assert_eq!(body["workspaces"][0]["can_clear_name"], false);
+        assert_eq!(body["tabs"][0]["tab_id"], "w1:t1");
+        assert_eq!(body["panes"][1]["terminal_id"], "term_bbb");
+        assert_eq!(body["panes"][0]["agent"], "claude");
+        assert_eq!(body["panes"][0]["agent_status"], "done");
+        assert_eq!(body["layouts"][0]["tab_id"], "w1:t1");
+        assert_eq!(body["selected_pane_id"], "w1:p1");
+        assert_eq!(body["bridges"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn machine_remote_serves_capabilities_and_nothing_that_mutates() {
+        let (status, body) = machine_api_response(HttpMethod::GET, "capabilities").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["commands"], serde_json::json!([]));
+
+        // Allow-listed for bridge remotes, but a machine has no notes/pins/activity.
+        let (status, _) = machine_api_response(HttpMethod::GET, "notes").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        // Never proxied, even for bridge remotes.
+        for rest in [
+            "command",
+            "command-submit",
+            "selection",
+            "launcher-presets/launch",
+        ] {
+            let (status, _) = machine_api_response(HttpMethod::POST, rest).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{rest}");
+        }
+        let (status, _) = machine_api_response(HttpMethod::POST, "snapshot").await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+        let (status, _) = machine_api_response(HttpMethod::GET, "../snapshot").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[test]

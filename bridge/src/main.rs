@@ -4,6 +4,7 @@ mod conn_log;
 mod connection_manager;
 mod launcher_presets;
 mod links;
+mod machine_remote;
 mod notes;
 mod origin_icons;
 mod session;
