@@ -390,6 +390,32 @@ and terminal WebSocket sessions through to that remote bridge. Only bridges the 
 started with are reachable this way; the web app does not yet have UI to add or manage remote
 bridges.
 
+### Herdr saved machines (`--remote-machine`)
+
+A machine that is already saved in this host's herdr registry (`herdr machine list`) can be shown
+without running a herdr-web bridge on it. Pass its label with the repeatable `--remote-machine`
+flag:
+
+```bash
+scripts/run-bridge.sh --remote-machine melanie
+```
+
+It appears in the same remote picker as a `--remote-bridge` remote, under the same
+`/api/remote/{id}/...` and `/ws/remote/{id}/terminal` paths, but everything goes through
+`herdr --machine <label> ...` (SSH, via the saved machine) instead of HTTP to another bridge:
+
+- Snapshot (workspaces, tabs, panes, agent status) comes from `herdr --machine <label> api
+  snapshot`, reused for about a second. `/api/remote/{id}/capabilities` reports no bridge features
+  (no notes, pins, activity or launcher presets), and every other proxied path returns 404.
+- Terminal: herdr's machine API has no streaming command, so the bridge polls `pane read --source
+  visible --ansi` (about 1/s, faster right after typing) and repaints the browser when the screen
+  changed. One poller per pane is shared by every viewer. Typed input is replayed as `pane
+  send-text` and `pane send-keys`. Resizing and scrollback do not apply: you see the pane's own
+  visible area at its own width. Home/End/PageUp/PageDown/Delete cannot be sent (herdr's key list
+  has no such keys).
+- The label must be a machine herdr already knows; the bridge never adds one. The `herdr` binary
+  comes from `PATH`, or `HERDR_WEB_HERDR_BIN`.
+
 ## Keyboard Shortcuts
 
 These app shortcuts are ignored while dialogs, menus, and normal text inputs are active. They still
@@ -425,7 +451,7 @@ The bridge exposes:
 - `GET /api/mobile-mode` and `POST /api/mobile-mode`: read/toggle a `mobile-mode` presence flag
   file in herdr-web's own data dir, for an external statusline script to check
 - `POST /api/uploads`: save uploaded files into the configured upload directory
-- `GET /api/bridges`: read-only list of `--remote-bridge`-configured remote bridges (`id`, `url`)
+- `GET /api/bridges`: read-only list of `--remote-bridge`/`--remote-machine`-configured remotes (`id`, `url`)
 - `GET|POST /api/remote/{bridge_id}/{*rest}`: proxies REST reads to a `--remote-bridge`-configured
   remote bridge's `/api/{rest}`
 - `GET /ws/activity`: bridge-owned pane activity deltas

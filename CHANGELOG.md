@@ -18,6 +18,12 @@
 
 ### Added
 
+- `--remote-machine <label>` (repeatable) shows a herdr saved machine (`herdr machine list`) as a
+  remote without a herdr-web bridge on it: its snapshot, terminal view and typed input go through
+  `herdr --machine <label> ...` over SSH. Terminals are polled about once a second (herdr's
+  machine API has no stream), at the pane's own size, with no scrollback; Home/End/PageUp/PageDown/
+  Delete cannot be sent. `--remote-bridge` remotes are unchanged.
+
 - Layout probe for measuring the phone's real layout: open the app with `?layout=1` (or tick
   Settings -> Bridge -> Layout probe, which is the way in for an installed home-screen app) to get a
   corner overlay with the input row's distance to the bottom of the screen, the window and
