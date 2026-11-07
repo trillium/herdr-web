@@ -35,15 +35,32 @@ afterEach(async () => {
 });
 
 describe("LinksButton", () => {
-  it("links to /links and shows only unopened, undismissed entries", async () => {
+  it("opens a modal that closes on Escape, Close, backdrop and returns focus", async () => {
+    const { host, root } = mount([]);
+    await act(async () => root.render(<LinksButton />));
+    const btn = host.querySelector("button")!;
+    const dialog = () => document.querySelector("[role=dialog]");
+    for (const close of [
+      () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })),
+      () => (Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Close") as HTMLElement).click(),
+      () => (document.querySelector("[data-testid=links-modal-backdrop]") as HTMLElement).click(),
+    ]) {
+      await act(async () => btn.click());
+      await vi.waitFor(() => expect(dialog()).not.toBeNull());
+      await act(async () => close());
+      expect(dialog()).toBeNull();
+      expect(document.activeElement).toBe(btn);
+    }
+  });
+
+  it("shows only unopened, undismissed entries (was: links to /links) only unopened, undismissed entries", async () => {
     const { host, root } = mount([
       { id: "a", kind: "link", title: "A", created_at: "1", updated_at: "1", count: 1 },
       { id: "b", kind: "link", title: "B", created_at: "1", updated_at: "1", count: 1 },
       { id: "c", kind: "link", title: "C", created_at: "1", updated_at: "1", count: 1, opened_at: "2" },
     ]);
     await act(async () => root.render(<LinksButton />));
-    const anchor = host.querySelector("a")!;
-    expect(anchor.getAttribute("href")).toBe("/links");
+    const anchor = host.querySelector("button")!;
     expect(host.querySelector("[data-testid=links-open-count]")?.textContent).toBe("2");
     expect(anchor.getAttribute("aria-label")).toBe("Open links (2 new)");
   });
@@ -52,6 +69,6 @@ describe("LinksButton", () => {
     const { host, root } = mount([]);
     await act(async () => root.render(<LinksButton />));
     expect(host.querySelector("[data-testid=links-open-count]")).toBeNull();
-    expect(host.querySelector("a")!.getAttribute("aria-label")).toBe(linksButtonLabel(0));
+    expect(host.querySelector("button")!.getAttribute("aria-label")).toBe(linksButtonLabel(0));
   });
 });
