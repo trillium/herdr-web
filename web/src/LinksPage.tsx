@@ -15,7 +15,7 @@ import {
 import { openSnapshotEvents, readStoredTheme } from "./sendOnly";
 import { applyTheme } from "./theme";
 
-export function LinksPage() {
+export function LinksPage({ onClose }: { onClose?: () => void } = {}) {
   const [entries, setEntries] = useState<LinkEntry[]>([]);
   const [load, setLoad] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
@@ -35,13 +35,15 @@ export function LinksPage() {
   }, [showDismissed]);
 
   useEffect(() => {
+    if (onClose) return;
     applyTheme(document, readStoredTheme(window.localStorage));
-  }, []);
+  }, [onClose]);
 
   useEffect(() => {
+    if (onClose) return;
     const newCount = countNewEntries(entries);
     document.title = newCount > 0 ? `(${newCount}) Links · herdr-web` : "Links · herdr-web";
-  }, [entries]);
+  }, [entries, onClose]);
 
   useEffect(() => {
     let stopped = false;
@@ -79,13 +81,22 @@ export function LinksPage() {
   const newCount = countNewEntries(entries);
 
   return (
-    <main className="links-page">
+    <main
+      className="links-page"
+      {...(onClose ? { role: "dialog", "aria-modal": true, "aria-label": "Links & notes" } : {})}
+    >
       <header className="links-header">
         <p className="links-kicker">Links &amp; notes</p>
         <h1>Handed off to you</h1>
-        <a className="links-terminal-link" href="/">
-          Open terminal
-        </a>
+        {onClose ? (
+          <button type="button" className="btn links-close" onClick={onClose}>
+            Close
+          </button>
+        ) : (
+          <a className="links-terminal-link" href="/">
+            Open terminal
+          </a>
+        )}
       </header>
 
       <div className="links-toolbar">
@@ -118,7 +129,15 @@ export function LinksPage() {
 
       <ul className="links-list">
         {entries.map((entry) => (
-          <LinkRow key={entry.id} entry={entry} now={now} onAction={act} />
+          <LinkRow
+            key={entry.id}
+            entry={entry}
+            now={now}
+            onAction={(e, a) => {
+              void act(e, a);
+              if (a === "open") onClose?.();
+            }}
+          />
         ))}
       </ul>
     </main>

@@ -1,6 +1,6 @@
 import { Link2 } from "lucide-react";
-import { useSyncExternalStore } from "react";
-import { LINKS_PATH, LINKS_POLL_MS, countNewEntries, fetchLinks, linksButtonLabel } from "./links";
+import { Suspense, lazy, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { LINKS_POLL_MS, countNewEntries, fetchLinks, linksButtonLabel } from "./links";
 
 // One poll shared by every mounted button (sidebar header and stage bar can both be on screen).
 let sharedCount = 0;
@@ -36,23 +36,62 @@ function subscribe(notify: () => void) {
   };
 }
 
+const LinksPage = lazy(() => import("./LinksPage").then((m) => ({ default: m.LinksPage })));
+
 /** Always-visible entry point to /links with the unopened count; polls no faster than the page. */
 export function LinksButton() {
   const newCount = useSyncExternalStore(subscribe, () => sharedCount);
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const button = buttonRef.current;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    sheetRef.current?.focus();
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      button?.focus();
+    };
+  }, [open]);
 
   return (
-    <a
-      className="icon-btn links-open-btn"
-      href={LINKS_PATH}
-      aria-label={linksButtonLabel(newCount)}
-      title={linksButtonLabel(newCount)}
-    >
-      <Link2 size={18} />
-      {newCount > 0 ? (
-        <span className="links-open-count" data-testid="links-open-count">
-          {newCount > 99 ? "99+" : newCount}
-        </span>
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        className="icon-btn links-open-btn"
+        aria-label={linksButtonLabel(newCount)}
+        title={linksButtonLabel(newCount)}
+        aria-haspopup="dialog"
+        onClick={() => setOpen(true)}
+      >
+        <Link2 size={18} />
+        {newCount > 0 ? (
+          <span className="links-open-count" data-testid="links-open-count">
+            {newCount > 99 ? "99+" : newCount}
+          </span>
+        ) : null}
+      </button>
+      {open ? (
+        <div
+          className="links-modal-backdrop"
+          data-testid="links-modal-backdrop"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setOpen(false);
+          }}
+        >
+          <div className="links-modal" ref={sheetRef} tabIndex={-1}>
+            <Suspense fallback={<p className="links-empty">Loading…</p>}>
+              <LinksPage onClose={() => setOpen(false)} />
+            </Suspense>
+          </div>
+        </div>
       ) : null}
-    </a>
+    </>
   );
 }

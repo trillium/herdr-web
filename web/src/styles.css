@@ -4599,3 +4599,40 @@ span.links-item-title {
   color: #fff;
   font: inherit;
 }
+
+.links-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.links-modal {
+  display: flex;
+  box-sizing: border-box;
+  width: min(40rem, 100%);
+  max-height: min(48rem, 90vh);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg, #111);
+  color: inherit;
+  outline: none;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+}
+
+.links-modal .links-page {
+  flex: 1;
+}
+
+@media (max-width: 820px) {
+  .links-modal {
+    width: 100%;
+    max-height: none;
+    height: 100%;
+    border-radius: 0;
+    border: 0;
+  }
+}
