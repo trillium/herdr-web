@@ -272,6 +272,8 @@
 
 ### Changed
 
+- On phones the composer's "next agent" button now sits on the left of the input, away from Send, to prevent accidental taps. New Settings option "Next agent button" (Opposite Send, default / Beside Send) restores the old placement.
+
 - Phone: the controls bar sits 12 px above the bottom edge on an iPhone with a home indicator
   (was 24 px), so the input row hugs the home indicator and the terminal gets the recovered
   height. The safe-area inset is counted once, in the bar's own padding

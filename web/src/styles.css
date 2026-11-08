@@ -2121,6 +2121,9 @@ button {
   .term-input-row .term-send {
     order: 4;
   }
+  .term-input-row[data-next-agent-side="same"] .term-pin-cycle {
+    order: 3;
+  }
 }
 
 .term-key-strip[hidden] {
@@ -2488,7 +2491,12 @@ button {
     order: 1;
   }
 
+  /* Default: next agent on the far (left) side of the input, away from Send. */
   .term-pin-cycle {
+    order: 0;
+  }
+
+  .term-input-row[data-next-agent-side="same"] .term-pin-cycle {
     order: 2;
   }
 

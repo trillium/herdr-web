@@ -27,6 +27,7 @@ import {
 import type { BridgeBackendProfile } from "./bridge";
 import { BuildStampSection } from "./BuildStampSection";
 import { sameOriginDisplay } from "./sameOrigin";
+import { useNextAgentSide, writeNextAgentSide } from "./nextAgentSide";
 import {
   DEFAULT_CONTENT_INSET_BOTTOM_PX,
   DEFAULT_CONTENT_INSET_TOP_PX,
@@ -334,6 +335,7 @@ export function BackendSettingsDialog({
       : []),
   ];
 
+  const nextAgentSide = useNextAgentSide();
   return (
     <div className="overlay-root">
       <button
@@ -802,6 +804,29 @@ export function BackendSettingsDialog({
                     </div>
                   </div>
                 ) : null}
+            <div className="settings-row">
+              <span title="Opposite keeps Next agent on the far side of the input from Send, avoiding accidental taps">
+                Next agent button
+              </span>
+              <div className="segmented-control" role="group" aria-label="Next agent button position">
+                <button
+                  type="button"
+                  data-on={nextAgentSide === "opposite"}
+                  aria-pressed={nextAgentSide === "opposite"}
+                  onClick={() => writeNextAgentSide("opposite")}
+                >
+                  Opposite Send
+                </button>
+                <button
+                  type="button"
+                  data-on={nextAgentSide === "same"}
+                  aria-pressed={nextAgentSide === "same"}
+                  onClick={() => writeNextAgentSide("same")}
+                >
+                  Beside Send
+                </button>
+              </div>
+            </div>
                 {!showMobileTerminalSettings ? (
                   <>
                     <div className="settings-label">Command input</div>
