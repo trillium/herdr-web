@@ -8,6 +8,7 @@
  *   ?expanding=0    expandingInput=false  (plain single-line input)
  */
 import { createRef, useState } from "react";
+import { CommandDraftContext, createCommandDraftStore } from "../commandDrafts";
 import { TerminalCommandControls } from "../TerminalView";
 import "../styles.css";
 
@@ -23,8 +24,10 @@ export function VspaceFixture() {
 
   const commandInputRef = createRef<HTMLInputElement | HTMLTextAreaElement>();
   const noop = () => {};
+  const [draftStore] = useState(() => createCommandDraftStore());
 
   return (
+    <CommandDraftContext.Provider value={draftStore}>
     <div
       className="vspace-fixture"
       style={{
@@ -76,5 +79,6 @@ export function VspaceFixture() {
         paneCycleMode="pin"
       />
     </div>
+    </CommandDraftContext.Provider>
   );
 }

@@ -758,6 +758,7 @@ describe("TerminalCommandControls phone layout", () => {
       expect(form?.querySelector(`button[aria-label="${label}"]`)).not.toBeNull();
     }
     expect(form?.querySelector(".term-pin-cycle")).not.toBeNull();
+    expect(form?.getAttribute("data-next-agent-side")).toBe("opposite");
     for (const label of rareTools) {
       expect(container.querySelector(`button[aria-label="${label}"]`)).toBeNull();
     }
@@ -973,3 +974,15 @@ async function setCommandInput(
     field.dispatchEvent(new InputEvent("input", { bubbles: true, inputType, isComposing }));
   });
 }
+
+describe("next agent side setting", () => {
+  it("defaults to opposite and persists 'same'", async () => {
+    const { readNextAgentSide, writeNextAgentSide } = await import("./nextAgentSide");
+    localStorage.removeItem("herdr-web:next-agent-side");
+    expect(readNextAgentSide()).toBe("opposite");
+    writeNextAgentSide("same");
+    expect(readNextAgentSide()).toBe("same");
+    writeNextAgentSide("opposite");
+    expect(readNextAgentSide()).toBe("opposite");
+  });
+});

@@ -38,6 +38,7 @@ import type { MobileTerminalChordKey } from "./mobileTerminalControls";
 import { MobileTerminalKeyButton } from "./MobileTerminalKeyButton";
 import { ConfirmDialog } from "./overlays";
 import { randomId } from "./randomId";
+import { useNextAgentSide } from "./nextAgentSide";
 import { logClientEvent } from "./clientLog";
 import {
   postVoiceCommandSubmit,
@@ -1912,6 +1913,7 @@ export function TerminalCommandControls({
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const phoneLayout = usePhoneLayout();
+  const nextAgentSide = useNextAgentSide();
   const [value, setValue] = useCommandDraft(bridgeId, paneId);
   // Keep this deadline outside the keyed field so it survives input replacement.
   const compositionGuardUntilRef = useRef(0);
@@ -2473,6 +2475,7 @@ export function TerminalCommandControls({
 
       <form
         className="term-input-row"
+        data-next-agent-side={nextAgentSide}
         data-expanding={expandingInput ? "true" : "false"}
         onSubmit={(event) => {
           event.preventDefault();
