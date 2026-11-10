@@ -11,6 +11,7 @@ export const PANE_LINKS_SOURCE = "terminal";
 /** Rows above the viewport that each scan also reads, so URLs scrolled off between scans are kept. */
 export const PANE_LINKS_SCROLLBACK_ROWS = 200;
 export const PANE_LINKS_SCAN_DEBOUNCE_MS = 750;
+export const PANE_LINKS_MAX_INGEST_BYTES = 48 * 1024;
 const URL_PATTERN = /\bhttps?:\/\/[^\s"'<>`]+/giu;
 
 export type PaneLinkRow = {
@@ -66,6 +67,27 @@ export class PaneLinkDeduper {
 
 }
 
+export function paneLinkIngestBody(paneId: string, urls: readonly string[]) {
+  return JSON.stringify({
+    links: urls.map((url) => ({ url, source: PANE_LINKS_SOURCE, pane_id: paneId })),
+  });
+}
+
+export function nextPaneLinkIngestBatch(paneId: string, urls: readonly string[]) {
+  const batch: string[] = [];
+  for (const url of urls) {
+    const candidate = [...batch, url];
+    if (
+      new TextEncoder().encode(paneLinkIngestBody(paneId, candidate)).byteLength >
+      PANE_LINKS_MAX_INGEST_BYTES
+    ) {
+      break;
+    }
+    batch.push(url);
+  }
+  return batch;
+}
+
 /** Returns false when the bridge has no such route (older bridge, remote proxy): stop capturing. */
 export async function ingestPaneLinks(
   httpUrl: BridgeHttpUrl,
@@ -75,9 +97,7 @@ export async function ingestPaneLinks(
   const response = await fetchWithTimeout(httpUrl("/api/links/ingest"), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      links: urls.map((url) => ({ url, source: PANE_LINKS_SOURCE, pane_id: paneId })),
-    }),
+    body: paneLinkIngestBody(paneId, urls),
   });
   if (response.ok) {
     return true;

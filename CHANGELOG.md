@@ -19,8 +19,9 @@
 ### Added
 
 - URLs printed in a terminal pane now also land on the `/links` page (source `terminal`, tagged
-  with the pane), so a link that scrolls away is still there. The browser scans the visible rows
-  plus the 200 above them, re-joins soft-wrapped URLs, and posts new ones to the new idempotent
+  with the pane), so a link that scrolls away is still there. The browser scans the active buffer's
+  bottom viewport-sized segment plus 200 preceding rows, regardless of scroll position, re-joins
+  soft-wrapped URLs, and posts new ones to the new idempotent
   `POST /api/links/ingest` (a URL already listed, read or dismissed, is never re-flagged). Text
   only: a link whose visible text is a label rather than the URL (pi's markdown links, which are
   OSC 8 hyperlinks) does not appear yet; that is a named follow-up.

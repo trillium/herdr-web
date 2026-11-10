@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ingestPaneLinks,
   logicalLines,
+  nextPaneLinkIngestBatch,
+  paneLinkIngestBody,
+  PANE_LINKS_MAX_INGEST_BYTES,
   PANE_LINKS_SOURCE,
   PaneLinkDeduper,
   urlsInRows,
@@ -81,6 +84,22 @@ describe("PaneLinkDeduper", () => {
     expect(deduper.fresh(["https://a.example", "https://c.example"])).toEqual([
       "https://c.example",
     ]);
+  });
+});
+
+describe("nextPaneLinkIngestBatch", () => {
+  it("keeps each ingest body below the safe request budget", () => {
+    const urls = Array.from(
+      { length: 200 },
+      (_, index) => `https://example.com/${index}/${"a".repeat(300)}`,
+    );
+    const batch = nextPaneLinkIngestBatch("pane", urls);
+
+    expect(batch).not.toHaveLength(0);
+    expect(batch.length).toBeLessThan(urls.length);
+    expect(
+      new TextEncoder().encode(paneLinkIngestBody("pane", batch)).byteLength,
+    ).toBeLessThanOrEqual(PANE_LINKS_MAX_INGEST_BYTES);
   });
 });
 

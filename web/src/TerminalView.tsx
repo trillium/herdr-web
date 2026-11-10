@@ -113,6 +113,7 @@ import { ParlayInput } from "./ParlayInput";
 import {
   PaneLinkDeduper,
   ingestPaneLinks,
+  nextPaneLinkIngestBatch,
   PANE_LINKS_SCAN_DEBOUNCE_MS,
 } from "./paneLinks";
 import { usePhoneLayout } from "./phoneLayout";
@@ -888,7 +889,10 @@ export function TerminalView({
       if (disposed || !supported || sending || pending.size === 0) {
         return;
       }
-      const batch = [...pending];
+      const batch = nextPaneLinkIngestBatch(linkPaneId, [...pending]);
+      if (batch.length === 0) {
+        return;
+      }
       sending = true;
       ingestPaneLinks(httpUrl, linkPaneId, batch)
         .then((ok) => {
