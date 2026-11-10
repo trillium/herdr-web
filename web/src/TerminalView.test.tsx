@@ -172,7 +172,7 @@ describe("TerminalView mobile refitting", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const drafts = createCommandDraftStore();
-    const root = await renderTerminalView(testPane("terminal-1"), drafts);
+    await renderTerminalView(testPane("terminal-1"), drafts);
     const renderer = terminalRenderers[0];
     if (!renderer) {
       throw new Error("Expected the terminal renderer");

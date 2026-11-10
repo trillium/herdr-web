@@ -231,7 +231,7 @@ describe("terminalLinkAt", () => {
     wrapped: readonly boolean[],
     linked: (row: number, col: number) => boolean,
     uri: string | null,
-    invisible = (_row: number, _col: number) => false,
+    invisible: (row: number, col: number) => boolean = () => false,
   ) {
     const lines = rows.map((text, row) => ({
       length: text.length,
