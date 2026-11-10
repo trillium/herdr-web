@@ -129,6 +129,12 @@ describe("terminal accessible text publisher", () => {
     vi.advanceTimersByTime(160);
     expect(publish).toHaveBeenCalledTimes(1);
 
+    publisher.request();
+    publisher.request(0, true);
+    vi.advanceTimersByTime(160);
+    expect(publish).toHaveBeenCalledTimes(2);
+    expect(publish).toHaveBeenLastCalledWith("first");
+
     text = "second";
     publisher.request(0);
     vi.runOnlyPendingTimers();

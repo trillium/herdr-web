@@ -11,8 +11,6 @@ export const PANE_LINKS_SOURCE = "terminal";
 /** Rows above the viewport that each scan also reads, so URLs scrolled off between scans are kept. */
 export const PANE_LINKS_SCROLLBACK_ROWS = 200;
 export const PANE_LINKS_SCAN_DEBOUNCE_MS = 750;
-const MAX_URLS_PER_SCAN = 100;
-const MAX_URL_LENGTH = 2048;
 const URL_PATTERN = /\bhttps?:\/\/[^\s"'<>`]+/giu;
 
 export type PaneLinkRow = {
@@ -44,11 +42,8 @@ export function urlsInRows(rows: readonly PaneLinkRow[]): string[] {
   for (const line of logicalLines(rows)) {
     for (const match of line.matchAll(URL_PATTERN)) {
       const url = openableHttpUrl(trimUrlPunctuation(match[0]));
-      if (url && url.length <= MAX_URL_LENGTH) {
+      if (url) {
         found.add(url);
-        if (found.size >= MAX_URLS_PER_SCAN) {
-          return [...found];
-        }
       }
     }
   }

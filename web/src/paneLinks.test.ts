@@ -71,11 +71,6 @@ describe("urlsInRows", () => {
     ).toEqual([]);
   });
 
-  it("drops absurdly long URLs and caps how many a scan returns", () => {
-    expect(urlsInRows([row(`https://example.com/${"a".repeat(3000)}`)])).toEqual([]);
-    const many = Array.from({ length: 150 }, (_, index) => row(`https://example.com/${index}`));
-    expect(urlsInRows(many)).toHaveLength(100);
-  });
 });
 
 describe("PaneLinkDeduper", () => {

@@ -313,6 +313,7 @@ export type TerminalRenderer = {
   setAccessibleScreenListener(callback: ((text: string) => void) | null): void;
   /** Reports URLs printed in the pane's recent output (text only); debounced, repeats suppressed. */
   setLinkListener?(callback: ((urls: string[]) => void) | null): void;
+  retryLinkScan?(): void;
   onInput(callback: (data: string) => void): () => void;
   onScroll(callback: (lines: number) => void): () => void;
   scrollToBottom(): void;
@@ -436,6 +437,10 @@ export class GhosttyRenderer implements TerminalRenderer {
     }
     this.#linkCallback = callback;
     this.#installLinkPublisher();
+  }
+
+  retryLinkScan() {
+    this.#linkPublisher?.request(undefined, true);
   }
 
   setAccessibleScreenListener(callback: ((text: string) => void) | null) {

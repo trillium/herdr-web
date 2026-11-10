@@ -895,8 +895,8 @@ export function TerminalView({
           supported = ok;
         })
         .catch(() => {
-          // Best effort: forget these so the next scan retries them.
           deduper.forget(fresh);
+          renderer.retryLinkScan?.();
         });
     });
     return () => renderer.setLinkListener?.(null);
