@@ -18,6 +18,13 @@
 
 ### Added
 
+- URLs printed in a terminal pane now also land on the `/links` page (source `terminal`, tagged
+  with the pane), so a link that scrolls away is still there. The browser scans the visible rows
+  plus the 200 above them, re-joins soft-wrapped URLs, and posts new ones to the new idempotent
+  `POST /api/links/ingest` (a URL already listed, read or dismissed, is never re-flagged). Text
+  only: a link whose visible text is a label rather than the URL (pi's markdown links, which are
+  OSC 8 hyperlinks) does not appear yet; that is a named follow-up.
+
 - `--remote-machine <label>` (repeatable) shows a herdr saved machine (`herdr machine list`) as a
   remote without a herdr-web bridge on it: its snapshot, terminal view and typed input go through
   `herdr --machine <label> ...` over SSH. Terminals are polled about once a second (herdr's
@@ -331,6 +338,10 @@
 - Voice line-ender countdown no longer shows a "Sending in Ns…" text hint (which shifted the layout); the input box background tints for the countdown instead.
 
 ### Fixed
+
+- Tapping or clicking a URL that an agent (pi) printed as an OSC 8 hyperlink did nothing in the
+  browser: ghostty-web 0.4.0 cannot resolve the link target, and the cell lookup stopped there
+  instead of falling back to the visible text. It now falls back, so URL-shaped links open again.
 
 - Tapping a pane in the list could open a different pane (for example tapping Porter and landing
   on Zephyr). Shared navigation publishes each tap to the bridge and follows the bridge's selected

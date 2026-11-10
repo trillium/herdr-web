@@ -25,6 +25,12 @@ import {
   terminalTouchSelectionEndpointFromDrag,
 } from "./terminalTouchSelection";
 import type { TerminalTouchSelectionState } from "./terminalTouchSelection";
+import {
+  PANE_LINKS_SCAN_DEBOUNCE_MS,
+  PANE_LINKS_SCROLLBACK_ROWS,
+  urlsInRows,
+} from "./paneLinks";
+import type { PaneLinkRow } from "./paneLinks";
 import { DEFAULT_MOBILE_TOUCH_SELECTION_ENDPOINT_TIMEOUT_MS } from "./mobileTerminalPrefs";
 import type {
   MobileLongPressBehavior,
@@ -283,6 +289,7 @@ type GhosttyRenderAccess = {
 };
 type TerminalBufferLine = {
   readonly length: number;
+  readonly isWrapped?: boolean;
   getCell(x: number):
     | {
         getCodepoint(): number;
@@ -304,6 +311,8 @@ export type TerminalRenderer = {
   mount(container: HTMLElement): Promise<TerminalSize>;
   write(data: string | Uint8Array): void;
   setAccessibleScreenListener(callback: ((text: string) => void) | null): void;
+  /** Reports URLs printed in the pane's recent output (text only); debounced, repeats suppressed. */
+  setLinkListener?(callback: ((urls: string[]) => void) | null): void;
   onInput(callback: (data: string) => void): () => void;
   onScroll(callback: (lines: number) => void): () => void;
   scrollToBottom(): void;
@@ -337,6 +346,8 @@ export class GhosttyRenderer implements TerminalRenderer {
   #accessibleScreenCallback: ((text: string) => void) | null = null;
   #accessibleScreenCleanup: (() => void) | null = null;
   #accessibleScreenPublisher: TerminalAccessibleTextPublisher | null = null;
+  #linkCallback: ((urls: string[]) => void) | null = null;
+  #linkPublisher: TerminalAccessibleTextPublisher | null = null;
   #tapFocusHandler: (() => TerminalTapFocusResult) | null = null;
   #mobileLongPressBehavior: MobileLongPressBehavior = "off";
   #mobileTouchSelectionHandler: ((event: MobileTerminalTouchEvent) => void) | null = null;
@@ -401,6 +412,7 @@ export class GhosttyRenderer implements TerminalRenderer {
     this.#terminal = terminal;
     this.#fitAddon = fitAddon;
     this.#installAccessibleScreenPublisher();
+    this.#installLinkPublisher();
     this.#installScrollHandlers();
     this.#installMobileInputBridge();
     this.#installImeFocusRedirect();
@@ -415,6 +427,15 @@ export class GhosttyRenderer implements TerminalRenderer {
     terminal.write(data);
     this.#requestRender(terminal);
     this.#accessibleScreenPublisher?.request();
+    this.#linkPublisher?.request();
+  }
+
+  setLinkListener(callback: ((urls: string[]) => void) | null) {
+    if (this.#linkCallback === callback) {
+      return;
+    }
+    this.#linkCallback = callback;
+    this.#installLinkPublisher();
   }
 
   setAccessibleScreenListener(callback: ((text: string) => void) | null) {
@@ -546,6 +567,9 @@ export class GhosttyRenderer implements TerminalRenderer {
     this.#imeFocusCleanup = null;
     this.#accessibleScreenCallback = null;
     this.#disposeAccessibleScreenPublisher();
+    this.#linkCallback = null;
+    this.#linkPublisher?.dispose();
+    this.#linkPublisher = null;
     this.#fitAddon?.dispose();
     this.#fitAddon = null;
     this.#terminal?.dispose();
@@ -608,6 +632,40 @@ export class GhosttyRenderer implements TerminalRenderer {
       scrollDisposable.dispose();
       bufferDisposable.dispose();
     };
+    publisher.request(0);
+  }
+
+  #installLinkPublisher() {
+    this.#linkPublisher?.dispose();
+    this.#linkPublisher = null;
+    const terminal = this.#terminal;
+    const callback = this.#linkCallback;
+    if (!terminal || !callback || this.#disposed) {
+      return;
+    }
+    // The publisher suppresses an unchanged snapshot, so the URL list travels as one string.
+    const publisher = new TerminalAccessibleTextPublisher(
+      () => {
+        if (!this.#isCurrentTerminal(terminal)) {
+          return null;
+        }
+        try {
+          return terminalRecentUrls(terminal).join("\n");
+        } catch (error) {
+          if (!isGhosttyDisposedError(error)) {
+            console.warn("terminal link scan skipped", error);
+          }
+          return null;
+        }
+      },
+      (text) => {
+        if (text) {
+          callback(text.split("\n"));
+        }
+      },
+      PANE_LINKS_SCAN_DEBOUNCE_MS,
+    );
+    this.#linkPublisher = publisher;
     publisher.request(0);
   }
 
@@ -1945,6 +2003,24 @@ function terminalBufferRow(terminal: Terminal, viewportRow: number) {
   return scrollbackLength + viewportRow - viewportY;
 }
 
+// URLs in the viewport plus a bounded slice of scrollback above it (the bottom of the buffer, not
+// the user's scrolled position: new output is what we are capturing).
+function terminalRecentUrls(terminal: Terminal) {
+  const buffer = terminal.buffer.active;
+  const length = buffer.length;
+  const firstRow = Math.max(0, length - terminal.rows - PANE_LINKS_SCROLLBACK_ROWS);
+  const rows: PaneLinkRow[] = [];
+  for (let row = firstRow; row < length; row += 1) {
+    const line = buffer.getLine(row) as TerminalBufferLine | undefined;
+    rows.push(
+      line
+        ? { text: terminalBufferLineText(line).text, continuation: line.isWrapped === true }
+        : { text: "", continuation: false },
+    );
+  }
+  return urlsInRows(rows);
+}
+
 function terminalAccessibleScreenText(terminal: Terminal) {
   return terminalAccessibleText({
     rows: terminal.rows,
@@ -2105,7 +2181,7 @@ function terminalBufferLineCellText(
   return text;
 }
 
-function terminalLinkAt(terminal: Terminal, position: TerminalCellPosition) {
+export function terminalLinkAt(terminal: Terminal, position: TerminalCellPosition) {
   const row = terminalBufferRow(terminal, position.row);
   const line = terminal.buffer.active.getLine(row) as TerminalBufferLine | undefined;
   if (!line || position.col < 0 || position.col >= line.length) {
@@ -2115,7 +2191,13 @@ function terminalLinkAt(terminal: Terminal, position: TerminalCellPosition) {
   const cell = line.getCell(position.col);
   const hyperlinkId = cell?.getHyperlinkId() ?? 0;
   if (hyperlinkId > 0) {
-    return terminal.wasmTerm?.getHyperlinkUri(hyperlinkId) ?? null;
+    const uri = terminal.wasmTerm?.getHyperlinkUri(hyperlinkId);
+    if (uri) {
+      return uri;
+    }
+    // ghostty-web 0.4.0's getHyperlinkUri is a stub that always returns null, so an OSC 8 cell
+    // (herdr re-emits them, pi linkifies bare URLs) must still reach the visible-text scan below
+    // instead of making the cell unclickable.
   }
 
   const { text, columns } = terminalBufferLineText(line);

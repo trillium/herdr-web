@@ -63,7 +63,8 @@ use crate::launcher_presets::{
     MAX_LABEL_BYTES,
 };
 use crate::links::{
-    AddLinkRequest, LinkEntry, LinksError, LinksListQuery, LinksListResponse, LinksManager,
+    AddLinkRequest, IngestResult, LinkEntry, LinksError, LinksListQuery, LinksListResponse,
+    LinksManager,
 };
 use crate::machine_remote::{
     build_remote_machines, capabilities_json as machine_capabilities_json, normalize_machine_label,
@@ -1554,6 +1555,10 @@ async fn run_server(options: BridgeOptions) -> io::Result<()> {
             get(links_list_handler)
                 .post(links_add_handler)
                 .options(preflight_handler),
+        )
+        .route(
+            "/api/links/ingest",
+            post(links_ingest_handler).options(preflight_handler),
         )
         .route(
             "/api/links/{link_id}/open",
@@ -4696,6 +4701,30 @@ async fn links_add_handler(
     let entry = run_store_task(state.clone(), move |state| Ok(state.links.add(body)?)).await?;
     broadcast_links_changed(&state, Some(&entry.id));
     Ok(Json(entry))
+}
+
+#[derive(Debug, Deserialize)]
+struct LinksIngestRequest {
+    #[serde(default)]
+    links: Vec<AddLinkRequest>,
+}
+
+/// Idempotent bulk add used by the browser's terminal-text capture: a URL already on the page
+/// (live or dismissed) is left alone, so re-scanning the same screen never re-flags it as new.
+async fn links_ingest_handler(
+    State(state): State<BridgeState>,
+    headers: HeaderMap,
+    Json(body): Json<LinksIngestRequest>,
+) -> Result<Json<IngestResult>, BridgeError> {
+    ensure_allowed_request(&headers, &state.request_policy)?;
+    let result = run_store_task(state.clone(), move |state| {
+        Ok(state.links.ingest(body.links)?)
+    })
+    .await?;
+    if result.added > 0 {
+        broadcast_links_changed(&state, None);
+    }
+    Ok(Json(result))
 }
 
 async fn links_open_handler(

@@ -8,7 +8,10 @@ import {
   refreshTerminalFontRendering,
   shouldUseEventDrivenTerminalRendering,
   suspendGhosttyIdleRenderLoop,
+  terminalLinkAt,
 } from "./terminalRenderer";
+
+import type { Terminal } from "ghostty-web";
 
 describe("terminal event-driven rendering", () => {
   it("redraws idle selections and scrolling and removes the hooks on disposal", () => {
@@ -220,3 +223,38 @@ function dispatchCtrlC(
   }
   return handled;
 }
+
+describe("terminalLinkAt", () => {
+  // Cells of one row, one character each; `linked` columns carry an OSC 8 hyperlink id.
+  function terminalWithRow(text: string, linked: (col: number) => boolean, uri: string | null) {
+    const line = {
+      length: text.length,
+      getCell: (col: number) => ({
+        getCodepoint: () => text.charCodeAt(col),
+        getChars: () => text[col],
+        getWidth: () => 1,
+        getHyperlinkId: () => (linked(col) ? 7 : 0),
+        isInvisible: () => 0,
+      }),
+    };
+    return {
+      getScrollbackLength: () => 0,
+      getViewportY: () => 0,
+      buffer: { active: { getLine: () => line } },
+      wasmTerm: { getHyperlinkUri: () => uri },
+    } as unknown as Terminal;
+  }
+
+  const text = "go https://example.com/a. now";
+
+  it("falls through to the text scan when ghostty-web cannot resolve the hyperlink target", () => {
+    const terminal = terminalWithRow(text, (col) => col >= 3 && col <= 24, null);
+    expect(terminalLinkAt(terminal, { col: 10, row: 0 })).toBe("https://example.com/a");
+    expect(terminalLinkAt(terminal, { col: 1, row: 0 })).toBeNull();
+  });
+
+  it("prefers the real hyperlink target when ghostty-web provides one", () => {
+    const terminal = terminalWithRow(text, (col) => col >= 3, "https://target.example/");
+    expect(terminalLinkAt(terminal, { col: 10, row: 0 })).toBe("https://target.example/");
+  });
+});

@@ -110,6 +110,7 @@ import {
 import type { UploadCandidate, UploadedFile } from "./terminalUploads";
 
 import { ParlayInput } from "./ParlayInput";
+import { PaneLinkDeduper, ingestPaneLinks } from "./paneLinks";
 import { usePhoneLayout } from "./phoneLayout";
 
 type TerminalRendererFactory = (
@@ -863,6 +864,43 @@ export function TerminalView({
     });
     return () => renderer.setAccessibleScreenListener(null);
   }, [rendererReady, terminalScreenReaderText, onAccessibleTextChange]);
+
+  // Capture URLs printed in the pane (text only) onto the /links page. Each URL is posted once per
+  // mount; the bridge ingest is idempotent, so a reload or a second viewer never re-flags a link.
+  const linkPaneId = pane?.pane_id ?? null;
+  useEffect(() => {
+    const ready = rendererReady;
+    if (!ready || !linkPaneId || !ready.renderer.setLinkListener) {
+      return;
+    }
+    const { renderer, generation, terminalId } = ready;
+    const deduper = new PaneLinkDeduper();
+    let supported = true;
+    renderer.setLinkListener?.((urls) => {
+      if (
+        !supported ||
+        rendererRef.current !== renderer ||
+        rendererGenerationRef.current !== generation ||
+        terminalIdRef.current !== terminalId
+      ) {
+        return;
+      }
+      const fresh = deduper.fresh(urls);
+      if (fresh.length === 0) {
+        return;
+      }
+      deduper.markSent(fresh);
+      ingestPaneLinks(httpUrl, linkPaneId, fresh)
+        .then((ok) => {
+          supported = ok;
+        })
+        .catch(() => {
+          // Best effort: forget these so the next scan retries them.
+          deduper.forget(fresh);
+        });
+    });
+    return () => renderer.setLinkListener?.(null);
+  }, [rendererReady, linkPaneId, httpUrl]);
 
   useEffect(() => {
     const terminalId = pane?.terminal_id ?? null;
