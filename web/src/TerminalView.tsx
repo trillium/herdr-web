@@ -110,6 +110,12 @@ import {
 import type { UploadCandidate, UploadedFile } from "./terminalUploads";
 
 import { ParlayInput } from "./ParlayInput";
+import {
+  PaneLinkDeduper,
+  ingestPaneLinks,
+  nextPaneLinkIngestBatch,
+  PANE_LINKS_SCAN_DEBOUNCE_MS,
+} from "./paneLinks";
 import { usePhoneLayout } from "./phoneLayout";
 
 type TerminalRendererFactory = (
@@ -863,6 +869,75 @@ export function TerminalView({
     });
     return () => renderer.setAccessibleScreenListener(null);
   }, [rendererReady, terminalScreenReaderText, onAccessibleTextChange]);
+
+  // Capture URLs printed in the pane (text only) onto the /links page. Each URL is posted once per
+  // mount; the bridge ingest is idempotent, so a reload or a second viewer never re-flags a link.
+  const linkPaneId = pane?.pane_id ?? null;
+  useEffect(() => {
+    const ready = rendererReady;
+    if (!ready || !linkPaneId || !ready.renderer.setLinkListener) {
+      return;
+    }
+    const { renderer, generation, terminalId } = ready;
+    const deduper = new PaneLinkDeduper();
+    const pending = new Set<string>();
+    let supported = true;
+    let sending = false;
+    let disposed = false;
+    let retryTimer: number | null = null;
+    const sendPending = () => {
+      if (disposed || !supported || sending || pending.size === 0) {
+        return;
+      }
+      const batch = nextPaneLinkIngestBatch(linkPaneId, [...pending]);
+      if (batch.length === 0) {
+        return;
+      }
+      sending = true;
+      ingestPaneLinks(httpUrl, linkPaneId, batch)
+        .then((ok) => {
+          supported = ok;
+          if (ok) {
+            for (const url of batch) {
+              pending.delete(url);
+            }
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          sending = false;
+          if (!disposed && supported && pending.size > 0) {
+            retryTimer = window.setTimeout(sendPending, PANE_LINKS_SCAN_DEBOUNCE_MS);
+          }
+        });
+    };
+    renderer.setLinkListener?.((urls) => {
+      if (
+        !supported ||
+        rendererRef.current !== renderer ||
+        rendererGenerationRef.current !== generation ||
+        terminalIdRef.current !== terminalId
+      ) {
+        return;
+      }
+      const fresh = deduper.fresh(urls);
+      if (fresh.length === 0) {
+        return;
+      }
+      deduper.markSent(fresh);
+      for (const url of fresh) {
+        pending.add(url);
+      }
+      sendPending();
+    });
+    return () => {
+      disposed = true;
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+      }
+      renderer.setLinkListener?.(null);
+    };
+  }, [rendererReady, linkPaneId, httpUrl]);
 
   useEffect(() => {
     const terminalId = pane?.terminal_id ?? null;
