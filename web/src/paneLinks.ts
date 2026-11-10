@@ -30,7 +30,7 @@ export function logicalLines(rows: readonly PaneLinkRow[]): string[] {
   const lines: string[] = [];
   for (const row of rows) {
     if (row.continuation && lines.length > 0) {
-      lines[lines.length - 1] += row.text;
+      lines[lines.length - 1] = lines[lines.length - 1].trimEnd() + row.text;
     } else {
       lines.push(row.text);
     }

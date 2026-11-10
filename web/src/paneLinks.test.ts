@@ -37,6 +37,15 @@ describe("urlsInRows", () => {
     ).toEqual(["https://example.com/a/very/long/path?q=1"]);
   });
 
+  it("finds a URL wrapped at terminal width with padded first row", () => {
+    expect(
+      urlsInRows([
+        row("https://example.com/a/very/lo        "),
+        row("ng/path?q=1", true),
+      ]),
+    ).toEqual(["https://example.com/a/very/long/path?q=1"]);
+  });
+
   it("trims trailing punctuation and balances closers", () => {
     expect(
       urlsInRows([
