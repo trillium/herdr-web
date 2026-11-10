@@ -74,15 +74,13 @@ describe("urlsInRows", () => {
 });
 
 describe("PaneLinkDeduper", () => {
-  it("returns only unsent URLs and can forget failed ones", () => {
+  it("returns only unsent URLs", () => {
     const deduper = new PaneLinkDeduper();
     expect(deduper.fresh(["https://a.example", "https://b.example"])).toHaveLength(2);
     deduper.markSent(["https://a.example", "https://b.example"]);
     expect(deduper.fresh(["https://a.example", "https://c.example"])).toEqual([
       "https://c.example",
     ]);
-    deduper.forget(["https://a.example"]);
-    expect(deduper.fresh(["https://a.example"])).toEqual(["https://a.example"]);
   });
 });
 

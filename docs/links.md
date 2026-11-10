@@ -50,7 +50,8 @@ including one you dismissed: it stays dismissed (use **Restore** to bring it bac
 
 ### Captured from terminal output
 
-The browser also scans each pane's recent output (visible rows plus 200 rows above) for `http(s)://`
+The browser also scans each pane's recent output (the active buffer's bottom viewport-sized segment
+plus 200 preceding rows) for `http(s)://`
 URLs and posts new ones to `POST /api/links/ingest` with source `terminal` and the pane id. This is
 text only: soft-wrapped URLs are re-joined and trailing punctuation is trimmed, but a link whose
 visible text is a label rather than the URL (an OSC 8 hyperlink such as pi's markdown links) is not

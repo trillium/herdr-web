@@ -105,7 +105,6 @@ export class TerminalAccessibleTextPublisher {
   readonly #delayMs: number;
   #timer: ReturnType<typeof setTimeout> | null = null;
   #lastText: string | null = null;
-  #forceNext = false;
   #disposed = false;
 
   constructor(readText: () => string | null, publish: (text: string) => void, delayMs: number) {
@@ -114,12 +113,8 @@ export class TerminalAccessibleTextPublisher {
     this.#delayMs = Math.max(0, delayMs);
   }
 
-  request(delayMs = this.#delayMs, force = false) {
-    if (this.#disposed) {
-      return;
-    }
-    this.#forceNext ||= force;
-    if (this.#timer !== null) {
+  request(delayMs = this.#delayMs) {
+    if (this.#disposed || this.#timer !== null) {
       return;
     }
     this.#timer = setTimeout(() => {
@@ -127,10 +122,8 @@ export class TerminalAccessibleTextPublisher {
       if (this.#disposed) {
         return;
       }
-      const forceNext = this.#forceNext;
-      this.#forceNext = false;
       const text = this.#readText();
-      if (text !== null && (forceNext || text !== this.#lastText)) {
+      if (text !== null && text !== this.#lastText) {
         this.#lastText = text;
         this.#publish(text);
       }

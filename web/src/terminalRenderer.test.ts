@@ -226,23 +226,34 @@ function dispatchCtrlC(
 
 describe("terminalLinkAt", () => {
   // Cells of one row, one character each; `linked` columns carry an OSC 8 hyperlink id.
-  function terminalWithRow(text: string, linked: (col: number) => boolean, uri: string | null) {
-    const line = {
+  function terminalWithRows(
+    rows: readonly string[],
+    wrapped: readonly boolean[],
+    linked: (row: number, col: number) => boolean,
+    uri: string | null,
+    invisible = (_row: number, _col: number) => false,
+  ) {
+    const lines = rows.map((text, row) => ({
       length: text.length,
+      isWrapped: wrapped[row] === true,
       getCell: (col: number) => ({
         getCodepoint: () => text.charCodeAt(col),
         getChars: () => text[col],
         getWidth: () => 1,
-        getHyperlinkId: () => (linked(col) ? 7 : 0),
-        isInvisible: () => 0,
+        getHyperlinkId: () => (linked(row, col) ? 7 : 0),
+        isInvisible: () => (invisible(row, col) ? 1 : 0),
       }),
-    };
+    }));
     return {
       getScrollbackLength: () => 0,
       getViewportY: () => 0,
-      buffer: { active: { getLine: () => line } },
+      buffer: { active: { getLine: (row: number) => lines[row] } },
       wasmTerm: { getHyperlinkUri: () => uri },
     } as unknown as Terminal;
+  }
+
+  function terminalWithRow(text: string, linked: (col: number) => boolean, uri: string | null) {
+    return terminalWithRows([text], [false], (_row, col) => linked(col), uri);
   }
 
   const text = "go https://example.com/a. now";
@@ -256,5 +267,34 @@ describe("terminalLinkAt", () => {
   it("prefers the real hyperlink target when ghostty-web provides one", () => {
     const terminal = terminalWithRow(text, (col) => col >= 3, "https://target.example/");
     expect(terminalLinkAt(terminal, { col: 10, row: 0 })).toBe("https://target.example/");
+  });
+
+  it("finds the full fallback URL from either row of soft-wrapped OSC 8 text", () => {
+    const terminal = terminalWithRows(
+      ["go https://example.", "com/long/path"],
+      [false, true],
+      () => true,
+      null,
+    );
+
+    expect(terminalLinkAt(terminal, { col: 10, row: 0 })).toBe(
+      "https://example.com/long/path",
+    );
+    expect(terminalLinkAt(terminal, { col: 3, row: 1 })).toBe(
+      "https://example.com/long/path",
+    );
+  });
+
+  it("does not fall through to concealed URL text", () => {
+    const concealed = "https://secret.example/token";
+    const terminal = terminalWithRows(
+      [concealed],
+      [false],
+      () => true,
+      null,
+      () => true,
+    );
+
+    expect(terminalLinkAt(terminal, { col: 10, row: 0 })).toBeNull();
   });
 });

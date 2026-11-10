@@ -16,6 +16,7 @@ const REFRESHED_TERMINAL_SIZE: TerminalSize = { cols: 120, rows: 48 };
 class FakeTerminalRenderer implements TerminalRenderer {
   readonly refreshedSizes: TerminalSize[] = [];
   private pendingMountCompletion: (() => void) | null = null;
+  private linkListener: ((urls: string[]) => void) | null = null;
 
   mount() {
     return new Promise<TerminalSize>((resolve) => {
@@ -37,6 +38,14 @@ class FakeTerminalRenderer implements TerminalRenderer {
   scrollToBottom() {}
 
   setAccessibleScreenListener() {}
+
+  setLinkListener(callback: ((urls: string[]) => void) | null) {
+    this.linkListener = callback;
+  }
+
+  emitLinks(urls: string[]) {
+    this.linkListener?.(urls);
+  }
 
   onInput() {
     return () => {};
@@ -159,6 +168,41 @@ afterEach(async () => {
 });
 
 describe("TerminalView mobile refitting", () => {
+  it("retries failed links retained after the terminal snapshot advances", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const drafts = createCommandDraftStore();
+    const root = await renderTerminalView(testPane("terminal-1"), drafts);
+    const renderer = terminalRenderers[0];
+    if (!renderer) {
+      throw new Error("Expected the terminal renderer");
+    }
+
+    await act(async () => {
+      renderer.completeMount();
+      await Promise.resolve();
+    });
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValueOnce(new Error("temporary failure"));
+    fetchMock.mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    renderer.emitLinks(["https://a.example"]);
+    renderer.emitLinks(["https://b.example"]);
+
+    await act(async () => {
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(750);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, retry] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(String(retry.body))).toEqual({
+      links: [
+        { url: "https://a.example", source: "terminal", pane_id: "pane-1" },
+        { url: "https://b.example", source: "terminal", pane_id: "pane-1" },
+      ],
+    });
+  });
+
   it("starts refit retries only after the current terminal renderer mounts", async () => {
     const drafts = createCommandDraftStore();
     const root = await renderTerminalView(testPane("terminal-1"), drafts);

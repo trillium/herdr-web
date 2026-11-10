@@ -110,7 +110,11 @@ import {
 import type { UploadCandidate, UploadedFile } from "./terminalUploads";
 
 import { ParlayInput } from "./ParlayInput";
-import { PaneLinkDeduper, ingestPaneLinks } from "./paneLinks";
+import {
+  PaneLinkDeduper,
+  ingestPaneLinks,
+  PANE_LINKS_SCAN_DEBOUNCE_MS,
+} from "./paneLinks";
 import { usePhoneLayout } from "./phoneLayout";
 
 type TerminalRendererFactory = (
@@ -875,7 +879,34 @@ export function TerminalView({
     }
     const { renderer, generation, terminalId } = ready;
     const deduper = new PaneLinkDeduper();
+    const pending = new Set<string>();
     let supported = true;
+    let sending = false;
+    let disposed = false;
+    let retryTimer: number | null = null;
+    const sendPending = () => {
+      if (disposed || !supported || sending || pending.size === 0) {
+        return;
+      }
+      const batch = [...pending];
+      sending = true;
+      ingestPaneLinks(httpUrl, linkPaneId, batch)
+        .then((ok) => {
+          supported = ok;
+          if (ok) {
+            for (const url of batch) {
+              pending.delete(url);
+            }
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          sending = false;
+          if (!disposed && supported && pending.size > 0) {
+            retryTimer = window.setTimeout(sendPending, PANE_LINKS_SCAN_DEBOUNCE_MS);
+          }
+        });
+    };
     renderer.setLinkListener?.((urls) => {
       if (
         !supported ||
@@ -890,16 +921,18 @@ export function TerminalView({
         return;
       }
       deduper.markSent(fresh);
-      ingestPaneLinks(httpUrl, linkPaneId, fresh)
-        .then((ok) => {
-          supported = ok;
-        })
-        .catch(() => {
-          deduper.forget(fresh);
-          renderer.retryLinkScan?.();
-        });
+      for (const url of fresh) {
+        pending.add(url);
+      }
+      sendPending();
     });
-    return () => renderer.setLinkListener?.(null);
+    return () => {
+      disposed = true;
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+      }
+      renderer.setLinkListener?.(null);
+    };
   }, [rendererReady, linkPaneId, httpUrl]);
 
   useEffect(() => {

@@ -313,7 +313,6 @@ export type TerminalRenderer = {
   setAccessibleScreenListener(callback: ((text: string) => void) | null): void;
   /** Reports URLs printed in the pane's recent output (text only); debounced, repeats suppressed. */
   setLinkListener?(callback: ((urls: string[]) => void) | null): void;
-  retryLinkScan?(): void;
   onInput(callback: (data: string) => void): () => void;
   onScroll(callback: (lines: number) => void): () => void;
   scrollToBottom(): void;
@@ -437,10 +436,6 @@ export class GhosttyRenderer implements TerminalRenderer {
     }
     this.#linkCallback = callback;
     this.#installLinkPublisher();
-  }
-
-  retryLinkScan() {
-    this.#linkPublisher?.request(undefined, true);
   }
 
   setAccessibleScreenListener(callback: ((text: string) => void) | null) {
@@ -2205,15 +2200,17 @@ export function terminalLinkAt(terminal: Terminal, position: TerminalCellPositio
     // instead of making the cell unclickable.
   }
 
-  const { text, columns } = terminalBufferLineText(line);
+  const { text, locations } = terminalLogicalLineText(terminal, row);
   TAP_URL_PATTERN.lastIndex = 0;
   let match = TAP_URL_PATTERN.exec(text);
   while (match) {
     const rawUrl = match[0];
     const url = trimUrlPunctuation(rawUrl);
-    const start = columns[match.index];
-    const end = columns[match.index + url.length - 1];
-    if (url.length > 8 && position.col >= start && position.col <= end) {
+    const urlLocations = locations.slice(match.index, match.index + url.length);
+    if (
+      url.length > 8 &&
+      urlLocations.some((location) => location.row === row && location.col === position.col)
+    ) {
       return url;
     }
     match = TAP_URL_PATTERN.exec(text);
@@ -2226,6 +2223,11 @@ function terminalBufferLineText(line: TerminalBufferLine) {
   const columns: number[] = [];
   for (let col = 0; col < line.length; col += 1) {
     const cell = line.getCell(col);
+    if (cell?.isInvisible()) {
+      text += " ";
+      columns.push(col);
+      continue;
+    }
     const codepoint = cell?.getCodepoint() ?? 0;
     if (codepoint === 0 && cell?.getWidth() === 0) {
       continue;
@@ -2237,6 +2239,40 @@ function terminalBufferLineText(line: TerminalBufferLine) {
     }
   }
   return { text, columns };
+}
+
+function terminalLogicalLineText(terminal: Terminal, row: number) {
+  const buffer = terminal.buffer.active;
+  let firstRow = row;
+  while (
+    firstRow > 0 &&
+    (buffer.getLine(firstRow) as TerminalBufferLine | undefined)?.isWrapped === true
+  ) {
+    firstRow -= 1;
+  }
+
+  let text = "";
+  const locations: Array<{ row: number; col: number }> = [];
+  for (let currentRow = firstRow; ; currentRow += 1) {
+    const line = buffer.getLine(currentRow) as TerminalBufferLine | undefined;
+    if (!line) {
+      break;
+    }
+    if (currentRow > firstRow) {
+      const trimmedLength = text.trimEnd().length;
+      text = text.slice(0, trimmedLength);
+      locations.length = trimmedLength;
+    }
+    const lineText = terminalBufferLineText(line);
+    text += lineText.text;
+    locations.push(...lineText.columns.map((col) => ({ row: currentRow, col })));
+    if (
+      (buffer.getLine(currentRow + 1) as TerminalBufferLine | undefined)?.isWrapped !== true
+    ) {
+      break;
+    }
+  }
+  return { text, locations };
 }
 
 function clampInteger(value: number, min: number, max: number) {

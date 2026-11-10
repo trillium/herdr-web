@@ -64,11 +64,6 @@ export class PaneLinkDeduper {
     }
   }
 
-  forget(urls: readonly string[]) {
-    for (const url of urls) {
-      this.#sent.delete(url);
-    }
-  }
 }
 
 /** Returns false when the bridge has no such route (older bridge, remote proxy): stop capturing. */
