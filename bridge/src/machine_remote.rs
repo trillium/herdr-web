@@ -424,6 +424,7 @@ fn csi_key(params: &str, final_char: char) -> Option<String> {
             }
         }
         'Z' => Some("shift+tab".to_string()),
+        'u' if params == "13;5" => Some("ctrl+enter".to_string()),
         '~' => match params {
             "15" => Some("f5".into()),
             "17" => Some("f6".into()),
@@ -917,6 +918,7 @@ mod tests {
         assert_eq!(input_ops("\x1b"), vec![keys(&["esc"])]);
         assert_eq!(input_ops("\x1b[15~\x1b[24~"), vec![keys(&["f5", "f12"])]);
         assert_eq!(input_ops("\x1b[1;5D"), vec![keys(&["ctrl+left"])]);
+        assert_eq!(input_ops("\x1b[13;5u"), vec![keys(&["ctrl+enter"])]);
         assert_eq!(input_ops("\x1bb"), vec![keys(&["alt+b"])]);
         assert_eq!(
             input_ops("a\x1b[Ab"),
