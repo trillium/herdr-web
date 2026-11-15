@@ -28,6 +28,7 @@ import {
 } from "./commandSubmit";
 import type { CommandSubmitSignal } from "./commandSubmit";
 import {
+  CTRL_ENTER_SEQUENCE,
   encodeMobileTerminalChord,
   formatMobileTerminalChord,
   MOBILE_TERMINAL_MODIFIERS,
@@ -2323,6 +2324,12 @@ export function TerminalCommandControls({
               {label}
             </button>
           ))}
+          <button className="term-key" type="button" disabled={disabled || composerOpen}
+            aria-label="Send Ctrl+Enter" title="Ctrl+Enter"
+            onPointerDown={preserveTouchInputFocus}
+            onClick={() => onInput(CTRL_ENTER_SEQUENCE)}>
+            Ctrl+⏎
+          </button>
           {phoneLayout ? (
             <>
               {mobileModeButton}

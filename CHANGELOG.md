@@ -18,6 +18,10 @@
 
 ### Added
 
+- A **Ctrl+⏎** button on the mobile quick-key strip (after Esc/Tab/1/2/3) sends Ctrl+Enter to the
+  active terminal as the CSI-u sequence `ESC [ 13 ; 5 u`, so phones and touch devices can trigger
+  Ctrl+Enter, which legacy VT input cannot distinguish from plain Enter.
+
 - `--remote-machine <label>` (repeatable) shows a herdr saved machine (`herdr machine list`) as a
   remote without a herdr-web bridge on it: its snapshot, terminal view and typed input go through
   `herdr --machine <label> ...` over SSH. Terminals are polled about once a second (herdr's
