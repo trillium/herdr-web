@@ -408,6 +408,21 @@ describe("TerminalCommandControls", () => {
     expect(commandField(container).value).toBe("");
   });
 
+  it("sends a distinct Ctrl+Enter sequence from the quick-key strip", async () => {
+    const { container, onInput, onSubmitCommand, setDisabled } = await renderControls(false);
+    await setCommandValue(commandField(container), "keep this draft");
+    await clickButton(container, "Send Ctrl+Enter");
+
+    expect(onInput).toHaveBeenCalledExactlyOnceWith("\x1B[13;5u");
+    expect(commandField(container).value).toBe("keep this draft");
+    expect(onSubmitCommand).not.toHaveBeenCalled();
+
+    await setDisabled(true);
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Send Ctrl+Enter"]')?.disabled,
+    ).toBe(true);
+  });
+
   it("composes Ctrl+Shift+Up and sends it without changing the command draft", async () => {
     const { container, onInput, onSubmitCommand } = await renderControls(false);
     await setCommandValue(commandField(container), "keep this draft");
@@ -470,11 +485,11 @@ describe("TerminalCommandControls", () => {
       throw new Error("Missing scrollable quick keys");
     }
     const keys = [...shortcuts.querySelectorAll("button")];
-    expect(keys.map((key) => key.textContent)).toEqual(["Esc", "Tab", "1", "2", "3"]);
+    expect(keys.map((key) => key.textContent)).toEqual(["Esc", "Tab", "1", "2", "3", "Ctrl+⏎"]);
     for (const key of keys) {
       await act(async () => key.click());
     }
-    expect(onInput.mock.calls).toEqual([["\x1B"], ["\t"], ["1"], ["2"], ["3"]]);
+    expect(onInput.mock.calls).toEqual([["\x1B"], ["\t"], ["1"], ["2"], ["3"], ["\x1B[13;5u"]]);
     await clickButton(actions, "Upload file");
     await clickButton(actions, "Focus terminal keyboard");
     expect(onUpload).toHaveBeenCalledOnce();

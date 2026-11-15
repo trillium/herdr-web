@@ -131,6 +131,13 @@ export const MOBILE_TERMINAL_SPECIAL_KEYS: readonly MobileTerminalChordKey[] = [
   },
 ];
 
+/**
+ * Ctrl+Enter as a CSI-u (kitty/xterm) sequence. Legacy VT input cannot tell Ctrl+Enter from
+ * Enter, so the chord composer sends a bare `\r`; this is the distinct encoding Herdr and
+ * modern TUIs read as Ctrl+Enter.
+ */
+export const CTRL_ENTER_SEQUENCE = "\x1B[13;5u";
+
 /** Creates one printable key for the mobile terminal chord composer. */
 export function mobileTerminalPrintableKey(value: string): MobileTerminalChordKey {
   if (Array.from(value).length !== 1) {
