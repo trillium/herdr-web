@@ -5087,9 +5087,10 @@ fn rest_path_is_safe(rest: &str) -> bool {
 ///   - `command-submit`    — triggers command submission on the remote
 ///   - `client-log`        — appends to the remote's log; meaningless as a proxy target
 ///   - `selection`         — sets terminal selection state
-///   - `mobile-mode`       — sets a local-filesystem flag on the remote
 ///   - `bridges`           — not meaningful as a proxy target
 ///   - `launcher-presets/launch` — POST that executes a launcher preset on the remote
+///
+/// A few more paths are allowed for specific methods only; see [`is_proxy_request_allowed`].
 fn is_proxy_path_allowed(rest: &str) -> bool {
     let path = rest.trim_start_matches('/');
     // Exact match only (no sub-paths allowed for these):
@@ -5110,6 +5111,38 @@ fn is_proxy_path_allowed(rest: &str) -> bool {
         }
     }
     false
+}
+
+/// The `{terminal_id}` of a `terminal-connections/{terminal_id}` proxy path. `None` for the bare
+/// collection, for deeper paths (`.../priority`, `.../nickname`) and for the `kick` action.
+fn proxy_terminal_connections_id(path: &str) -> Option<&str> {
+    let id = path.strip_prefix("terminal-connections/")?;
+    (!id.is_empty() && id != "kick" && !id.contains('/')).then_some(id)
+}
+
+/// The full proxy gate: [`is_proxy_path_allowed`] plus the paths that are only allowed for one
+/// method. These are what an open terminal asks its bridge for; refusing them left every remote
+/// terminal without its viewers indicator and statusline toggle, and logged a warning per poll.
+///
+///   - `mobile-mode` (GET, POST) — reads / flips the remote's "hide the statusline" flag. The
+///     POST takes no body, so a caller cannot choose what is written or where.
+///   - `terminal-connections/{terminal_id}` (GET) — who is watching that terminal
+///     (TerminalViewersCard.tsx).
+///   - `terminal-connections/kick` (POST) — the viewers list's "Kick": disconnects one websocket
+///     client, which is free to reconnect.
+///
+/// Still blocked: the whole `terminal-connections` collection, and the `priority` / `nickname`
+/// mutations, which the web UI does not drive.
+fn is_proxy_request_allowed(method: &HttpMethod, rest: &str) -> bool {
+    if is_proxy_path_allowed(rest) {
+        return true;
+    }
+    let path = rest.trim_start_matches('/');
+    match path {
+        "mobile-mode" => method == HttpMethod::GET || method == HttpMethod::POST,
+        "terminal-connections/kick" => method == HttpMethod::POST,
+        _ => method == HttpMethod::GET && proxy_terminal_connections_id(path).is_some(),
+    }
 }
 
 /// Re-encodes a single path segment that axum has already percent-decoded.
@@ -5187,7 +5220,15 @@ async fn remote_api_proxy_handler(
         return err.into_response();
     }
     if let Some(machine) = state.remote_machines.find(&bridge_id).cloned() {
-        return machine_api_handler(&state.remote_machines, &machine, &method, &rest).await;
+        return machine_api_handler(
+            &state.remote_machines,
+            &state.connection_manager,
+            &machine,
+            &method,
+            &rest,
+            &body,
+        )
+        .await;
     }
     let Some(remote) = find_remote_bridge(&state.remote_bridges, &bridge_id) else {
         return (
@@ -5199,7 +5240,7 @@ async fn remote_api_proxy_handler(
     if !rest_path_is_safe(&rest) {
         return BridgeError::BadRequest("invalid remote proxy path".to_string()).into_response();
     }
-    if !is_proxy_path_allowed(&rest) {
+    if !is_proxy_request_allowed(&method, &rest) {
         warn!(
             bridge_id = %bridge_id,
             path = %rest,
@@ -5252,19 +5293,28 @@ async fn remote_api_proxy_handler(
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
+/// The key a herdr-machine terminal's viewers are registered under in this bridge's
+/// [`ConnectionManager`]. Namespaced so a machine's terminal id can never collide with a local one.
+fn machine_terminal_key(machine: &RemoteMachine, terminal_id: &str) -> String {
+    format!("machine:{}:{}", machine.id, terminal_id)
+}
+
 /// Serves `/api/remote/<id>/<rest>` for a herdr saved machine from herdr's own machine API.
-/// Only the read endpoints the web UI needs to draw a remote exist; every other proxy path (and
-/// every non-GET) is refused, so nothing here can run a command on the machine.
+/// Only the endpoints the web UI needs to draw a remote exist; every other proxy path is refused,
+/// so nothing here can run a command on the machine. The one non-GET is the viewers list's kick,
+/// which only disconnects a websocket client of *this* bridge.
 async fn machine_api_handler(
     remotes: &MachineRemotes,
+    connections: &ConnectionManager,
     machine: &RemoteMachine,
     method: &HttpMethod,
     rest: &str,
+    body: &[u8],
 ) -> Response {
     if !rest_path_is_safe(rest) {
         return BridgeError::BadRequest("invalid remote proxy path".to_string()).into_response();
     }
-    if !is_proxy_path_allowed(rest) {
+    if !is_proxy_request_allowed(method, rest) {
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({ "error": "path not permitted by proxy allow-list" })),
@@ -5272,7 +5322,16 @@ async fn machine_api_handler(
             .into_response();
     }
     let path = rest.trim_start_matches('/');
-    match (path, method == HttpMethod::GET) {
+    let is_get = method == HttpMethod::GET;
+    // Every viewer of a machine terminal is a websocket client of this bridge, so the viewers
+    // list (and its kick, below) are answered here rather than by the machine.
+    if let Some(terminal_id) = proxy_terminal_connections_id(path).filter(|_| is_get) {
+        return match connections.get_connections(&machine_terminal_key(machine, terminal_id)) {
+            Ok(viewers) => Json(viewers).into_response(),
+            Err(err) => BridgeError::Protocol(err).into_response(),
+        };
+    }
+    match (path, is_get) {
         ("snapshot", true) => match remotes.snapshot(machine).await {
             Ok(session_snapshot) => {
                 let selected = session_snapshot.focused_pane_id.clone();
@@ -5293,6 +5352,22 @@ async fn machine_api_handler(
             }
         },
         ("capabilities", true) => Json(machine_capabilities_json()).into_response(),
+        // A machine has no herdr-web bridge and so no statusline flag to flip. Say so instead
+        // of failing, and let the page hide its toggle.
+        ("mobile-mode", true) => {
+            Json(serde_json::json!({ "active": false, "supported": false })).into_response()
+        }
+        ("terminal-connections/kick", false) => {
+            let Ok(req) = serde_json::from_slice::<KickConnectionRequest>(body) else {
+                return BridgeError::BadRequest("invalid kick request".to_string()).into_response();
+            };
+            match connections.kick(&req.client_id, req.clear_state) {
+                Ok(kicked) => {
+                    Json(serde_json::json!({"status": "ok", "kicked": kicked})).into_response()
+                }
+                Err(err) => BridgeError::Protocol(err).into_response(),
+            }
+        }
         (_, true) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "not available for herdr machine remotes" })),
@@ -5329,6 +5404,16 @@ async fn machine_terminal_socket(
             return;
         }
     };
+    // Registered like a local terminal's clients, so the viewers indicator works here too.
+    let viewers_key = machine_terminal_key(&machine, query.terminal_id.trim());
+    let (client_id, nickname) = terminal_client_identity(&query);
+    if let Err(e) = state
+        .connection_manager
+        .register_connection(&viewers_key, &client_id, nickname)
+    {
+        debug!("Failed to register connection: {}", e);
+    }
+    let mut kick_rx = state.connection_manager.register_kick(&client_id);
     let mut frames = feed.subscribe();
     let mut heartbeat = WebSocketHeartbeat::new(Instant::now());
     // `mark_changed` makes the first iteration paint the screen as it already is.
@@ -5341,6 +5426,12 @@ async fn machine_terminal_socket(
                 {
                     break;
                 }
+            }
+            Ok(clear_state) = &mut kick_rx => {
+                let _ = ws_sender
+                    .send(Message::Text(close_message(kick_reason(clear_state)).into()))
+                    .await;
+                break;
             }
             changed = frames.changed() => {
                 if changed.is_err() {
@@ -5387,6 +5478,12 @@ async fn machine_terminal_socket(
             }
             else => break,
         }
+    }
+    if let Err(e) = state
+        .connection_manager
+        .unregister_connection(&viewers_key, &client_id)
+    {
+        debug!("Failed to unregister connection: {}", e);
     }
 }
 
@@ -5841,21 +5938,9 @@ async fn handle_ui_events_socket(socket: WebSocket, state: BridgeState) {
     }
 }
 
-async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: TerminalQuery) {
-    if query.terminal_id.trim().is_empty() {
-        return;
-    }
-
-    let terminal_id = query.terminal_id.clone();
-    let cols = query.cols.unwrap_or(DEFAULT_COLS);
-    let rows = query.rows.unwrap_or(DEFAULT_ROWS);
-    let coalesce_window = terminal_output_coalesce_window(query.coalesce_ms);
-    let output_encoding = query
-        .output_encoding
-        .unwrap_or(TerminalOutputWireEncoding::Identity);
-    let (mut ws_sender, mut ws_receiver) = socket.split();
-
-    // Generate client ID and nickname from device metadata
+/// A fresh client id and a nickname for one terminal websocket, from the device metadata the
+/// page sends along.
+fn terminal_client_identity(query: &TerminalQuery) -> (String, String) {
     let uuid_str = Uuid::new_v4().to_string();
     let short_id = &uuid_str[..8];
     let client_id = format!(
@@ -5879,6 +5964,24 @@ async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: Te
     } else {
         format!("web-client-{}", short_id)
     };
+    (client_id, nickname)
+}
+
+async fn handle_terminal_socket(socket: WebSocket, state: BridgeState, query: TerminalQuery) {
+    if query.terminal_id.trim().is_empty() {
+        return;
+    }
+
+    let terminal_id = query.terminal_id.clone();
+    let cols = query.cols.unwrap_or(DEFAULT_COLS);
+    let rows = query.rows.unwrap_or(DEFAULT_ROWS);
+    let coalesce_window = terminal_output_coalesce_window(query.coalesce_ms);
+    let output_encoding = query
+        .output_encoding
+        .unwrap_or(TerminalOutputWireEncoding::Identity);
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+
+    let (client_id, nickname) = terminal_client_identity(&query);
 
     let session = match acquire_terminal_session(
         state.clone(),
@@ -9570,6 +9673,61 @@ mod tests {
     }
 
     #[test]
+    fn proxy_gate_allows_terminal_viewers_and_mobile_mode_by_method() {
+        let (get, post) = (HttpMethod::GET, HttpMethod::POST);
+        // What an open remote terminal asks for.
+        assert!(is_proxy_request_allowed(
+            &get,
+            "terminal-connections/term_660e52660a0f41"
+        ));
+        assert!(is_proxy_request_allowed(&post, "terminal-connections/kick"));
+        assert!(is_proxy_request_allowed(&get, "mobile-mode"));
+        assert!(is_proxy_request_allowed(&post, "mobile-mode"));
+        // Everything already allowed stays allowed for either method.
+        assert!(is_proxy_request_allowed(&get, "snapshot"));
+        assert!(is_proxy_request_allowed(&post, "agent-pins/pane-1/pin"));
+
+        // Wrong method for the path.
+        assert!(!is_proxy_request_allowed(
+            &post,
+            "terminal-connections/term_1"
+        ));
+        assert!(!is_proxy_request_allowed(&get, "terminal-connections/kick"));
+        assert!(!is_proxy_request_allowed(
+            &HttpMethod::DELETE,
+            "mobile-mode"
+        ));
+        assert!(!is_proxy_request_allowed(&HttpMethod::PUT, "mobile-mode"));
+        // The whole collection and the mutations the web UI does not drive.
+        assert!(!is_proxy_request_allowed(&get, "terminal-connections"));
+        assert!(!is_proxy_request_allowed(&get, "terminal-connections/"));
+        assert!(!is_proxy_request_allowed(
+            &post,
+            "terminal-connections/term_1/priority"
+        ));
+        assert!(!is_proxy_request_allowed(
+            &post,
+            "terminal-connections/term_1/nickname"
+        ));
+        assert!(!is_proxy_request_allowed(
+            &get,
+            "terminal-connections/term_1/priority"
+        ));
+        assert!(!is_proxy_request_allowed(&get, "mobile-mode/extra"));
+        // Command execution is refused whatever the method.
+        for method in [&get, &post] {
+            for rest in [
+                "command",
+                "command-submit",
+                "selection",
+                "launcher-presets/launch",
+            ] {
+                assert!(!is_proxy_request_allowed(method, rest), "{rest}");
+            }
+        }
+    }
+
+    #[test]
     fn proxy_allow_list_accepts_allowed_paths() {
         assert!(is_proxy_path_allowed("snapshot"));
         assert!(is_proxy_path_allowed("capabilities"));
@@ -9590,7 +9748,6 @@ mod tests {
         assert!(!is_proxy_path_allowed("client-log"));
         assert!(!is_proxy_path_allowed("uploads/extra"));
         assert!(!is_proxy_path_allowed("selection"));
-        assert!(!is_proxy_path_allowed("mobile-mode"));
         assert!(!is_proxy_path_allowed("bridges"));
         assert!(!is_proxy_path_allowed("launcher-presets/launch"));
         assert!(!is_proxy_path_allowed("unknown-endpoint"));
@@ -10805,16 +10962,37 @@ mod tests {
         }
     }
 
+    fn test_machine() -> RemoteMachine {
+        RemoteMachine {
+            id: "melanie".into(),
+            label: "melanie".into(),
+        }
+    }
+
+    fn test_connection_manager(name: &str) -> ConnectionManager {
+        ConnectionManager::new(
+            std::env::temp_dir().join(format!("herdr-web-{name}-{}.json", Uuid::new_v4())),
+        )
+    }
+
     async fn machine_api_response(
         method: HttpMethod,
         rest: &str,
     ) -> (StatusCode, serde_json::Value) {
-        let machine = RemoteMachine {
-            id: "melanie".into(),
-            label: "melanie".into(),
-        };
+        let connections = test_connection_manager("machine-api");
+        machine_api_response_with(&connections, method, rest, b"").await
+    }
+
+    async fn machine_api_response_with(
+        connections: &ConnectionManager,
+        method: HttpMethod,
+        rest: &str,
+        body: &[u8],
+    ) -> (StatusCode, serde_json::Value) {
+        let machine = test_machine();
         let remotes = MachineRemotes::new(vec![machine.clone()], Arc::new(SnapshotOnlyRunner));
-        let response = machine_api_handler(&remotes, &machine, &method, rest).await;
+        let response =
+            machine_api_handler(&remotes, connections, &machine, &method, rest, body).await;
         let status = response.status();
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -10863,6 +11041,77 @@ mod tests {
         assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
         let (status, _) = machine_api_response(HttpMethod::GET, "../snapshot").await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn machine_remote_answers_what_an_open_terminal_asks_for() {
+        let connections = test_connection_manager("machine-viewers");
+        let get = |rest: &'static str| {
+            let connections = &connections;
+            async move { machine_api_response_with(connections, HttpMethod::GET, rest, b"").await }
+        };
+
+        // Nobody watching yet: an empty list, not a refusal.
+        let (status, body) = get("terminal-connections/term_aaa").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::json!([]));
+
+        // A machine has no statusline flag; the page is told so instead of getting a 403.
+        let (status, body) = get("mobile-mode").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            serde_json::json!({ "active": false, "supported": false })
+        );
+        let (status, _) =
+            machine_api_response_with(&connections, HttpMethod::POST, "mobile-mode", b"").await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+
+        // Viewers are the websocket clients registered under the machine's own key.
+        let key = machine_terminal_key(&test_machine(), "term_aaa");
+        connections
+            .register_connection(&key, "herdr-web_phone", "iPhone-mobile".into())
+            .unwrap();
+        connections
+            .register_connection("term_aaa", "herdr-web_local", "local-desktop".into())
+            .unwrap();
+        let (status, body) = get("terminal-connections/term_aaa").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_array().map(Vec::len), Some(1));
+        assert_eq!(body[0]["client_id"], "herdr-web_phone");
+        assert_eq!(body[0]["nickname"], "iPhone-mobile");
+        let (_, body) = get("terminal-connections/term_bbb").await;
+        assert_eq!(body, serde_json::json!([]));
+
+        // Kick reaches the socket that registered for it.
+        let mut kicked = connections.register_kick("herdr-web_phone");
+        let (status, body) = machine_api_response_with(
+            &connections,
+            HttpMethod::POST,
+            "terminal-connections/kick",
+            br#"{"client_id":"herdr-web_phone","clear_state":true}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["kicked"], true);
+        assert_eq!(kicked.try_recv(), Ok(true));
+        let (status, _) = machine_api_response_with(
+            &connections,
+            HttpMethod::POST,
+            "terminal-connections/kick",
+            b"not json",
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // Still refused outright.
+        for rest in [
+            "terminal-connections",
+            "terminal-connections/term_aaa/priority",
+        ] {
+            let (status, _) = get(rest).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{rest}");
+        }
     }
 
     #[test]
