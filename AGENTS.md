@@ -52,7 +52,9 @@ This is a lightweight internal onboarding note for agents working in this repo.
   remote bridges must either mirror what the server actually has configured or call a registration
   API; a purely client-local list of URLs cannot work standalone.
 - The REST proxy (`remote_api_proxy_handler`) enforces an explicit allow-list via
-  `is_proxy_path_allowed()`. Only the paths in that list are forwarded; command-execution and upload
+  `is_proxy_request_allowed()` (any-method paths in `is_proxy_path_allowed()`, plus a few
+  method-specific ones); machine remotes go through the same gate. Only those are forwarded;
+  command-execution and upload
   endpoints are never proxied. Add new proxied paths there; do not widen the allow-list without
   review.
 - `parlay-input` (used by `web/src/ParlayInput.tsx` via `web/src/voiceEnder.ts`) is a vendored,

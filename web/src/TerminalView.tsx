@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import TerminalViewersCard from "./TerminalViewersCard";
+import { parseMobileModeStatus } from "./mobileMode";
 import { useLongPress } from "./overlays";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, RefObject } from "react";
@@ -322,6 +323,7 @@ export function TerminalView({
   const [mobileSelectionAction, setMobileSelectionAction] =
     useState<MobileSelectionAction | null>(null);
   const [mobileModeActive, setMobileModeActive] = useState(false);
+  const [mobileModeSupported, setMobileModeSupported] = useState(true);
   const [scrolledAwayFromPresent, setScrolledAwayFromPresent] = useState(false);
   // Read at attach time without re-running the effect (which would re-attach the socket).
   const autoFocusRef = useRef(autoFocus);
@@ -1435,13 +1437,24 @@ export function TerminalView({
     }
     let cancelled = false;
     fetch(url)
-      .then((response) => (response.ok ? (response.json() as Promise<{ active?: boolean }>) : null))
+      .then((response) => (response.ok ? (response.json() as Promise<unknown>) : null))
       .then((payload) => {
-        if (!cancelled && payload && typeof payload.active === "boolean") {
-          setMobileModeActive(payload.active);
+        if (cancelled) {
+          return;
+        }
+        // A failed read says nothing either way, so it also clears an "unsupported" left over
+        // from the bridge this view was showing before.
+        const status = parseMobileModeStatus(payload);
+        setMobileModeSupported(status.supported);
+        if (status.active !== null) {
+          setMobileModeActive(status.active);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) {
+          setMobileModeSupported(true);
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -1455,10 +1468,11 @@ export function TerminalView({
       return;
     }
     fetch(url, { method: "POST" })
-      .then((response) => (response.ok ? (response.json() as Promise<{ active?: boolean }>) : null))
+      .then((response) => (response.ok ? (response.json() as Promise<unknown>) : null))
       .then((payload) => {
-        if (payload && typeof payload.active === "boolean") {
-          setMobileModeActive(payload.active);
+        const active = payload ? parseMobileModeStatus(payload).active : null;
+        if (active !== null) {
+          setMobileModeActive(active);
         }
       })
       .catch(() => {});
@@ -1730,7 +1744,7 @@ export function TerminalView({
           compactControls={mobileCompactControls}
           onCompactControlsChange={onMobileCompactControlsChange}
           mobileModeActive={mobileModeActive}
-          onToggleMobileMode={toggleMobileMode}
+          onToggleMobileMode={mobileModeSupported ? toggleMobileMode : undefined}
           onControlsHeightChange={setCommandControlsHeight}
           onInput={sendTerminalInputData}
           onTerminalFocus={() => rendererRef.current?.focusTextInput()}
@@ -1893,7 +1907,8 @@ export function TerminalCommandControls({
   compactControls: boolean;
   onCompactControlsChange: (compact: boolean) => void;
   mobileModeActive: boolean;
-  onToggleMobileMode: () => void;
+  /** Omitted when the bridge has no statusline flag to flip (a herdr machine remote). */
+  onToggleMobileMode?: () => void;
   onControlsHeightChange: (heightPx: number | null) => void;
   onInput: (data: string) => void;
   onTerminalFocus: () => void;
@@ -2256,7 +2271,7 @@ export function TerminalCommandControls({
     }
   };
 
-  const mobileModeButton = (
+  const mobileModeButton = onToggleMobileMode ? (
     <button
       className="term-key term-key-icon term-mobile-mode-toggle"
       type="button"
@@ -2267,7 +2282,7 @@ export function TerminalCommandControls({
     >
       <Smartphone size={20} />
     </button>
-  );
+  ) : null;
   const stageButtons = (
     <>
       <button

@@ -336,6 +336,17 @@
 
 ### Fixed
 
+- Opening a terminal on a remote host no longer answers the page's "who is watching" and
+  "statusline hidden?" requests with `403 path not permitted by proxy allow-list`. The remote
+  proxy now forwards `GET /terminal-connections/{terminal_id}`, `POST /terminal-connections/kick`
+  and `GET`/`POST /mobile-mode` to a `--remote-bridge`, so the "N devices viewing" pill (with its
+  Kick) and the phone's hide-statusline button work there, and the hub stops logging a warning
+  every two seconds per open remote terminal. A `--remote-machine` remote has no bridge of its
+  own, so the hub answers for it: viewers are the hub's own clients of that terminal, and the
+  hide-statusline button is hidden because there is no flag to flip. Command execution, the full
+  connection list and the priority/nickname mutations stay blocked. Needs a rebuilt bridge binary
+  on the hub plus `npm run build:web`.
+  [PR #84](https://github.com/trillium/herdr-web/pull/84).
 - Tapping a pane in the list could open a different pane (for example tapping Porter and landing
   on Zephyr). Shared navigation publishes each tap to the bridge and follows the bridge's selected
   pane back, but a remote bridge cannot accept that publish (the proxy allow-list returns 403), so
