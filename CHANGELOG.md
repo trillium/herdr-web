@@ -346,6 +346,7 @@
   hide-statusline button is hidden because there is no flag to flip. Command execution, the full
   connection list and the priority/nickname mutations stay blocked. Needs a rebuilt bridge binary
   on the hub plus `npm run build:web`.
+  [PR #84](https://github.com/trillium/herdr-web/pull/84).
 - Tapping a pane in the list could open a different pane (for example tapping Porter and landing
   on Zephyr). Shared navigation publishes each tap to the bridge and follows the bridge's selected
   pane back, but a remote bridge cannot accept that publish (the proxy allow-list returns 403), so
